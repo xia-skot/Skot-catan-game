@@ -274,6 +274,29 @@ async function startServer() {
     res.json({ status: 'ok', roomsCount: rooms.size });
   });
 
+  app.get('/api/proxy-image', async (req, res) => {
+    try {
+      const imageUrl = req.query.url as string;
+      if (!imageUrl) return res.status(400).send('URL required');
+      
+      const parsedUrl = new URL(imageUrl);
+      const response = await fetch(parsedUrl.href);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      res.setHeader('Content-Type', response.headers.get('content-type') || 'image/png');
+      res.set('Cache-Control', 'public, max-age=31557600'); // Cache for 1 year
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.send(buffer);
+    } catch (e) {
+      console.error('Image proxy error:', e);
+      res.status(500).send('Error proxying image');
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

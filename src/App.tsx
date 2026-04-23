@@ -157,7 +157,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 
   useEffect(() => {
     const image = new window.Image();
-    image.src = 'https://i.imgur.com/edEzQKj.png';
+    image.src = '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/edEzQKj - Imgur.png');
     image.referrerPolicy = 'no-referrer';
     image.crossOrigin = 'Anonymous';
     image.onload = () => setImg(image);
@@ -211,7 +211,7 @@ const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 
   useEffect(() => {
     const image = new window.Image();
-    image.src = 'https://i.imgur.com/8M3QNSd.png';
+    image.src = '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/8M3QNSd - Imgur.png');
     image.referrerPolicy = 'no-referrer';
     image.crossOrigin = 'Anonymous';
     image.onload = () => setImg(image);
@@ -1284,11 +1284,11 @@ export default function App() {
 
   useEffect(() => {
     const imagesToPreload = [
-      'https://i.imgur.com/C3eURTs.png',
+      '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png'),
       FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
-      'https://i.imgur.com/nVgige5.png', // Icon Lumber
-      'https://i.imgur.com/xgqjQo7.png', // Icon Dev
-      'https://i.imgur.com/TdfNSeV.png'  // Icon Road
+      '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png'), // Icon Lumber
+      '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png'), // Icon Dev
+      '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')  // Icon Road
     ];
     
     let loadedCount = 0;
@@ -1343,7 +1343,7 @@ export default function App() {
       <div className="flex flex-col h-screen w-full bg-slate-50 font-sans items-center justify-center p-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-10 rounded-[2.5rem] shadow-2xl shadow-indigo-100 border border-slate-200 max-w-md w-full text-center z-10 relative">
           <div className="w-24 h-24 mx-auto mb-6 bg-indigo-50 rounded-3xl flex items-center justify-center">
-            <img src="https://i.imgur.com/C3eURTs.png" alt="Catan Logo" className="w-16 h-16 object-contain" />
+            <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-16 h-16 object-contain" />
           </div>
           <h1 className="text-3xl font-serif font-black italic mb-2 text-slate-800">CATAN</h1>
           <p className="text-[10px] uppercase tracking-[0.3em] opacity-40 font-black mb-8">Professional Online Edition</p>
@@ -1397,7 +1397,7 @@ export default function App() {
           <div className="flex items-center gap-8 mb-10 px-4">
             <div className="w-20 h-20 lg:w-28 lg:h-28 bg-white rounded-[2rem] flex items-center justify-center shrink-0 shadow-2xl shadow-indigo-100 border border-slate-100 relative">
               <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-[2rem] opacity-50" />
-              <img src="https://i.imgur.com/C3eURTs.png" alt="Catan Logo" className="w-14 h-14 lg:w-16 lg:h-16 object-contain relative z-10 drop-shadow-xl" />
+              <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-14 h-14 lg:w-16 lg:h-16 object-contain relative z-10 drop-shadow-xl" />
             </div>
             <div>
               <h1 className="text-5xl lg:text-7xl font-serif font-black italic tracking-tighter text-slate-900 leading-none drop-shadow-sm">CATAN</h1>
@@ -1676,7 +1676,7 @@ export default function App() {
         {/* Left: Logo */}
         <div className="flex items-center gap-3 shrink-0 absolute left-8">
           <div className="w-12 h-12 flex items-center justify-center">
-            <img src="https://i.imgur.com/C3eURTs.png" alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
+            <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
           </div>
           <div className="hidden sm:block">
             <h1 className="text-xl font-serif font-black tracking-tight leading-none">CATAN</h1>
@@ -1723,17 +1723,17 @@ export default function App() {
                       <span className="text-[11px] font-bold opacity-80" title="公开分数">{publicScore}分</span>
                       <span className="text-[10px] opacity-20">|</span>
                       <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="资源卡">
-                        <img src="https://i.imgur.com/nVgige5.png" alt="res" className="w-3 h-3 object-contain" />
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png')}`} alt="res" className="w-3 h-3 object-contain" />
                         {resourceCount}
                       </span>
                       <span className="text-[10px] opacity-20">|</span>
                       <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="发展卡">
-                        <img src="https://i.imgur.com/xgqjQo7.png" alt="dev" className="w-3 h-3 object-contain" />
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png')}`} alt="dev" className="w-3 h-3 object-contain" />
                         {devCardCount}
                       </span>
                       <span className="text-[10px] opacity-20">|</span>
                       <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="道路长度">
-                        <img src="https://i.imgur.com/TdfNSeV.png" alt="road" className="w-3 h-3 object-contain" />
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="road" className="w-3 h-3 object-contain" />
                         {p.longestRoadLength}
                       </span>
                     </div>
@@ -2638,7 +2638,7 @@ export default function App() {
                className="flex flex-col items-center"
             >
               <div className="w-24 h-24 mb-6 bg-slate-50 rounded-[2rem] flex items-center justify-center shadow-2xl relative">
-                <img src="https://i.imgur.com/C3eURTs.png" alt="Catan" className="w-16 h-16 object-contain z-10" />
+                <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan" className="w-16 h-16 object-contain z-10" />
                 <div className="absolute inset-0 border-4 border-indigo-500/20 border-t-indigo-500 rounded-[2rem] animate-spin" />
               </div>
               <h2 className="text-2xl font-serif font-black italic text-slate-800">正在生成地图...</h2>
@@ -3266,7 +3266,7 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
     let src = '';
     switch (hex.type) {
       case HexType.Forest: src = FOREST_IMG; break;
-      case HexType.Hills: src = 'https://i.imgur.com/fklpV8b.png'; break;
+      case HexType.Hills: src = '/api/proxy-image?url=' + encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/fklpV8b - Imgur.jpg'); break;
       case HexType.Pasture: src = PASTURE_IMG; break;
       case HexType.Fields: src = FIELDS_IMG; break;
       case HexType.Mountains: src = Mountains_IMG; break;
