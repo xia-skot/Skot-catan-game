@@ -4,12 +4,29 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Playfair Display", serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-primary: var(--color-indigo-600);
+  --color-primary-hover: var(--color-indigo-700);
+  --color-surface: var(--color-slate-50);
+  --color-border: var(--color-slate-200);
 }
 
 body {
-  @apply bg-[#f5f2ed] text-[#1a1a1a] antialiased;
+  @apply bg-slate-50 text-slate-900 antialiased;
 }
 
 .konvajs-content {
   @apply cursor-grab active:cursor-grabbing;
+}
+
+header {
+  @apply bg-white border-b border-slate-200 shadow-sm;
+}
+
+aside {
+  @apply bg-white/80 backdrop-blur-xl border-slate-200;
+}
+
+button {
+  @apply transition-all duration-200 transform;
 }

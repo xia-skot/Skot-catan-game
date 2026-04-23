@@ -66,6 +66,17 @@ export interface Port {
   vertexIds: [string, string];
 }
 
+export interface TradeOffer {
+  id: string;
+  initiatorId: number;
+  targetPlayerId: number | null; // null for all players
+  offer: Record<ResourceType, number>;
+  request: Record<ResourceType, number>;
+  status: 'pending' | 'accepted' | 'rejected' | 'completed' | 'canceled';
+  acceptedBy: number[];
+  rejectedBy: number[];
+}
+
 export interface GameState {
   board: Hex[];
   ports: Port[];
@@ -92,6 +103,8 @@ export interface GameState {
   pendingDiscards: { playerId: number, amount: number }[]; // Players who need to discard cards
   freeRoads?: number;
   playingDevCard?: DevCardType | null;
+  activeBuildMode?: 'road' | 'settlement' | 'city' | 'ship' | null;
+  tradeOffers: TradeOffer[];
 }
 
 export interface Settlement {

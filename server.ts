@@ -39,6 +39,7 @@ interface RoomData {
     mapType: string;
     botConfig: boolean[];
   };
+  lastActivity?: number;
 }
 
 async function startServer() {
@@ -64,9 +65,23 @@ async function startServer() {
       hostId: row.hostId,
       players: playersMap,
       gameState: row.gameState ? JSON.parse(row.gameState) : null,
-      settings: JSON.parse(row.settings)
+      settings: JSON.parse(row.settings),
+      lastActivity: Date.now()
     });
   });
+
+  // Inactivity check (10 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.lastActivity && now - room.lastActivity > 10 * 60 * 1000) {
+        console.log(`[Auto-Dissolve] Room ${roomId} inactive for 10 minutes`);
+        io.to(roomId).emit('game_reset');
+        rooms.delete(roomId);
+        db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+      }
+    }
+  }, 60 * 1000);
 
   const saveRoomToDb = (roomId: string, room: RoomData) => {
     const playersArr = Array.from(room.players.values());
@@ -145,10 +160,12 @@ async function startServer() {
           hostId: playerId,
           players: new Map(),
           gameState: null,
-          settings: { playerCount: 4, mapType: 'standard', botConfig: Array(6).fill(false) }
+          settings: { playerCount: 4, mapType: 'standard', botConfig: Array(6).fill(false) },
+          lastActivity: Date.now()
         };
         rooms.set(roomId, room);
       }
+      room.lastActivity = Date.now();
       
       room.players.set(playerId, { id: playerId, name: playerName, isReady: room.hostId === playerId ? true : false });
       broadcastRoomState(roomId);
@@ -158,12 +175,39 @@ async function startServer() {
       }
     });
 
+    socket.on('leave_room', (roomId, playerId) => {
+      const data = socketMap.get(socket.id);
+      if (data && data.roomId === roomId) {
+        socketMap.delete(socket.id);
+      }
+      socket.leave(roomId);
+      
+      const room = rooms.get(roomId);
+      if (room) {
+        room.players.delete(playerId);
+        room.lastActivity = Date.now();
+        if (room.players.size === 0) {
+          // If all players left, auto-dissolve room
+          io.to(roomId).emit('game_reset');
+          rooms.delete(roomId);
+          db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+        } else {
+          if (room.hostId === playerId) {
+             const firstPlayer = Array.from(room.players.values())[0];
+             if (firstPlayer) room.hostId = firstPlayer.id;
+          }
+          broadcastRoomState(roomId);
+        }
+      }
+    });
+
     socket.on('toggle_ready', (roomId, playerId) => {
       const room = rooms.get(roomId);
       if (room) {
         const p = room.players.get(playerId);
         if (p) {
           p.isReady = !p.isReady;
+          room.lastActivity = Date.now();
           broadcastRoomState(roomId);
         }
       }
@@ -173,6 +217,7 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room && room.hostId === playerId) {
         room.settings = newSettings;
+        room.lastActivity = Date.now();
         broadcastRoomState(roomId);
       }
     });
@@ -181,6 +226,7 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room) {
         room.gameState = newState;
+        room.lastActivity = Date.now();
         socket.to(roomId).emit('game_state_updated', newState);
         // Direct DB save for game state updates to prevent loss
         saveRoomToDb(roomId, room);
@@ -191,8 +237,35 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room) {
         room.gameState = initialGameState;
+        room.lastActivity = Date.now();
         io.to(roomId).emit('game_init', initialGameState);
         saveRoomToDb(roomId, room);
+      }
+    });
+
+    socket.on('reset_game', (roomId, playerId) => {
+      const room = rooms.get(roomId);
+      console.log(`[DESTRUCTIVE RESET] Request for room ${roomId} from player ${playerId}.`);
+      
+      const isActuallyHost = room && (
+        room.hostId === playerId || 
+        Array.from(room.players.keys())[0] === playerId || 
+        room.players.size <= 1
+      );
+
+      if (room && isActuallyHost) {
+        // 1. Notify everyone to kick them out immediately
+        io.to(roomId).emit('game_reset');
+        
+        // 2. Clear from memory cache
+        rooms.delete(roomId);
+        
+        // 3. Clear from SQLite database entirely
+        db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
+        
+        console.log(`Room ${roomId} has been COMPLETELY ELIMINATED from DB and Memory.`);
+      } else {
+        console.log(`Reset failed: Permission denied or room not found.`);
       }
     });
   });

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { GameState, Hex, HexType, ResourceType, Player, DevCardType, MapType, Port, Settlement, Road, Ship } from './types';
+import { GameState, Hex, HexType, ResourceType, Player, DevCardType, MapType, Port, Settlement, Road, Ship, TradeOffer } from './types';
 import { PLAYER_COLORS, COSTS } from './constants';
 
 const HEX_SIZE = 50;
@@ -921,10 +921,10 @@ export function useCatanGame() {
 
 
 
-  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[]) => {
+  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[]) => {
     const players: Player[] = Array.from({ length: playerCount }, (_, i) => ({
       id: i,
-      name: `玩家 ${i + 1}`,
+      name: (playerNames && playerNames[i]) ? playerNames[i] : `玩家 ${i + 1}`,
       color: PLAYER_COLORS[i],
       isBot: botConfig ? botConfig[i] : false,
       sessionId: connectedPlayers ? connectedPlayers[i] : undefined,
@@ -1076,6 +1076,7 @@ export function useCatanGame() {
       pendingStealFrom: [],
       pendingGoldRewards: [],
       pendingDiscards: [],
+      tradeOffers: [],
     };
 
     setGameState(state);
@@ -1221,6 +1222,7 @@ export function useCatanGame() {
         hasRolled: false,
         hasBuiltThisTurn: false,
         hasPlayedDevCardThisTurn: false,
+        activeBuildMode: null,
       };
     });
   }, []);
@@ -1337,6 +1339,7 @@ export function useCatanGame() {
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
+        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
       };
     });
   }, []);
@@ -1425,6 +1428,7 @@ export function useCatanGame() {
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: true,
         longestRoadPlayerId,
+        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
       };
     });
   }, []);
@@ -1560,6 +1564,7 @@ export function useCatanGame() {
         settlements: newSettlements,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
+        activeBuildMode: null,
       };
     });
   }, []);
@@ -1606,6 +1611,7 @@ export function useCatanGame() {
         bankResources: updatedBank,
         settlements: updatedSettlements,
         hasBuiltThisTurn: true,
+        activeBuildMode: null,
       };
     });
   }, []);
@@ -1720,7 +1726,8 @@ export function useCatanGame() {
         freeRoads,
         hasPlayedDevCardThisTurn: cardType !== DevCardType.VictoryPoint,
         playingDevCard: cardType !== DevCardType.VictoryPoint ? cardType : null,
-        largestArmyPlayerId: newLargestArmyPlayerId
+        largestArmyPlayerId: newLargestArmyPlayerId,
+        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
       };
     });
   }, []);
@@ -1731,9 +1738,15 @@ export function useCatanGame() {
       
       const cardType = prev.playingDevCard;
       
-      // Cannot cancel road building if a road has already been built
+      // Cannot cancel road building if a road has already been built, but we can end the phase
       if (cardType === DevCardType.RoadBuilding && prev.freeRoads !== 2) {
-        return prev;
+        return {
+          ...prev,
+          phase: 'main',
+          freeRoads: 0,
+          playingDevCard: null,
+          activeBuildMode: null,
+        };
       }
 
       const updatedPlayers = [...prev.players];
@@ -1794,7 +1807,8 @@ export function useCatanGame() {
         hasPlayedDevCardThisTurn: false,
         playingDevCard: null,
         freeRoads: 0,
-        largestArmyPlayerId: newLargestArmyPlayerId
+        largestArmyPlayerId: newLargestArmyPlayerId,
+        activeBuildMode: null,
       };
     });
   }, []);
@@ -2170,6 +2184,107 @@ export function useCatanGame() {
     setGameState(newState);
   }, []);
 
+  const proposeTrade = useCallback((offer: Record<ResourceType, number>, request: Record<ResourceType, number>, targetPlayerId: number | null) => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const newOffer: TradeOffer = {
+        id: Math.random().toString(36).substring(2, 9),
+        initiatorId: prev.currentPlayerIndex,
+        targetPlayerId,
+        offer,
+        request,
+        status: 'pending',
+        acceptedBy: [],
+        rejectedBy: [],
+      };
+      return { ...prev, tradeOffers: [...(prev.tradeOffers || []), newOffer] };
+    });
+  }, []);
+
+  const reactToTrade = useCallback((tradeId: string, playerId: number, reaction: 'accept' | 'reject') => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const offers = (prev.tradeOffers || []).map(offer => {
+        if (offer.id === tradeId) {
+          if (reaction === 'accept') {
+            return { ...offer, acceptedBy: [...offer.acceptedBy, playerId] };
+          } else {
+            return { ...offer, rejectedBy: [...offer.rejectedBy, playerId] };
+          }
+        }
+        return offer;
+      });
+      return { ...prev, tradeOffers: offers };
+    });
+  }, []);
+
+  const cancelTrade = useCallback((tradeId: string) => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const offers = (prev.tradeOffers || []).map(offer => 
+        offer.id === tradeId ? { ...offer, status: 'canceled' as const } : offer
+      );
+      return { ...prev, tradeOffers: offers };
+    });
+  }, []);
+
+  const finalizeTrade = useCallback((tradeId: string, partnerId: number) => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      const offer = (prev.tradeOffers || []).find(o => o.id === tradeId);
+      if (!offer) return prev;
+
+      // Ensure both have resources
+      const initiator = prev.players.find(p => p.id === offer.initiatorId);
+      const partner = prev.players.find(p => p.id === partnerId);
+      
+      if (!initiator || !partner) return prev;
+
+      let initiatorHasResources = true;
+      let partnerHasResources = true;
+
+      const types = Object.values(ResourceType);
+      types.forEach(t => {
+        if ((initiator.resources[t] || 0) < (offer.offer[t] || 0)) initiatorHasResources = false;
+        if ((partner.resources[t] || 0) < (offer.request[t] || 0)) partnerHasResources = false;
+      });
+
+      if (!initiatorHasResources || !partnerHasResources) {
+        return prev; // Trade impossible
+      }
+
+      const updatedPlayers = prev.players.map(p => {
+        if (p.id === initiator.id) {
+          const newRes = { ...p.resources };
+          types.forEach(t => {
+            newRes[t] = (newRes[t] || 0) - (offer.offer[t] || 0) + (offer.request[t] || 0);
+          });
+          return { ...p, resources: newRes };
+        } else if (p.id === partner.id) {
+          const newRes = { ...p.resources };
+          types.forEach(t => {
+            newRes[t] = (newRes[t] || 0) + (offer.offer[t] || 0) - (offer.request[t] || 0);
+          });
+          return { ...p, resources: newRes };
+        }
+        return p;
+      });
+
+      const offers = (prev.tradeOffers || []).map(o => 
+        o.id === tradeId ? { ...o, status: 'completed' as const } : o
+      );
+
+      return { ...prev, players: updatedPlayers, tradeOffers: offers };
+    });
+  }, []);
+
+  const setBuildModeSync = useCallback((mode: GameState['activeBuildMode']) => {
+    setGameState(prev => {
+      if (!prev) return prev;
+      return { ...prev, activeBuildMode: mode };
+    });
+  }, []);
+
   return {
     gameState,
     syncGameState,
@@ -2197,6 +2312,11 @@ export function useCatanGame() {
     discardCards,
     // Debug functions
     setPlayerResource,
-    setDice
+    setDice,
+    setBuildModeSync,
+    proposeTrade,
+    reactToTrade,
+    cancelTrade,
+    finalizeTrade
   };
 }
