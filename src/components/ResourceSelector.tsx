@@ -1,0 +1,27 @@
+import { ResourceType } from '../types';
+import { RESOURCE_COLORS, RESOURCE_NAMES } from '../constants';
+
+interface ResourceSelectorProps {
+  onSelect: (resource: ResourceType | null) => void;
+  selected: ResourceType | null;
+  title: string;
+}
+
+export const ResourceSelector = ({ onSelect, selected, title }: ResourceSelectorProps) => {
+  return (
+    <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
+      <h4 className="text-[10px] font-black uppercase tracking-widest mb-3 text-center">{title}</h4>
+      <div className="grid grid-cols-5 gap-2 mb-4">
+        {Object.values(ResourceType).map(res => (
+          <button
+            key={res}
+            onClick={() => onSelect(res)}
+            className={`p-2 rounded-xl border transition-all flex flex-col items-center gap-1 ${selected === res ? 'border-black bg-stone-50 scale-105 shadow-md' : 'border-black/5 hover:border-black/20 hover:bg-stone-50'}`}
+          >
+            <div className="w-4 h-4 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[res] }} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
