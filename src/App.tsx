@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
 import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame';
 import { HexType, ResourceType, DevCardType, MapType } from './types';
@@ -26,7 +26,10 @@ import {
   Bot,
   Check,
   Copy,
-  LogOut
+  LogOut,
+  Trash2,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
@@ -269,6 +272,7 @@ export default function App() {
     initGame, 
     toggleBot,
     rollDice, 
+    resolveInitialRoll,
     nextTurn, 
     buildRoad, 
     buildShip,
@@ -294,8 +298,32 @@ export default function App() {
     proposeTrade,
     reactToTrade,
     cancelTrade,
-    finalizeTrade
+    finalizeTrade,
+    resetGame
   } = useCatanGame();
+
+  const [hasResolvedGameOver, setHasResolvedGameOver] = useState(false);
+
+  const handleReturnToLobby = () => {
+    const roomId = roomState?.roomId || inputRoomId;
+    if (roomState?.hostId === socketService.playerId) {
+      socketService.resetGame(roomId);
+    } else {
+      socketService.leaveRoom(roomId);
+      // Handle local reset immediately for non-host
+      setRoomState(null);
+      setGameStarted(false);
+      setShowGameOver(false);
+      setHasResolvedGameOver(false);
+      setIsJoinedLobby(false);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  };
+
+  const handleReturnToMap = () => {
+    setShowGameOver(false);
+    setHasResolvedGameOver(true);
+  };
 
   const isRemoteUpdateRef = useRef(false);
   
@@ -318,6 +346,7 @@ export default function App() {
     }
     
     socketService.onRoomState((state) => {
+      if (!state) return;
       setRoomState(state);
       setPlayerCount(state.settings.playerCount);
       setMapType(state.settings.mapType as MapType);
@@ -339,6 +368,8 @@ export default function App() {
 
     socketService.onGameReset(() => {
       console.log('Game reset received from server - Cleaning up...');
+      const isSelfReset = roomState?.hostId === socketService.playerId;
+
       // 1. Clear local game state first to prevent re-sync
       syncGameState(null as any);
       
@@ -348,12 +379,15 @@ export default function App() {
       // 3. Reset UI flags
       setGameStarted(false);
       setShowGameOver(false);
+      setHasResolvedGameOver(false);
       setIsJoinedLobby(false); // Force back to room search screen
       
       // 4. Remove room param from URL
       window.history.replaceState({}, '', window.location.pathname);
       
-      alert('房间已被房主解散。');
+      if (!isSelfReset) {
+        alert('房间已被房主解散。');
+      }
     });
 
     return () => {
@@ -458,30 +492,24 @@ export default function App() {
     const stage = stageRef.current;
     if (!stage) return;
 
-    const touch1 = e.evt.touches[0];
-    const touch2 = e.evt.touches[1];
+    const touches = e.evt.touches;
+    if (touches.length === 2) {
+      if (stage.isDragging()) stage.stopDrag();
 
-    if (touch1 && touch2) {
-      setHasManuallyInteracted(true);
-      if (stage.isDragging()) {
-        stage.stopDrag();
-      }
-
+      const touch1 = touches[0];
+      const touch2 = touches[1];
       const p1 = { x: touch1.clientX, y: touch1.clientY };
       const p2 = { x: touch2.clientX, y: touch2.clientY };
-
-      if (!lastCenter.current) {
-        lastCenter.current = getCenter(p1, p2);
-        return;
-      }
-
+      
       const newCenter = getCenter(p1, p2);
       const dist = getDistance(p1, p2);
 
-      if (!lastDist.current) {
+      if (!lastCenter.current || !lastDist.current) {
+        lastCenter.current = newCenter;
         lastDist.current = dist;
+        return;
       }
-
+      
       const pointTo = {
         x: (newCenter.x - stage.x()) / stage.scaleX(),
         y: (newCenter.y - stage.y()) / stage.scaleX(),
@@ -524,8 +552,43 @@ export default function App() {
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const logoClickCountRef = useRef(0);
+  const logoStartTimeRef = useRef<number>(0);
+
+  const handleLogoClick = useCallback(() => {
+    const now = Date.now();
+    if (now - logoStartTimeRef.current > 3000) {
+      logoClickCountRef.current = 1;
+      logoStartTimeRef.current = now;
+    } else {
+      logoClickCountRef.current += 1;
+    }
+
+    if (logoClickCountRef.current === 5) {
+      setShowDebug(prev => !prev);
+      logoClickCountRef.current = 0;
+      logoStartTimeRef.current = 0;
+    }
+  }, []);
   const [showGameOver, setShowGameOver] = useState(false);
-  const [showDissolveConfirm, setShowDissolveConfirm] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showDissolveRoomConfirm, setShowDissolveRoomConfirm] = useState(false);
+  
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
   const [gameStarted, setGameStarted] = useState(false);
   const [isInitializingGame, setIsInitializingGame] = useState(false);
   const [assetsLoaded, setAssetsLoaded] = useState(false);
@@ -535,10 +598,10 @@ export default function App() {
   const [tradeGive, setTradeGive] = useState<ResourceType | null>(null);
   const [tradeReceive, setTradeReceive] = useState<ResourceType | null>(null);
   const [tradeQuantity, setTradeQuantity] = useState(1);
-  const [buildMode, setBuildMode] = useState<'road' | 'settlement' | 'city' | 'ship' | null>(null);
+  const buildMode = gameState?.activeBuildMode ?? null;
+  const isHost = roomState?.hostId === socketService.playerId;
 
   const handleSetBuildMode = useCallback((mode: typeof buildMode) => {
-    setBuildMode(mode);
     if (isMyHumanTurn) {
       setBuildModeSync(mode);
     }
@@ -569,21 +632,19 @@ export default function App() {
   }, [gameState?.pendingDiscards[0]?.playerId]);
 
   useEffect(() => {
-    if (!gameState) return;
-    
-    // Check for winner (14 points)
-    const winner = gameState.players.find(p => {
-      const unplayedVPCards = p.devCards.filter(c => c === DevCardType.VictoryPoint).length;
-      const totalScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints + unplayedVPCards;
-      return totalScore >= 14;
-    });
-
-    if (winner && !showGameOver) {
-      setTimeout(() => {
-        setShowGameOver(true);
-      }, 500);
+    if (!gameState) {
+      setHasResolvedGameOver(false);
+      return;
     }
-  }, [gameState, showGameOver]);
+    
+    if (gameState.phase === 'finished' && !hasResolvedGameOver && !showGameOver) {
+      setShowGameOver(true);
+    }
+
+    if (gameState.phase !== 'finished') {
+      setHasResolvedGameOver(false);
+    }
+  }, [gameState?.phase, hasResolvedGameOver, showGameOver]);
 
   const hexCoords = useMemo(() => {
     if (!gameState) return [];
@@ -728,9 +789,12 @@ export default function App() {
     return Object.entries(cost).every(([res, amt]) => me.resources[res as ResourceType] >= amt);
   }, [gameState, me]);
 
-  // Auto-exit build mode if resources are insufficient
+  // Auto-exit build mode if resources are insufficient (unless it's setup or road building card)
   useEffect(() => {
     if (buildMode && gameState?.phase === 'main') {
+      const freeRoads = gameState.freeRoads || 0;
+      if (buildMode === 'road' && freeRoads > 0) return;
+      
       const costs = {
         road: COSTS.road,
         settlement: COSTS.settlement,
@@ -738,10 +802,10 @@ export default function App() {
         ship: COSTS.ship
       };
       if (!canAfford(costs[buildMode])) {
-        setBuildMode(null);
+        handleSetBuildMode(null);
       }
     }
-  }, [gameState?.players, gameState?.currentPlayerIndex, buildMode, canAfford]);
+  }, [gameState?.players, gameState?.currentPlayerIndex, buildMode, canAfford, handleSetBuildMode, gameState?.freeRoads, gameState?.phase]);
 
   const generatePreview = useCallback(() => {
     const topology = generateMapTopology(mapType, playerCount);
@@ -808,35 +872,36 @@ export default function App() {
       const shipsCount = gameState.ships.filter(s => s.playerId === pIdx).length;
       
       if (settlementsCount > (roadsCount + shipsCount)) {
-        handleSetBuildMode('road');
+        if (buildMode !== 'road' && buildMode !== 'ship') handleSetBuildMode('road');
       } else {
-        handleSetBuildMode('settlement');
+        if (buildMode !== 'settlement') handleSetBuildMode('settlement');
       }
+    } else if (gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'discard') {
+      if (buildMode !== null) handleSetBuildMode(null);
     }
-  }, [gameState?.phase, gameState?.currentPlayerIndex, gameState?.settlements.length, gameState?.roads.length, gameState?.ships.length, handleSetBuildMode]);
-
-  // Clear build mode on phase change to main
-  useEffect(() => {
-    if (gameState?.phase === 'main') {
-      handleSetBuildMode(null);
-    } else if (gameState?.phase === 'road_building') {
-      handleSetBuildMode('road');
-    }
-  }, [gameState?.phase, handleSetBuildMode]);
-
-
+  }, [gameState?.phase, gameState?.currentPlayerIndex, gameState?.settlements.length, gameState?.roads.length, gameState?.ships.length, handleSetBuildMode, buildMode]);
 
   const checkIsValidEdge = useCallback((edgeId: string, mode: 'road' | 'ship') => {
     if (!gameState) return false;
     const player = gameState.players[gameState.currentPlayerIndex];
     
+    // Check limits
+    const numRoads = gameState.roads.filter(r => r.playerId === player.id).length;
+    const numShips = gameState.ships.filter(s => s.playerId === player.id).length;
+    if (mode === 'road' && numRoads >= 15) return false;
+    if (mode === 'ship' && numShips >= 15) return false;
+
     // Check if occupied
     if (gameState.roads.some(r => r.edgeId === edgeId) || gameState.ships.some(s => s.edgeId === edgeId)) return false;
 
+
     const hexes = getHexesForEdge(gameState.board, edgeId);
     
-    // Pirate check
-    if (hexes.some(h => h.id === gameState.pirateHexId)) return false;
+    // Pirate check - only blocks SHIPS
+    if (mode === 'ship' && hexes.some(h => h.id === gameState.pirateHexId)) return false;
+
+    // Robber check - usually doesn't block roads, but let's keep consistency if needed. 
+    // In standard Catan, robber doesn't block building, but let's assume it doesn't here.
 
     if (mode === 'road') {
       // Road: Must have at least one land hex adjacent
@@ -891,8 +956,9 @@ export default function App() {
 
     const hexes = getHexesForVertex(gameState.board, vertexId);
     
-    // Pirate check
-    if (hexes.some(h => h.id === gameState.pirateHexId)) return false;
+    // Pirate check - only blocks settlements if they are on a pure sea hex (which shouldn't happen for land settlements)
+    // In standard Seafarers, the Pirate moved to a sea hex blocks that hex's production and ships.
+    // It usually doesn't block building settlements on islands.
 
     if (mode === 'city') {
       // Must be own settlement and not city
@@ -939,12 +1005,10 @@ export default function App() {
     if (buildMode === 'settlement') {
         if (checkIsValidVertex(vertexId, 'settlement')) {
             buildSettlement(vertexId, hexIds);
-            if (gameState?.phase !== 'setup') handleSetBuildMode(null);
         }
     } else if (buildMode === 'city') {
         if (checkIsValidVertex(vertexId, 'city')) {
             upgradeToCity(vertexId);
-            handleSetBuildMode(null);
         }
     }
   }, [canBuild, buildMode, checkIsValidVertex, buildSettlement, upgradeToCity, gameState?.phase, handleSetBuildMode]);
@@ -955,14 +1019,10 @@ export default function App() {
     if (buildMode === 'road') {
         if (checkIsValidEdge(edgeId, 'road')) {
             buildRoad(edgeId);
-            if (gameState?.phase !== 'setup' && gameState?.phase !== 'road_building') handleSetBuildMode(null);
-            // In road_building phase, we might want to keep the mode until 2 roads are built, 
-            // but the game logic handles the phase transition.
         }
     } else if (buildMode === 'ship') {
         if (checkIsValidEdge(edgeId, 'ship')) {
             buildShip(edgeId);
-            if (gameState?.phase !== 'setup') handleSetBuildMode(null);
         }
     }
   }, [canBuild, buildMode, checkIsValidEdge, buildRoad, buildShip, gameState?.phase, handleSetBuildMode]);
@@ -1108,21 +1168,57 @@ export default function App() {
     }
   }, [maxTradeQuantity, tradeQuantity]);
 
+  // --- BOT WATCHDOG LOGIC ---
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isHost = roomState.hostId === socketService.playerId;
+    if (!isHost) return;
+
+    const interval = setInterval(() => {
+      const activePlayer = gameState.players[gameState.currentPlayerIndex];
+      // Only forcibly end turn if it's main phase, bot is active, and they exceeded 10s.
+      if (activePlayer?.isBot && gameState.phase === 'main' && botTurnStartRef.current > 0) {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+          nextTurn();
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, roomState?.hostId, nextTurn]);
+
   // --- BOT LOGIC ---
   const isProcessingBotRef = useRef(false);
+  const botTurnStartRef = useRef<number>(0);
+  const lastBotStateKeyRef = useRef<string>('');
+
   useEffect(() => {
     if (!gameState || isProcessingBotRef.current) return;
     const activePlayer = gameState.players[activePlayerId];
-    if (!activePlayer?.isBot) return;
+    if (!activePlayer?.isBot) {
+        lastBotStateKeyRef.current = '';
+        return;
+    }
     
     // Use roomState host check to ensure only one client processes bots
     const isHost = roomState?.hostId === socketService.playerId;
     if (!isHost) return;
 
+    const currentStateKey = `${activePlayerId}-${gameState.phase}-${gameState.hasRolled}-${gameState.roads.length}-${gameState.settlements.length}-${gameState.ships.length}-${Object.values(activePlayer.resources).join(',')}`;
+    if (lastBotStateKeyRef.current !== currentStateKey) {
+      botTurnStartRef.current = Date.now();
+      lastBotStateKeyRef.current = currentStateKey;
+    }
+
     isProcessingBotRef.current = true;
     const timer = setTimeout(() => {
       isProcessingBotRef.current = false;
       const { phase } = gameState;
+
+      if (phase === 'initial_dice_roll') {
+        rollDice();
+        return;
+      }
 
       if (phase === 'setup') {
         const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
@@ -1160,7 +1256,12 @@ export default function App() {
             }
           }
         }
-      } else if (phase === 'main') {
+      } else if (phase === 'main' || phase === 'road_building') {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+           nextTurn();
+           return;
+        }
+
         if (!gameState.hasRolled) {
           // Bot: Should I play a Knight card before rolling?
           if (!gameState.hasPlayedDevCardThisTurn && activePlayer.devCards.includes(DevCardType.Knight)) {
@@ -1181,7 +1282,12 @@ export default function App() {
         // Try actions (using local check to avoid gameState.currentPlayerIndex mismatch)
         const canAffordLocal = (cost: Record<string, number>) => Object.entries(cost).every(([res, amt]) => (activePlayer.resources as any)[res] >= amt);
 
-        if (canAffordLocal(COSTS.city)) {
+        const playerRoadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+        const playerShipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+        const playerSettlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+        const playerCitiesCount = gameState.settlements.filter(s => s.playerId === activePlayerId && s.isCity).length;
+
+        if (canAffordLocal(COSTS.city) && playerCitiesCount < 4) {
           const upgradable = gameState.settlements.filter(s => s.playerId === activePlayerId && !s.isCity);
           if (upgradable.length > 0) {
             upgradeToCity(upgradable[0].vertexId);
@@ -1189,7 +1295,7 @@ export default function App() {
           }
         }
 
-        if (canAffordLocal(COSTS.settlement)) {
+        if (canAffordLocal(COSTS.settlement) && playerSettlementsCount < 5) {
           const validV = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
           if (validV.length > 0) {
             buildSettlement(validV[0].id, validV[0].hexIds);
@@ -1202,7 +1308,7 @@ export default function App() {
           return;
         }
 
-        if (canAffordLocal(COSTS.road)) {
+        if (canAffordLocal(COSTS.road) && playerRoadsCount < 15) {
           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
           if (validE.length > 0) {
             buildRoad(validE[0].id);
@@ -1210,12 +1316,22 @@ export default function App() {
           }
         }
 
-        if (canAffordLocal(COSTS.ship)) {
+        if (canAffordLocal(COSTS.ship) && playerShipsCount < 15) {
           const validS = edges.filter(e => checkIsValidEdge(e.id, 'ship'));
           if (validS.length > 0) {
             buildShip(validS[0].id);
             return;
           }
+        }
+
+        if (phase === 'road_building' && gameState.freeRoads && gameState.freeRoads > 0) {
+           // We are in road building mode, should have already built one if we were in main before.
+           // This block handles the second road if we didn't exit.
+           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
+           if (validE.length > 0) {
+             buildRoad(validE[0].id);
+             return;
+           }
         }
 
         // Try bank trade if we have a lot of one resource
@@ -1245,21 +1361,32 @@ export default function App() {
           }
           discardCards(activePlayerId, toDiscard);
         }
-      } else if (phase === 'robber') {
+      } else if (phase === 'robber' || phase === 'robber_move') {
         // Find a hex where opponent has buildings and move robber there
-        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.type !== HexType.Desert && h.id !== gameState.robberHexId);
-        if (validH.length > 0) {
-          const scoredH = validH.map(h => {
-             let score = 0;
-             const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
-             adjS.forEach(s => {
-               if (s.playerId === activePlayerId) score -= 10;
-               else score += (s.isCity ? 5 : 2);
-             });
-             return { id: h.id, score: score + Math.random() };
-          });
-          scoredH.sort((a,b) => b.score - a.score);
-          moveRobber(scoredH[0].id);
+        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.id !== gameState.robberHexId);
+        // Pirate can move to sea
+        const validSeaH = gameState.board.filter(h => h.type === HexType.Sea && h.id !== gameState.pirateHexId);
+
+        if (phase === 'robber_move' || phase === 'robber') {
+           // Decide between robber and pirate move if applicable, here we just pick one
+           const activePlayer = gameState.players[activePlayerId];
+           // Simple logic: if we have coastal settlements, maybe move pirate? 
+           // For now, let's just move the robber to a productive opponent hex.
+           
+           if (validH.length > 0) {
+              const scoredH = validH.map(h => {
+                 let score = 0;
+                 const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
+                 adjS.forEach(s => {
+                   if (s.playerId === activePlayerId) score -= 10;
+                   else score += (s.isCity ? 5 : 2);
+                 });
+                 if (h.type === HexType.Desert) score -= 5;
+                 return { id: h.id, score: score + Math.random() };
+              });
+              scoredH.sort((a,b) => b.score - a.score);
+              moveRobber(scoredH[0].id);
+           }
         }
       } else if (phase === 'stealing') {
         if (gameState.pendingStealFrom.length > 0) {
@@ -1274,13 +1401,80 @@ export default function App() {
         // Fallback for other subphases
         nextTurn();
       }
-    }, (gameState.phase === 'main' && gameState.hasRolled) ? 400 : 1200);
+    }, 1000);
 
     return () => {
       clearTimeout(timer);
       isProcessingBotRef.current = false;
     };
   }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, roomState?.hostId]);
+
+  // --- INITIAL DICE ROLL DELAY LOGIC ---
+  useEffect(() => {
+    if (gameState?.phase === 'initial_dice_roll' && gameState.hasRolled) {
+      if (roomState?.hostId === socketService.playerId) {
+        const timer = setTimeout(() => {
+          resolveInitialRoll();
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [gameState?.phase, gameState?.hasRolled, roomState?.hostId, resolveInitialRoll]);
+
+  // --- BOT TRADE EVALUATION LOGIC ---
+  const botTradeEvaluatedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isHost = roomState.hostId === socketService.playerId;
+    if (!isHost) return;
+
+    if (gameState.tradeOffers) {
+      gameState.tradeOffers.forEach(offer => {
+        if (offer.status !== 'pending') return;
+
+        gameState.players.forEach(p => {
+          if (!p.isBot) return;
+          if (p.id === offer.initiatorId) return;
+
+          // If trade targeted to specific player, check bot ID
+          if (offer.targetPlayerId !== null && offer.targetPlayerId !== p.id) return;
+
+          // Check if bot has already reacted
+          if (offer.acceptedBy.includes(p.id) || offer.rejectedBy.includes(p.id)) return;
+
+          // Check if we already evaluated this combination in current session
+          const evaluationKey = `${offer.id}-${p.id}`;
+          if (botTradeEvaluatedRef.current.has(evaluationKey)) return;
+          
+          botTradeEvaluatedRef.current.add(evaluationKey);
+
+          // Give a short delay to make it feel human-like
+          setTimeout(() => {
+            // Re-evaluate in case state changed
+            const canAfford = Object.values(ResourceType).every(
+              res => (p.resources[res] || 0) >= (offer.request[res] || 0)
+            );
+
+            if (!canAfford) {
+              reactToTrade(offer.id, p.id, 'reject');
+            } else {
+              const totalRequested = Object.values(offer.request).reduce((a, b) => a + (b || 0), 0);
+              const totalOffered = Object.values(offer.offer).reduce((a, b) => a + (b || 0), 0);
+
+              const acceptProbability = totalOffered >= totalRequested ? 0.7 : 0.2;
+              
+              if (Math.random() <= acceptProbability) {
+                reactToTrade(offer.id, p.id, 'accept');
+              } else {
+                reactToTrade(offer.id, p.id, 'reject');
+              }
+            }
+          }, 800 + Math.random() * 1000);
+        });
+      });
+    }
+  }, [gameState?.tradeOffers, roomState?.hostId, reactToTrade]);
 
   useEffect(() => {
     const imagesToPreload = [
@@ -1320,8 +1514,19 @@ export default function App() {
       return;
     }
 
+    const totalBotCount = roomState.settings?.botConfig?.filter(b => b).length || 0;
+    const totalPlayersCount = roomState.players.length + totalBotCount;
+    const requiredPlayers = roomState.settings?.playerCount || 4;
+    
+    if (totalPlayersCount !== requiredPlayers) {
+        alert(`游戏需要配置刚好 ${requiredPlayers} 名玩家（包含真实玩家和机器人）`);
+        return;
+    }
+
     const assignedSessions = roomState.players.map(p => p.id);
     const assignedNames = roomState.players.map(p => p.name);
+    
+    // Instead of directly initGame, set to initial_dice_roll phase
     const initialState = initGame(
       roomState.settings.playerCount, 
       roomState.settings.mapType as MapType, 
@@ -1332,7 +1537,13 @@ export default function App() {
     );
     
     if (initialState) {
-      socketService.startGame(roomState.roomId, initialState);
+      // Set to initial_dice_roll and initialize empty rolls
+      const initialStateWithRolls = {
+        ...initialState,
+        phase: 'initial_dice_roll' as const,
+        initialDiceRolls: {}
+      };
+      socketService.startGame(roomState.roomId, initialStateWithRolls);
     }
   };
 
@@ -1342,7 +1553,7 @@ export default function App() {
     return (
       <div className="flex flex-col h-screen w-full bg-slate-50 font-sans items-center justify-center p-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-10 rounded-[2.5rem] shadow-2xl shadow-indigo-100 border border-slate-200 max-w-md w-full text-center z-10 relative">
-          <div className="w-24 h-24 mx-auto mb-6 bg-indigo-50 rounded-3xl flex items-center justify-center">
+          <div className="w-24 h-24 mx-auto mb-6 bg-indigo-50 rounded-3xl flex items-center justify-center" onClick={handleLogoClick}>
             <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-16 h-16 object-contain" />
           </div>
           <h1 className="text-3xl font-serif font-black italic mb-2 text-slate-800">CATAN</h1>
@@ -1394,7 +1605,7 @@ export default function App() {
           className="flex-1 flex flex-col p-8 lg:p-20 relative z-10"
         >
           {/* Header & Logo */}
-          <div className="flex items-center gap-8 mb-10 px-4">
+          <div className="flex items-center gap-8 mb-10 px-4" onClick={handleLogoClick}>
             <div className="w-20 h-20 lg:w-28 lg:h-28 bg-white rounded-[2rem] flex items-center justify-center shrink-0 shadow-2xl shadow-indigo-100 border border-slate-100 relative">
               <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-[2rem] opacity-50" />
               <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-14 h-14 lg:w-16 lg:h-16 object-contain relative z-10 drop-shadow-xl" />
@@ -1431,7 +1642,7 @@ export default function App() {
               {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
                 <button 
                   onClick={handleToggleReady}
-                  className="w-full bg-emerald-600 text-white py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] shadow-2xl shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-4 text-sm"
+                  className="w-full bg-emerald-600 text-white py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] shadow-2xl shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-4 text-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale"
                 >
                   <Play size={18} fill="currentColor" />
                   准备开始
@@ -1449,7 +1660,7 @@ export default function App() {
               {isHostInLobby && (
                 <button 
                   onClick={handleStartGame}
-                  disabled={!roomState?.players.every(p => p.isReady) || roomState.players.length === 0}
+                  disabled={!roomState?.players.every(p => p.isReady) || !roomState || (roomState.players.length + (roomState.settings?.botConfig?.filter(b => b).length || 0)) !== roomState.settings?.playerCount}
                   className="w-full bg-slate-900 text-white py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] shadow-2xl hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-sm"
                 >
                   {roomState?.players.every(p => p.isReady) ? '开启游戏' : '等待全员准备'}
@@ -1573,12 +1784,12 @@ export default function App() {
               {Array.from({ length: Math.max(0, playerCount - (roomState?.players.length || 0)) }).map((_, i) => {
                 const globalIndex = (roomState?.players.length || 0) + i;
                 return (
-                  <div key={`empty-${i}`} className="flex items-center justify-between p-4 rounded-2xl border border-dashed border-slate-200 opacity-40 group hover:opacity-100 transition-opacity">
+                  <div key={`empty-${i}`} className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${botConfig[globalIndex] ? 'bg-white border-indigo-100 shadow-sm' : 'border-dashed border-slate-200 opacity-40 hover:opacity-100'}`}>
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl border border-dashed border-slate-200 flex items-center justify-center">
-                        {botConfig[globalIndex] ? <Bot size={18} className="text-slate-300" /> : <Users size={18} className="text-slate-200" />}
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${botConfig[globalIndex] ? 'bg-slate-50' : 'border border-dashed border-slate-200'}`}>
+                        {botConfig[globalIndex] ? <Bot size={18} className="text-indigo-600" /> : <Users size={18} className="text-slate-200" />}
                       </div>
-                      <span className="text-xs font-bold text-slate-400 group-hover:text-slate-600 transition-colors">{botConfig[globalIndex] ? '中级 AI' : '待加入...'}</span>
+                      <span className={`text-xs font-bold transition-colors ${botConfig[globalIndex] ? 'text-slate-700' : 'text-slate-400 group-hover:text-slate-600'}`}>{botConfig[globalIndex] ? '中级 AI' : '待加入...'}</span>
                     </div>
                     {isHostInLobby && (
                       <button 
@@ -1631,14 +1842,14 @@ export default function App() {
   const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
   const canPlayDevCard = gameState?.phase === 'main' && gameState.hasRolled && isMyHumanTurn;
 
-  const sidebarWidth = 320;
+  const sidebarWidth = 280;
   const leftOffset = showLeftPanel && !isMobile ? sidebarWidth : 0;
   const rightOffset = showRightPanel && !isMobile ? sidebarWidth : 0;
+  const headerHeight = isMobile ? 64 : 80;
   const stageWidth = windowSize.width - leftOffset - rightOffset;
-  const headerHeight = 80;
 
   return (
-    <div className="flex flex-col h-screen bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative">
+    <div className="flex flex-col h-[100dvh] bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative">
       {/* Mobile Sidebar Toggles */}
       {isMobile && gameStarted && (
         <>
@@ -1672,21 +1883,21 @@ export default function App() {
           </motion.div>
         </div>
       )}
-      <header className="w-full p-4 bg-white border-b border-black/5 flex items-center relative z-50">
+      <header className="w-full flex items-center bg-white border-b border-black/5 px-4 z-50 overflow-hidden" style={{ height: headerHeight }}>
         {/* Left: Logo */}
-        <div className="flex items-center gap-3 shrink-0 absolute left-8">
-          <div className="w-12 h-12 flex items-center justify-center">
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 cursor-default lg:absolute lg:left-8" onClick={handleLogoClick}>
+          <div className="w-8 h-8 lg:w-12 lg:h-12 flex items-center justify-center">
             <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
           </div>
           <div className="hidden sm:block">
-            <h1 className="text-xl font-serif font-black tracking-tight leading-none">CATAN</h1>
-            <p className="text-[8px] uppercase tracking-[0.2em] opacity-40 font-bold mt-0.5">航海家版 · SEAFARERS</p>
+            <h1 className="text-sm lg:text-xl font-serif font-black tracking-tight leading-none uppercase">CATAN</h1>
+            <p className="text-[6px] lg:text-[8px] uppercase tracking-[0.2em] opacity-40 font-bold mt-0.5">SEAFARERS</p>
           </div>
         </div>
 
         {/* Center: Player Cards */}
-        <div className="flex-1 flex justify-center overflow-x-auto no-scrollbar pb-1 px-4 ml-48 mr-48">
-          <div className="flex items-center gap-8">
+        <div className="flex-1 flex justify-center overflow-x-auto no-scrollbar py-2 px-2 lg:ml-48 lg:mr-48">
+          <div className="flex items-center gap-2 lg:gap-8">
             {gameState.players.map((p, i) => {
             const isCurrent = i === activePlayerId;
             const resourceCount = Object.values(p.resources).reduce((a, b) => a + b, 0);
@@ -1696,45 +1907,52 @@ export default function App() {
             return (
               <div 
                 key={p.id} 
-                className={`relative shrink-0 group flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-500 ${isCurrent ? 'bg-white shadow-md scale-105' : 'opacity-60 hover:opacity-100'}`}>
+                className={`relative shrink-0 group flex items-center gap-1.5 lg:gap-2 px-2 lg:px-3 py-1 rounded-full transition-all duration-500 ${isCurrent ? 'bg-indigo-50 border border-indigo-100 shadow-sm scale-105' : 'opacity-60 hover:opacity-100'}`}>
                 <div 
                   onClick={() => {
                     if (p.sessionId === socketService.playerId) {
                       toggleBot(p.id);
                     }
                   }}
-                  className={`w-5 h-5 rounded-full border-2 border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
+                  className={`w-4 h-4 lg:w-5 lg:h-5 rounded-full border-2 border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
                   style={{ backgroundColor: p.color }}
                   title={p.sessionId === socketService.playerId ? (p.isBot ? "点击接管" : "点击托管") : `${p.name} (${p.isBot ? '机器人' : '玩家'})`}
                 >
                   {p.isBot ? (
-                    <Bot size={10} color={p.color === '#FFFFFF' ? '#000' : '#FFF'} />
+                    <Bot size={8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
                   ) : (
-                    <User size={10} color={p.color === '#FFFFFF' ? '#000' : '#FFF'} />
+                    <User size={8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
                   )}
                 </div>
                 <div className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold leading-none">{p.name}</span>
-                      {gameState.longestRoadPlayerId === p.id && <span title={`最长道路 (${p.longestRoadLength})`} className="text-[10px]">🛤️</span>}
-                      {gameState.largestArmyPlayerId === p.id && <span title={`最大骑士 (${p.knightsPlayed})`} className="text-[10px]">⚔️</span>}
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] lg:text-xs font-bold leading-none truncate max-w-[60px] lg:max-w-none">{p.name}</span>
+                      {gameState.longestRoadPlayerId === p.id && <span title={`最长道路 (${p.longestRoadLength})`} className="text-[8px] lg:text-[10px]">🛤️</span>}
+                      {gameState.largestArmyPlayerId === p.id && <span title={`最大骑士 (${p.knightsPlayed})`} className="text-[8px] lg:text-[10px]">⚔️</span>}
+                      {(gameState.phase === 'initial_dice_roll' || gameState.phase === 'setup') && gameState.initialDiceRolls[p.id]?.length > 0 && (
+                        <span className="text-[9px] font-mono ml-1 text-orange-600 font-bold bg-orange-100 px-1 rounded flex items-center gap-0.5">
+                          🎲 {gameState.initialDiceRolls[p.id].join(' → ')}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[11px] font-bold opacity-80" title="公开分数">{publicScore}分</span>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-[9px] lg:text-[11px] font-bold opacity-80" title="公开分数">{publicScore}分</span>
                       <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="资源卡">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png')}`} alt="res" className="w-3 h-3 object-contain" />
+                      <span className="flex items-center gap-0.5 text-[9px] lg:text-[11px] font-mono opacity-80" title="资源卡">
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png')}`} alt="res" className="w-2.5 h-2.5 lg:w-3 lg:h-3 object-contain" />
                         {resourceCount}
                       </span>
-                      <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="发展卡">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png')}`} alt="dev" className="w-3 h-3 object-contain" />
-                        {devCardCount}
-                      </span>
-                      <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="道路长度">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="road" className="w-3 h-3 object-contain" />
-                        {p.longestRoadLength}
+                      <span className="inline-flex items-center gap-0.5">
+                        <span className="text-[10px] opacity-20 mx-0.5">|</span>
+                        <span className="flex items-center gap-0.5 text-[9px] lg:text-[11px] font-mono opacity-80" title="发展卡">
+                          <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png')}`} alt="dev" className="w-2.5 h-2.5 lg:w-3 lg:h-3 object-contain" />
+                          {devCardCount}
+                        </span>
+                        <span className="text-[10px] opacity-20 mx-0.5">|</span>
+                        <span className="flex items-center gap-0.5 text-[9px] lg:text-[11px] font-mono opacity-80" title="道路">
+                          <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="road" className="w-2.5 h-2.5 lg:w-3 lg:h-3 object-contain" />
+                          {p.longestRoadLength}
+                        </span>
                       </span>
                     </div>
                 </div>
@@ -1749,10 +1967,10 @@ export default function App() {
         <AnimatePresence>
           {showLeftPanel && (
             <motion.aside 
-              initial={isMobile ? { x: -320 } : { width: 0 }}
-              animate={isMobile ? { x: 0 } : { width: 320 }}
-              exit={isMobile ? { x: -320 } : { width: 0 }}
-              className={`border-r border-black/5 p-6 flex flex-col gap-6 bg-white/40 backdrop-blur-md overflow-y-auto shrink-0 z-50 ${isMobile ? 'fixed inset-y-0 left-0 shadow-2xl' : 'relative'}`}
+              initial={isMobile ? { x: -sidebarWidth } : { width: 0 }}
+              animate={isMobile ? { x: 0 } : { width: sidebarWidth }}
+              exit={isMobile ? { x: -sidebarWidth } : { width: 0 }}
+              className={`border-r border-black/5 p-4 lg:p-5 flex flex-col gap-6 bg-white/95 backdrop-blur-md overflow-y-auto overflow-x-hidden shrink-0 z-50 ${isMobile ? `w-[${sidebarWidth}px]` : `relative w-[${sidebarWidth}px]`}`}
             >
               {isMobile && (
                 <button 
@@ -1768,13 +1986,13 @@ export default function App() {
             </div>
             <div className="grid grid-cols-3 grid-rows-2 gap-2">
               {Object.entries(gameState.bankResources).map(([res, count]) => (
-                <div key={res} className="flex items-center justify-between p-2 rounded-xl bg-stone-100/50 border border-black/5">
+                <div key={res} className="flex items-center justify-between p-2 rounded-xl bg-stone-100/50 border border-black">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: RESOURCE_COLORS[res as ResourceType] }} />
                   <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
                 </div>
               ))}
-              <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-800 text-white">
-                <span className="text-[8px] font-black uppercase tracking-widest opacity-50">DEV</span>
+              <div className="flex items-center justify-between p-2 rounded-xl bg-red-600 shadow-sm text-white">
+                <span className="text-[10px] font-black">发</span>
                 <span className="text-[10px] font-mono font-bold">{gameState.bankDevCards.length}</span>
               </div>
             </div>
@@ -2050,23 +2268,48 @@ export default function App() {
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
           
           {gameStarted && (
-            <div className="absolute top-4 left-4 z-40">
+            <div className="absolute top-4 left-4 z-40 flex flex-col gap-2">
               <button 
-                onClick={() => setShowDissolveConfirm(true)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-xl border border-black/5 text-red-500 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl hover:bg-red-500 hover:text-white transition-all transform active:scale-95 group"
+                onClick={() => {
+                  const roomId = roomState?.roomId || inputRoomId;
+                  socketService.leaveRoom(roomId);
+                  setIsJoinedLobby(false);
+                  setRoomState(null);
+                  syncGameState(null as any);
+                  setGameStarted(false);
+                  window.history.replaceState({}, '', window.location.pathname);
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-xl border border-black/5 text-stone-600 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl hover:bg-stone-100 transition-all transform active:scale-95 group"
               >
                 <LogOut size={14} className="group-hover:-translate-x-1 transition-transform scale-x-[-1]" />
-                <span>退出房间</span>
+                <span>中途离开</span>
               </button>
+
+              {isHost && (
+                <button 
+                  onClick={() => setShowDissolveRoomConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-xl border border-black/5 text-red-500 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl hover:bg-red-500 hover:text-white transition-all transform active:scale-95 group"
+                >
+                  <Trash2 size={14} className="group-hover:rotate-12 transition-transform" />
+                  <span>解散房间</span>
+                </button>
+              )}
             </div>
           )}
 
           {gameStarted && (
-            <div className="absolute top-4 right-4 z-40">
+            <div className={`absolute top-4 right-4 z-50 flex gap-2 ${isMobile ? 'flex-col' : ''}`}>
+              <button
+                onClick={toggleFullscreen}
+                className="flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border border-black/5 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl transition-all transform active:scale-95 bg-white/90 text-stone-600"
+              >
+                {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+                <span>{isFullscreen ? '退出全屏' : '全屏'}</span>
+              </button>
               <button
                 id="toggle-bot-button"
                 onClick={() => toggleBot(myPlayerIndex)}
-                className={`flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border border-black/5 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl transition-all transform active:scale-95 ${me.isBot ? 'bg-indigo-500 text-white' : 'bg-white/90 text-stone-600'}`}
+                className={`flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border border-black/5 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl transition-all transform active:scale-95 ${me?.isBot ? 'bg-indigo-500 text-white' : 'bg-white/90 text-stone-600'}`}
               >
                 <Bot size={14} />
                 <span>托管</span>
@@ -2102,7 +2345,7 @@ export default function App() {
                 const road = gameState.roads.find(r => r.edgeId === edge.id);
                 const ship = gameState.ships.find(s => s.edgeId === edge.id);
                 const port = gameState.ports.find(p => p.edgeId === edge.id);
-                const color = road ? PLAYER_COLORS[road.playerId] : ship ? PLAYER_COLORS[ship.playerId] : 'transparent';
+                const color = road ? gameState.players.find(p => p.id === road.playerId)?.color : ship ? gameState.players.find(p => p.id === ship.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 
                 let nx = 0;
@@ -2165,7 +2408,7 @@ export default function App() {
               {/* Vertices for Settlements/Cities */}
               {vertices.map(vertex => {
                 const settlement = gameState.settlements.find(s => s.vertexId === vertex.id);
-                const color = settlement ? PLAYER_COLORS[settlement.playerId] : 'transparent';
+                const color = settlement ? gameState.players.find(p => p.id === settlement.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 const isValid = (isMyHumanTurn ? canBuild : true) && (effectiveBuildMode === 'settlement' || effectiveBuildMode === 'city') && checkIsValidVertex(vertex.id, effectiveBuildMode as any);
 
@@ -2280,34 +2523,36 @@ export default function App() {
               <motion.div
                 initial={{ opacity: 0, y: 50, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5, x: 200, y: 200 }}
+                exit={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 transition={{ type: 'spring', bounce: 0.4, duration: 0.6 }}
-                className="absolute bottom-1/4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-6 z-40"
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
                 <motion.button 
                   whileHover={isMyHumanTurn ? { scale: 1.05 } : {}}
                   whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
                   onClick={() => isMyHumanTurn && rollDice()}
                   disabled={!isMyHumanTurn}
-                  className={`px-12 py-6 rounded-full shadow-[0_20px_50px_rgba(249,115,22,0.4)] border border-orange-400 flex items-center gap-4 group transition-all ${
+                  className={`px-8 py-4 rounded-3xl shadow-xl border flex items-center gap-3 group transition-all ${
                     isMyHumanTurn 
-                      ? "bg-orange-500 hover:bg-orange-600 text-white" 
-                      : "bg-gray-400 text-gray-200 cursor-not-allowed opacity-50 shadow-none border-gray-500"
+                      ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
+                      : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
                   }`}
                 >
-                  <Dices size={32} className={isMyHumanTurn ? "animate-pulse" : ""} />
-                  <span className="text-2xl font-black tracking-[0.2em]">掷骰子</span>
+                  <Dices size={24} className={isMyHumanTurn ? "animate-pulse" : ""} />
+                  <span className="text-xl font-black tracking-widest uppercase">掷骰子</span>
                 </motion.button>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <AnimatePresence>
-            {gameState.hasRolled && (
+          <AnimatePresence mode="wait">
+            {(gameState.hasRolled || (gameState.phase === 'initial_dice_roll' && gameState.dice && gameState.dice[0] > 0)) && (
               <motion.div
+                key={gameState.hasRolled ? 'main-roll' : `initial-roll-${Object.keys(gameState.initialDiceRolls).length}`}
                 initial={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-                transition={{ type: 'spring', bounce: 0.5, duration: 0.6, delay: 0.2 }}
+                exit={{ opacity: 0, scale: 0.5, y: -50 }}
+                transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
                 className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
                 <div className="bg-white p-4 rounded-3xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-6">
@@ -2333,12 +2578,11 @@ export default function App() {
         <AnimatePresence>
           {showRightPanel && (
             <motion.aside 
-              initial={isMobile ? { x: 320 } : { width: 0 }}
-              animate={isMobile ? { x: 0 } : { width: 320 }}
-              exit={isMobile ? { x: 320 } : { width: 0 }}
-              className={`border-l border-black/5 p-6 flex flex-col gap-6 bg-white/40 backdrop-blur-md overflow-y-auto shrink-0 z-50 ${isMobile ? 'fixed inset-y-0 right-0 shadow-2xl' : 'relative'}`}
-            >
-              {isMobile && (
+              initial={isMobile ? { x: sidebarWidth } : { width: 0 }}
+              animate={isMobile ? { x: 0 } : { width: sidebarWidth }}
+              exit={isMobile ? { x: sidebarWidth } : { width: 0 }}
+              className={`border-l border-black/5 ${isMobile ? 'p-2' : 'p-4 lg:p-5'} flex flex-col ${isMobile ? 'gap-2' : 'gap-6'} bg-white/95 backdrop-blur-md overflow-y-auto no-scrollbar overflow-x-hidden shrink-0 z-50 ${isMobile ? `w-[${sidebarWidth}px]` : `relative w-[${sidebarWidth}px]`}`}
+            >              {isMobile && (
                 <button 
                   onClick={() => setShowRightPanel(false)}
                   className="absolute top-4 right-4 p-2 hover:bg-black/5 rounded-full"
@@ -2346,6 +2590,15 @@ export default function App() {
                   <X size={20} />
                 </button>
               )}
+              {gameState.phase === 'initial_dice_roll' && (
+                <section className="bg-orange-600 text-white p-4 rounded-2xl shadow-xl">
+                  <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-80 mb-2">初始掷骰决定顺序</h3>
+                  <p className="text-sm font-bold">
+                    等待 {gameState.players.find(p => p.id === activePlayerId)?.name} 掷骰子...
+                  </p>
+                </section>
+              )}
+
               {gameState.phase === 'setup' && (
             <section className="bg-black text-white p-4 rounded-2xl shadow-xl">
               <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-50 mb-2">初始阶段</h3>
@@ -2378,6 +2631,7 @@ export default function App() {
             <div className="flex flex-col gap-1.5">
               <BuildItem 
                 id="build-road"
+                compact={isMobile}
                 icon={<Hammer size={16} />} 
                 label="道路" 
                 cost={COSTS.road} 
@@ -2387,6 +2641,7 @@ export default function App() {
               />
               <BuildItem 
                 id="build-ship"
+                compact={isMobile}
                 icon={<ShipIcon size={16} />} 
                 label="船只" 
                 cost={COSTS.ship} 
@@ -2396,6 +2651,7 @@ export default function App() {
               />
               <BuildItem 
                 id="build-settlement"
+                compact={isMobile}
                 icon={<Home size={16} />} 
                 label="村庄" 
                 cost={COSTS.settlement} 
@@ -2405,6 +2661,7 @@ export default function App() {
               />
               <BuildItem 
                 id="build-city"
+                compact={isMobile}
                 icon={<Trophy size={16} />} 
                 label="城市" 
                 cost={COSTS.city} 
@@ -2414,6 +2671,7 @@ export default function App() {
               />
               <BuildItem 
                 id="buy-dev-card"
+                compact={isMobile}
                 icon={<BookOpen size={16} />} 
                 label="发展卡" 
                 cost={COSTS.devCard} 
@@ -2467,13 +2725,13 @@ export default function App() {
 
       {/* Dissolve Room Confirmation Modal */}
       <AnimatePresence>
-        {showDissolveConfirm && (
+        {showDissolveRoomConfirm && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowDissolveConfirm(false)}
+              onClick={() => setShowDissolveRoomConfirm(false)}
               className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
             />
             <motion.div 
@@ -2483,36 +2741,31 @@ export default function App() {
               className="relative bg-white rounded-[2.5rem] shadow-2xl p-8 max-w-sm w-full border border-black/5 flex flex-col items-center text-center overflow-hidden"
             >
               <div className="absolute top-0 right-0 p-4 opacity-10">
-                <LogOut size={120} />
+                <Trash2 size={120} />
               </div>
               
               <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                <LogOut size={32} />
+                <Trash2 size={32} />
               </div>
               
-              <h3 className="text-2xl font-black text-stone-800 mb-3">确定退出房间？</h3>
+              <h3 className="text-2xl font-black text-stone-800 mb-3">确定解散房间？</h3>
               <p className="text-stone-500 text-sm mb-10 leading-relaxed px-4">
-                退出后您可以通过房间号再次加入，<br />若所有玩家退出，房间将自动解散。
+                解散后所有玩家将被移出房间，<br />房间数据将永久删除且不可恢复。
               </p>
               
               <div className="flex flex-col w-full gap-3">
                 <button 
                   onClick={() => {
                     const roomId = roomState?.roomId || inputRoomId;
-                    socketService.leaveRoom(roomId);
-                    setIsJoinedLobby(false);
-                    setRoomState(null);
-                    syncGameState(null as any);
-                    setGameStarted(false);
-                    setShowDissolveConfirm(false);
-                    window.history.replaceState({}, '', window.location.pathname);
+                    socketService.resetGame(roomId);
+                    setShowDissolveRoomConfirm(false);
                   }}
                   className="w-full py-4.5 bg-red-500 text-white font-black text-sm uppercase tracking-widest rounded-2xl hover:bg-red-600 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
                 >
-                  确定退出
+                  确定解散
                 </button>
                 <button 
-                  onClick={() => setShowDissolveConfirm(false)}
+                  onClick={() => setShowDissolveRoomConfirm(false)}
                   className="w-full py-4.5 bg-stone-100 text-stone-600 font-bold text-sm uppercase tracking-widest rounded-2xl hover:bg-stone-200 transition-all active:scale-[0.98]"
                 >
                   取消
@@ -2539,7 +2792,7 @@ export default function App() {
                 initial={{ opacity: 0, y: -50 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -50 }}
-                className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-white border border-stone-200 shadow-2xl rounded-3xl p-6 w-[400px]"
+                className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-white border border-stone-200 shadow-2xl rounded-3xl p-6 w-[90vw] max-w-[400px]"
               >
                 <div className="flex justify-between items-start mb-4">
                   <div>
@@ -2699,14 +2952,14 @@ export default function App() {
                       </div>
                       <div className="flex items-center gap-2">
                         <button 
-                          onClick={() => setPlayerResource(activePlayerId, res, Math.max(0, actingPlayer.resources[res] - 1))}
+                          onClick={() => setPlayerResource(activePlayerId, res, Math.max(0, actingPlayer.resources[res] - 5))}
                           className="w-6 h-6 bg-white border border-black/10 rounded-full flex items-center justify-center hover:bg-stone-100"
                         >
                           -
                         </button>
                         <span className="font-mono text-xs w-4 text-center">{actingPlayer.resources[res]}</span>
                         <button 
-                          onClick={() => setPlayerResource(activePlayerId, res, actingPlayer.resources[res] + 1)}
+                          onClick={() => setPlayerResource(activePlayerId, res, actingPlayer.resources[res] + 5)}
                           className="w-6 h-6 bg-black text-white rounded-full flex items-center justify-center hover:bg-zinc-800"
                         >
                           +
@@ -2721,13 +2974,7 @@ export default function App() {
         )}
       </AnimatePresence>
       
-      {/* Debug Toggle Button */}
-      <button 
-        onClick={() => setShowDebug(!showDebug)}
-        className="fixed bottom-4 right-4 bg-black/10 hover:bg-black/20 text-black p-2 rounded-full z-50 transition-colors"
-      >
-        <Settings size={20} />
-      </button>
+      {/* Debug Toggle Button Removed - Replaced by logo 5-click toggle */}
 
       {/* Removed DiscardModal rendering here as it's now in the left panel */}
 
@@ -2960,14 +3207,19 @@ export default function App() {
                 {gameState.pendingStealFrom.map(pid => (
                   <button
                     key={pid}
-                    onClick={() => stealResource(pid)}
-                    className="flex items-center justify-between p-4 rounded-2xl border border-black/5 hover:bg-stone-50 transition-all group"
+                    onClick={() => isMyHumanTurn && stealResource(pid)}
+                    disabled={!isMyHumanTurn}
+                    className={`flex items-center justify-between p-4 rounded-2xl border border-black/5 transition-all group ${
+                      isMyHumanTurn 
+                        ? "hover:bg-stone-50 cursor-pointer" 
+                        : "opacity-50 cursor-not-allowed"
+                    }`}
                   >
                     <div className="flex items-center gap-4">
-                      <div className="w-8 h-8 rounded-full" style={{ backgroundColor: PLAYER_COLORS[pid] }} />
+                      <div className="w-8 h-8 rounded-full" style={{ backgroundColor: gameState.players[pid].color }} />
                       <span className="font-black uppercase tracking-tight">{gameState.players[pid].name}</span>
                     </div>
-                    <ChevronRight size={18} className="opacity-20 group-hover:translate-x-1 transition-transform" />
+                    {isMyHumanTurn && <ChevronRight size={18} className="opacity-20 group-hover:translate-x-1 transition-transform" />}
                   </button>
                 ))}
               </div>
@@ -2985,7 +3237,8 @@ export default function App() {
         {showGameOver && (
           <GameOverModal 
             gameState={gameState} 
-            onClose={() => setShowGameOver(false)} 
+            onReturnToLobby={handleReturnToLobby}
+            onReturnToMap={handleReturnToMap}
           />
         )}
       </AnimatePresence>
@@ -3195,7 +3448,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void 
               <section className="bg-stone-900 text-white p-10 rounded-[2.5rem] shadow-2xl">
                 <h3 className="text-xl font-serif italic mb-6">胜利条件</h3>
                 <p className="text-sm opacity-70 leading-relaxed">
-                  第一个获得 10 分（VP）的玩家赢得比赛。
+                  第一个获得 14 分（VP）的玩家赢得比赛。
                   <br /><br />
                   村庄 = 1 分 | 城市 = 2 分 | 最长道路/最大军队等成就也会提供额外分数。
                 </p>
@@ -3219,7 +3472,7 @@ function ResourceRow({ type, count }: { type: ResourceType, count: number }) {
   };
 
   return (
-    <div className="flex items-center justify-between p-3 rounded-2xl bg-white border border-black/5 hover:shadow-md transition-all group">
+    <div className="flex items-center justify-between p-3 rounded-2xl bg-white border border-black hover:shadow-md transition-all group">
       <div className="flex items-center gap-3">
         <div 
           className="w-8 h-8 rounded-xl flex items-center justify-center text-base shadow-inner transition-transform group-hover:scale-110"
@@ -3236,19 +3489,19 @@ function ResourceRow({ type, count }: { type: ResourceType, count: number }) {
   );
 }
 
-function BuildItem({ id, icon, label, cost, onClick, active, disabled }: { id?: string, icon: React.ReactNode, label: string, cost: Record<string, number>, onClick?: () => void, active?: boolean, disabled?: boolean }) {
+function BuildItem({ id, icon, label, cost, onClick, active, disabled, compact }: { id?: string, icon: React.ReactNode, label: string, cost: Record<string, number>, onClick?: () => void, active?: boolean, disabled?: boolean, compact?: boolean }) {
   return (
     <button 
       id={id}
       onClick={onClick}
       disabled={disabled}
-      className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all group ${active ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-white border-black/5 hover:border-black/20 hover:shadow-xl'} ${disabled ? 'opacity-20 cursor-not-allowed grayscale' : ''}`}
+      className={`w-full flex items-center justify-between ${compact ? 'p-2' : 'p-3'} rounded-2xl border transition-all group ${active ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-white border-black/5 hover:border-black/20 hover:shadow-xl'} ${disabled ? 'opacity-20 cursor-not-allowed grayscale' : ''}`}
     >
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-xl bg-stone-100 flex items-center justify-center group-hover:bg-black group-hover:text-white transition-all duration-300">
-          {icon}
+        <div className={`${compact ? 'w-6 h-6' : 'w-8 h-8'} rounded-xl bg-stone-100 flex items-center justify-center group-hover:bg-black group-hover:text-white transition-all duration-300`}>
+          {React.cloneElement(icon as React.ReactElement, { size: compact ? 12 : 16 })}
         </div>
-        <span className="text-xs font-black uppercase tracking-tight">{label}</span>
+        <span className={`${compact ? 'text-[10px]' : 'text-xs'} font-black uppercase tracking-tight`}>{label}</span>
       </div>
       <div className="flex gap-1">
         {Object.entries(cost).map(([res, amt]) => (

@@ -88,13 +88,16 @@ export interface GameState {
   settlements: Settlement[];
   roads: Road[];
   ships: Ship[];
-  phase: 'setup' | 'main' | 'discard' | 'robber' | 'stealing' | 'gold_selection' | 'year_of_plenty' | 'monopoly' | 'road_building' | 'rolling_7';
+  phase: 'setup' | 'main' | 'discard' | 'robber' | 'robber_move' | 'stealing' | 'gold_selection' | 'year_of_plenty' | 'monopoly' | 'road_building' | 'rolling_7' | 'finished' | 'initial_dice_roll';
   setupStep: number; // 0 to (playerCount * 2 - 1)
+  initialDiceRolls: Record<number, number[]>; // Maps playerId to dice roll history
+  initialRollQueue?: number[]; // Queue of playerIds who need to roll
   hasRolled: boolean;
   hasBuiltThisTurn: boolean;
   hasPlayedDevCardThisTurn: boolean;
   longestRoadPlayerId: number | null;
   largestArmyPlayerId: number | null;
+  winnerId: number | null;
   bankResources: Record<ResourceType, number>;
   bankDevCards: DevCardType[]; // Deck of development cards
   mapType: MapType;

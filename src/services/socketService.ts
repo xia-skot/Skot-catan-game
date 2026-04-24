@@ -34,12 +34,15 @@ class SocketService {
       return;
     }
 
-    // Create new socket with fallback transports
-    this.socket = io({ 
-      transports: ['polling', 'websocket'],
-      reconnectionAttempts: 10,
+    // Create new socket with websocket preferred
+    this.socket = io(window.location.origin, { 
+      transports: ['websocket', 'polling'], // Prefer websocket
+      reconnection: true,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-      timeout: 20000
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+      autoConnect: true
     });
 
     // Re-bind all sticky listeners whenever a new socket is created

@@ -131,20 +131,14 @@ async function startServer() {
           );
           
           if (otherSockets.length === 0) {
-            // Keep players in room data for persistence, but mark as "offline" if needed?
-            // For now, let's keep the existing logic where they are removed, 
-            // but the ROOM persists in DB as long as players are there or gameState exists.
+            // Keep players in room data for persistence
             room.players.delete(playerId);
-            if (room.players.size === 0 && !room.gameState) {
-              rooms.delete(roomId);
-              db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
-            } else {
-              if (room.hostId === playerId) {
-                 const firstPlayer = Array.from(room.players.values())[0];
-                 if (firstPlayer) room.hostId = firstPlayer.id;
-              }
-              broadcastRoomState(roomId);
+            
+            if (room.hostId === playerId) {
+               const firstPlayer = Array.from(room.players.values())[0];
+               if (firstPlayer) room.hostId = firstPlayer.id;
             }
+            broadcastRoomState(roomId);
           }
         }
       }
@@ -186,18 +180,12 @@ async function startServer() {
       if (room) {
         room.players.delete(playerId);
         room.lastActivity = Date.now();
-        if (room.players.size === 0) {
-          // If all players left, auto-dissolve room
-          io.to(roomId).emit('game_reset');
-          rooms.delete(roomId);
-          db.prepare('DELETE FROM rooms WHERE id = ?').run(roomId);
-        } else {
-          if (room.hostId === playerId) {
-             const firstPlayer = Array.from(room.players.values())[0];
-             if (firstPlayer) room.hostId = firstPlayer.id;
-          }
-          broadcastRoomState(roomId);
+        
+        if (room.hostId === playerId) {
+           const firstPlayer = Array.from(room.players.values())[0];
+           if (firstPlayer) room.hostId = firstPlayer.id;
         }
+        broadcastRoomState(roomId);
       }
     });
 
