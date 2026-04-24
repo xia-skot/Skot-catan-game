@@ -1,0 +1,151 @@
+1345:  const buildRoad = useCallback((edgeId: string) => {
+1346-    setGameState(prev => {
+1347-      if (!prev) return null;
+1348-      const player = prev.players[prev.currentPlayerIndex];
+1349-      
+1350-      const hexes = getHexesForEdge(prev.board, edgeId);
+1351-      
+1352-      // Check if road is on pure sea (invalid)
+1353-      const hasLand = hexes.some(h => h.type !== HexType.Sea && !h.isOuterSea);
+1354-      if (!hasLand) return prev;
+1355-
+1356-      // Check for Pirate
+1357-      const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
+1358-      if (hasPirate) return prev;
+1359-
+1360-      const isSetup = prev.phase === 'setup';
+1361-      const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
+1362-      const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
+1363-
+1364-      // In setup, must build settlement first, then road
+1365-      if (isSetup) {
+1366-        if (setupRoadsThisTurn >= setupSettlementsThisTurn) return prev;
+1367-      } else if (prev.phase === 'road_building') {
+1368-        // Free road
+1369-      } else {
+1370-        // Road limit (15)
+1371-        if (player.roads >= 15) {
+1372-          console.warn("Road limit reached (15)");
+1373-          return prev;
+1374-        }
+1375-
+1376-        const cost = COSTS.road;
+1377-        for (const [res, amt] of Object.entries(cost)) {
+1378-          if (player.resources[res as ResourceType] < amt) return prev;
+1379-        }
+1380-      }
+1381-
+1382-      // Check connectivity
+1383-      const [v1Id, v2Id] = edgeId.split('|');
+1384-
+1385-      const hasSettlementAtV1 = prev.settlements.some(s => s.playerId === player.id && s.vertexId === v1Id);
+1386-      const hasSettlementAtV2 = prev.settlements.some(s => s.playerId === player.id && s.vertexId === v2Id);
+1387-      
+1388-      const oppSettlementAtV1 = prev.settlements.some(s => s.playerId !== player.id && s.vertexId === v1Id);
+1389-      const oppSettlementAtV2 = prev.settlements.some(s => s.playerId !== player.id && s.vertexId === v2Id);
+1390-
+1391-      const hasRoadAtV1 = prev.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v1Id));
+1392-      const hasRoadAtV2 = prev.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v2Id));
+1393-      
+1394-      const hasShipAtV1 = prev.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v1Id));
+1395-      const hasShipAtV2 = prev.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v2Id));
+1396-      
+1397-      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1) || (hasShipAtV1 && !oppSettlementAtV1);
+1398-      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2) || (hasShipAtV2 && !oppSettlementAtV2);
+1399-      const hasConnection = canConnectV1 || canConnectV2;
+1400-
+1401-      // In setup, the road must connect to the settlement just placed
+1402-      if (isSetup) {
+1403-        const lastSettlement = prev.settlements.filter(s => s.playerId === player.id).pop();
+1404-        if (!lastSettlement || (lastSettlement.vertexId !== v1Id && lastSettlement.vertexId !== v2Id)) return prev;
+1405-      } else if (!hasConnection) {
+1406-        return prev;
+1407-      }
+1408-
+1409-      const updatedPlayers = [...prev.players];
+1410-      const updatedPlayer = { 
+1411-        ...player, 
+1412-        roads: player.roads + 1,
+1413-        resources: { ...player.resources } 
+1414-      };
+1415-      const updatedBank = { ...prev.bankResources };
+1416-
+1417-      let nextPhase = prev.phase;
+1418-      let nextFreeRoads = prev.freeRoads;
+1419-
+1420-      if (!isSetup && prev.phase !== 'road_building') {
+1421-        for (const [res, amt] of Object.entries(COSTS.road)) {
+1422-          updatedPlayer.resources[res as ResourceType] -= amt;
+1423-          updatedBank[res as ResourceType] += amt;
+1424-        }
+1425-      } else if (prev.phase === 'road_building') {
+1426-        nextFreeRoads = (nextFreeRoads || 0) - 1;
+1427-        if (nextFreeRoads <= 0) {
+1428-          nextPhase = 'main';
+1429-        }
+1430-      }
+1431-      updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
+1432-
+1433-      let nextStep = prev.setupStep;
+1434-      let nextPlayerIdx = prev.currentPlayerIndex;
+1435-
+1436-      if (isSetup) {
+1437-        nextStep += 1;
+1438-        const playerCount = prev.players.length;
+1439-        if (nextStep < playerCount) {
+1440-          nextPlayerIdx = nextStep;
+1441-        } else if (nextStep < playerCount * 2) {
+1442-          nextPlayerIdx = playerCount - 1 - (nextStep - playerCount);
+1443-        } else {
+1444-          nextPhase = 'main';
+1445-          nextPlayerIdx = 0;
+1446-        }
+1447-      }
+1448-
+1449-      const newRoads = [...prev.roads, { edgeId, playerId: player.id }];
+1450-      const { players: playersAfterRoad, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, newRoads, prev.ships, prev.settlements, prev.longestRoadPlayerId);
+1451-
+1452-      const winnerId = checkWinner(playersAfterRoad);
+1453-
+1454-      // Check if player can still build another road
+1455-      const costRoad = COSTS.road;
+1456-      let stillCanBuildRoad = true;
+1457-      if (nextPhase === 'road_building') {
+1458-        stillCanBuildRoad = (nextFreeRoads || 0) > 0;
+1459-      } else {
+1460-        for (const [res, amt] of Object.entries(costRoad)) {
+1461-          if (playersAfterRoad[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+1462-            stillCanBuildRoad = false;
+1463-            break;
+1464-          }
+1465-        }
+1466-        if (playersAfterRoad[prev.currentPlayerIndex].roads >= 15) stillCanBuildRoad = false;
+1467-      }
+1468-
+1469-      return {
+1470-        ...prev,
+1471-        players: playersAfterRoad,
+1472-        bankResources: updatedBank,
+1473-        roads: newRoads,
+1474-        phase: winnerId !== null ? 'finished' : nextPhase,
+1475-        winnerId,
+1476-        playingDevCard: nextPhase === 'main' ? null : prev.playingDevCard,
+1477-        setupStep: nextStep,
+1478-        currentPlayerIndex: nextPlayerIdx,
+1479-        freeRoads: nextFreeRoads,
+1480-        hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
+1481-        longestRoadPlayerId,
+1482-        activeBuildMode: (winnerId !== null || isSetup || !stillCanBuildRoad) ? null : 'road',
+1483-      };
+1484-    });
+1485-  }, []);
+1486-
+1487-  const buildShip = useCallback((edgeId: string) => {
+1488-    setGameState(prev => {
+1489-      if (!prev) return null;
+1490-      const player = prev.players[prev.currentPlayerIndex];
+1491-      
+1492-      const isSetup = prev.phase === 'setup';
+1493-      if (isSetup) return prev; // Cannot build ships in setup
+1494-
+1495-      if (prev.phase === 'road_building') {

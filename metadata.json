@@ -1,5 +1,6 @@
 {
-  "name": "卡坦岛APP",
+  "name": "卡坦岛线上桌游",
   "description": "A beautiful, interactive Catan board game with Seafarers expansion support for 4-6 players.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }

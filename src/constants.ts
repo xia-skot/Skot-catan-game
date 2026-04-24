@@ -45,7 +45,7 @@ export const PLAYER_COLORS = [
   '#E74C3C', // Red
   '#3498DB', // Blue
   '#F1C40F', // Yellow
-  '#FFFFFF', // White
+  '#E67E22', // Orange
   '#2ECC71', // Green
   '#8E44AD', // Purple
 ];
