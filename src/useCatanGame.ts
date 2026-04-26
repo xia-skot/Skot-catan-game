@@ -50,14 +50,21 @@ export function getHexesForVertex(board: any[], vertexId: string) {
 }
 
 export function calculateLongestRoad(playerId: number, roads: Road[], ships: Ship[], settlements: Settlement[]): number {
-  const playerEdges = [...roads, ...ships].filter(e => e.playerId === playerId).map(e => e.edgeId);
-  if (playerEdges.length === 0) return 0;
+  const playerRoads = roads.filter(e => e.playerId === playerId).map(e => e.edgeId);
+  const playerShips = ships.filter(e => e.playerId === playerId).map(e => e.edgeId);
+  if (playerRoads.length === 0 && playerShips.length === 0) return 0;
 
   const opponentSettlements = new Set(settlements.filter(s => s.playerId !== playerId).map(s => s.vertexId));
+  const playerSettlements = new Set(settlements.filter(s => s.playerId === playerId).map(s => s.vertexId));
 
-  const adj: Record<string, string[]> = {};
-  for (const edge of playerEdges) {
-    const [v1, v2] = edge.split('|');
+  const allPlayerEdges = [
+    ...playerRoads.map(e => ({ id: e, type: 'road' })),
+    ...playerShips.map(e => ({ id: e, type: 'ship' }))
+  ];
+
+  const adj: Record<string, { id: string, type: string }[]> = {};
+  for (const edge of allPlayerEdges) {
+    const [v1, v2] = edge.id.split('|');
     if (!adj[v1]) adj[v1] = [];
     if (!adj[v2]) adj[v2] = [];
     adj[v1].push(edge);
@@ -66,7 +73,7 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
 
   let maxLength = 0;
 
-  function dfs(currentVertex: string, visitedEdges: Set<string>, currentLength: number) {
+  function dfs(currentVertex: string, visitedEdges: Set<string>, currentLength: number, lastEdgeType: string | null) {
     if (currentLength > maxLength) {
       maxLength = currentLength;
     }
@@ -77,18 +84,25 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
 
     const edges = adj[currentVertex] || [];
     for (const edge of edges) {
-      if (!visitedEdges.has(edge)) {
-        visitedEdges.add(edge);
-        const [v1, v2] = edge.split('|');
+      if (!visitedEdges.has(edge.id)) {
+        // If switching between road and ship, must have player's settlement/city at currentVertex
+        if (lastEdgeType !== null && lastEdgeType !== edge.type) {
+          if (!playerSettlements.has(currentVertex)) {
+            continue;
+          }
+        }
+
+        visitedEdges.add(edge.id);
+        const [v1, v2] = edge.id.split('|');
         const nextVertex = v1 === currentVertex ? v2 : v1;
-        dfs(nextVertex, visitedEdges, currentLength + 1);
-        visitedEdges.delete(edge);
+        dfs(nextVertex, visitedEdges, currentLength + 1, edge.type);
+        visitedEdges.delete(edge.id);
       }
     }
   }
 
   for (const startVertex of Object.keys(adj)) {
-    dfs(startVertex, new Set<string>(), 0);
+    dfs(startVertex, new Set<string>(), 0, null);
   }
 
   return maxLength;
@@ -1051,19 +1065,22 @@ export function useCatanGame() {
       ports,
       players,
       currentPlayerIndex: 0,
-      dice: [1, 1],
+      dice: [0, 0],
       robberHexId: desertHex?.id || '0,0',
       pirateHexId: hexes.find(h => h.type === HexType.Sea)?.id || null,
       settlements: [],
       roads: [],
       ships: [],
-      phase: 'setup',
+      phase: 'initial_dice_roll',
+      initialDiceRolls: {},
+      initialRollQueue: players.map((_, i) => i),
       setupStep: 0,
       hasRolled: false,
       hasBuiltThisTurn: false,
       hasPlayedDevCardThisTurn: false,
       longestRoadPlayerId: null,
       largestArmyPlayerId: null,
+      winnerId: null,
       bankResources: {
         [ResourceType.Lumber]: 24,
         [ResourceType.Brick]: 24,
@@ -1083,9 +1100,107 @@ export function useCatanGame() {
     return state;
   }, [generateBoard]);
 
+  const resolveInitialRoll = useCallback(() => {
+    setGameState(prev => {
+      if (!prev || prev.phase !== 'initial_dice_roll' || !prev.hasRolled) return prev;
+
+      const currentId = prev.players[prev.currentPlayerIndex].id;
+      const rollSum = prev.dice[0] + prev.dice[1];
+      
+      const playerHistory = prev.initialDiceRolls[currentId] || [];
+      const newHistory = [...playerHistory, rollSum];
+      const newRolls = { ...prev.initialDiceRolls, [currentId]: newHistory };
+
+      const queue = prev.initialRollQueue ? [...prev.initialRollQueue] : [];
+      const queueIndex = queue.indexOf(currentId);
+      if (queueIndex !== -1) queue.splice(queueIndex, 1);
+
+      if (queue.length > 0) {
+         return {
+             ...prev,
+             initialDiceRolls: newRolls,
+             initialRollQueue: queue,
+             currentPlayerIndex: prev.players.findIndex(p => p.id === queue[0]),
+             hasRolled: false,
+             dice: [0, 0]
+         };
+      }
+
+      const playersByHistory = prev.players.map(p => ({ id: p.id, history: newRolls[p.id] || [] }));
+
+      playersByHistory.sort((a, b) => {
+          const minLen = Math.min(a.history.length, b.history.length);
+          for (let i = 0; i < minLen; i++) {
+              if (b.history[i] !== a.history[i]) {
+                  return b.history[i] - a.history[i];
+              }
+          }
+          return b.history.length - a.history.length;
+      });
+
+      const ties = new Set<number>();
+      for (let i = 0; i < playersByHistory.length - 1; i++) {
+          const a = playersByHistory[i];
+          const b = playersByHistory[i+1];
+          if (a.history.length === b.history.length) {
+              let isTie = true;
+              for (let j = 0; j < a.history.length; j++) {
+                  if (a.history[j] !== b.history[j]) isTie = false;
+              }
+              if (isTie) {
+                  ties.add(a.id);
+                  ties.add(b.id);
+              }
+          }
+      }
+
+      if (ties.size > 0) {
+          const newQueue = Array.from(ties);
+          return {
+              ...prev,
+              initialDiceRolls: newRolls,
+              initialRollQueue: newQueue,
+              currentPlayerIndex: prev.players.findIndex(p => p.id === newQueue[0]),
+              hasRolled: false,
+              dice: [0, 0]
+          };
+      }
+
+      const newPlayers = playersByHistory.map(ph => {
+          return { ...prev.players.find(p => p.id === ph.id)! };
+      });
+      
+      const newRollsKeysReassigned: Record<number, number[]> = {};
+      newPlayers.forEach((p, idx) => {
+          newRollsKeysReassigned[idx] = newRolls[p.id];
+          p.id = idx;
+      });
+
+      return {
+          ...prev,
+          players: newPlayers,
+          initialDiceRolls: newRollsKeysReassigned,
+          initialRollQueue: [],
+          phase: 'setup',
+          currentPlayerIndex: 0,
+          hasRolled: false,
+          dice: [0, 0]
+      };
+    });
+  }, []);
+
   const rollDice = useCallback(() => {
     setGameState(prev => {
-      if (!prev || prev.phase === 'setup' || prev.hasRolled) return prev;
+      if (!prev) return prev;
+
+      if (prev.phase === 'initial_dice_roll') {
+        if (prev.hasRolled) return prev;
+        const d1 = Math.floor(Math.random() * 6) + 1;
+        const d2 = Math.floor(Math.random() * 6) + 1;
+        return { ...prev, dice: [d1, d2], hasRolled: true };
+      }
+
+      if (prev.phase === 'setup' || prev.hasRolled) return prev;
       
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
@@ -1094,6 +1209,7 @@ export function useCatanGame() {
       const next = { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
       
       if (total === 7) {
+        next.activeBuildMode = null;
         // Check for players with >= 7 cards
         const pendingDiscards: { playerId: number, amount: number }[] = [];
         next.players.forEach(p => {
@@ -1205,7 +1321,7 @@ export function useCatanGame() {
 
   const nextTurn = useCallback(() => {
     setGameState(prev => {
-      if (!prev || prev.phase === 'setup') return prev;
+      if (!prev || prev.phase === 'setup' || prev.phase === 'finished') return prev;
       
       const updatedPlayers = [...prev.players];
       updatedPlayers[prev.currentPlayerIndex] = {
@@ -1227,6 +1343,20 @@ export function useCatanGame() {
     });
   }, []);
 
+  const calculatePlayerScore = (p: Player) => {
+    const unplayedVPCards = p.devCards.filter(c => c === DevCardType.VictoryPoint).length;
+    const vpBoughtThisTurn = (p.devCardsBoughtThisTurn || []).filter(c => c === DevCardType.VictoryPoint).length;
+    // victoryPoints tracks bonus points (Longest Road, Largest Army, Played VP cards, Island bonus)
+    return (p.settlements * 1) + (p.cities * 2) + p.victoryPoints + unplayedVPCards + vpBoughtThisTurn;
+  };
+
+  const checkWinner = (players: Player[]) => {
+    // Standard Catan rule: you can only win during your turn
+    // (though in some digital versions it's immediate)
+    const winner = players.find(p => calculatePlayerScore(p) >= 14);
+    return winner ? winner.id : null;
+  };
+ 
   const buildRoad = useCallback((edgeId: string) => {
     setGameState(prev => {
       if (!prev) return null;
@@ -1238,11 +1368,18 @@ export function useCatanGame() {
       const hasLand = hexes.some(h => h.type !== HexType.Sea && !h.isOuterSea);
       if (!hasLand) return prev;
 
-      // Check for Pirate
-      const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
-      if (hasPirate) return prev;
+      // Check if occupied
+      if (prev.roads.some(r => r.edgeId === edgeId) || prev.ships.some(s => s.edgeId === edgeId)) return prev;
 
       const isSetup = prev.phase === 'setup';
+      
+      const totalRoads = prev.roads.filter(r => r.playerId === player.id).length;
+      if (totalRoads >= 15) {
+          console.warn("Road limit reached (15)");
+          // Clear build mode if active, since we hit the limit
+          return { ...prev, activeBuildMode: null };
+      }
+
       const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
       const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
 
@@ -1288,6 +1425,7 @@ export function useCatanGame() {
       const updatedPlayers = [...prev.players];
       const updatedPlayer = { 
         ...player, 
+        roads: player.roads + 1,
         resources: { ...player.resources } 
       };
       const updatedBank = { ...prev.bankResources };
@@ -1327,19 +1465,37 @@ export function useCatanGame() {
       const newRoads = [...prev.roads, { edgeId, playerId: player.id }];
       const { players: playersAfterRoad, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, newRoads, prev.ships, prev.settlements, prev.longestRoadPlayerId);
 
+      const winnerId = checkWinner(playersAfterRoad);
+
+      // Check if player can still build another road
+      const costRoad = COSTS.road;
+      let stillCanBuildRoad = true;
+      if (nextPhase === 'road_building') {
+        stillCanBuildRoad = (nextFreeRoads || 0) > 0;
+      } else {
+        for (const [res, amt] of Object.entries(costRoad)) {
+          if (playersAfterRoad[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+            stillCanBuildRoad = false;
+            break;
+          }
+        }
+        if (playersAfterRoad[prev.currentPlayerIndex].roads >= 15) stillCanBuildRoad = false;
+      }
+
       return {
         ...prev,
         players: playersAfterRoad,
         bankResources: updatedBank,
         roads: newRoads,
-        phase: nextPhase,
+        phase: winnerId !== null ? 'finished' : nextPhase,
+        winnerId,
         playingDevCard: nextPhase === 'main' ? null : prev.playingDevCard,
         setupStep: nextStep,
         currentPlayerIndex: nextPlayerIdx,
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
-        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        activeBuildMode: winnerId !== null ? null : (isSetup ? (nextPhase === 'main' ? null : 'settlement') : (stillCanBuildRoad ? 'road' : null)),
       };
     });
   }, []);
@@ -1351,6 +1507,12 @@ export function useCatanGame() {
       
       const isSetup = prev.phase === 'setup';
       if (isSetup) return prev; // Cannot build ships in setup
+
+      const totalShips = prev.ships.filter(s => s.playerId === player.id).length;
+      if (totalShips >= 15) {
+          console.warn("Ship limit reached (15)");
+          return { ...prev, activeBuildMode: null };
+      }
 
       if (prev.phase === 'road_building') {
         // Free ship
@@ -1392,9 +1554,13 @@ export function useCatanGame() {
       const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
       if (hasPirate) return prev;
 
+      // Check if occupied
+      if (prev.roads.some(r => r.edgeId === edgeId) || prev.ships.some(s => s.edgeId === edgeId)) return prev;
+
       const updatedPlayers = [...prev.players];
       const updatedPlayer = { 
         ...player, 
+        ships: player.ships + 1,
         resources: { ...player.resources } 
       };
       const updatedBank = { ...prev.bankResources };
@@ -1418,17 +1584,35 @@ export function useCatanGame() {
       const newShips = [...prev.ships, { edgeId, playerId: player.id }];
       const { players: playersAfterShip, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, newShips, prev.settlements, prev.longestRoadPlayerId);
 
+      const winnerId = checkWinner(playersAfterShip);
+
+      // Check if player can still build another ship
+      const costShip = COSTS.ship;
+      let stillCanBuildShip = true;
+      if (prev.phase === 'road_building') {
+        stillCanBuildShip = (nextFreeRoads || 0) > 0;
+      } else {
+        for (const [res, amt] of Object.entries(costShip)) {
+          if (playersAfterShip[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+            stillCanBuildShip = false;
+            break;
+          }
+        }
+        if (playersAfterShip[prev.currentPlayerIndex].ships >= 15) stillCanBuildShip = false;
+      }
+
       return {
         ...prev,
         players: playersAfterShip,
         bankResources: updatedBank,
         ships: newShips,
-        phase: nextPhase,
+        phase: winnerId !== null ? 'finished' : nextPhase,
+        winnerId,
         playingDevCard: nextPhase === 'main' ? null : prev.playingDevCard,
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: true,
         longestRoadPlayerId,
-        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        activeBuildMode: (winnerId !== null || !stillCanBuildShip) ? null : 'ship',
       };
     });
   }, []);
@@ -1441,11 +1625,6 @@ export function useCatanGame() {
       const isSetup = prev.phase === 'setup';
       const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
       const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
-
-      // Check for Pirate
-      const hexes = getHexesForVertex(prev.board, vertexId);
-      const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
-      if (hasPirate) return prev;
 
       // Cannot build on pure Sea vertices
       const isAllSea = hexIds.every(id => {
@@ -1465,6 +1644,12 @@ export function useCatanGame() {
         });
         if (isGold) return prev;
       } else {
+        // Settlement limit (5 in standard Catan)
+        if (player.settlements >= 5) {
+          console.warn("Settlement limit reached (5)");
+          return prev;
+        }
+
         const cost = COSTS.settlement;
         for (const [res, amt] of Object.entries(cost)) {
           if (player.resources[res as ResourceType] < amt) return prev;
@@ -1556,6 +1741,19 @@ export function useCatanGame() {
 
       const newSettlements = [...prev.settlements, { vertexId, hexIds, playerId: player.id, isCity: false }];
       const { players: playersAfterSettlement, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, prev.ships, newSettlements, prev.longestRoadPlayerId);
+      
+      const winnerId = checkWinner(playersAfterSettlement);
+      
+      // Check if player can still build another settlement
+      const cost = COSTS.settlement;
+      let stillCanBuild = true;
+      for (const [res, amt] of Object.entries(cost)) {
+        if (playersAfterSettlement[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+          stillCanBuild = false;
+          break;
+        }
+      }
+      if (playersAfterSettlement[prev.currentPlayerIndex].settlements >= 5) stillCanBuild = false;
 
       return {
         ...prev,
@@ -1564,7 +1762,9 @@ export function useCatanGame() {
         settlements: newSettlements,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
-        activeBuildMode: null,
+        winnerId,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        activeBuildMode: winnerId !== null ? null : (isSetup ? 'road' : (stillCanBuild ? 'settlement' : null)),
       };
     });
   }, []);
@@ -1574,6 +1774,12 @@ export function useCatanGame() {
       if (!prev) return null;
       const player = prev.players[prev.currentPlayerIndex];
       const cost = COSTS.city;
+
+      // City limit (4 in standard Catan)
+      if (player.cities >= 4) {
+        console.warn("City limit reached (4)");
+        return prev;
+      }
 
       for (const [res, amt] of Object.entries(cost)) {
         if (player.resources[res as ResourceType] < amt) return prev;
@@ -1604,6 +1810,19 @@ export function useCatanGame() {
 
       const updatedSettlements = [...prev.settlements];
       updatedSettlements[settlementIdx] = { ...updatedSettlements[settlementIdx], isCity: true };
+      
+      const winnerId = checkWinner(updatedPlayers);
+
+      // Check if player can still build another city
+      const costCity = COSTS.city;
+      let stillCanBuild = true;
+      for (const [res, amt] of Object.entries(costCity)) {
+        if (updatedPlayers[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+          stillCanBuild = false;
+          break;
+        }
+      }
+      if (updatedPlayers[prev.currentPlayerIndex].cities >= 4) stillCanBuild = false;
 
       return {
         ...prev,
@@ -1611,7 +1830,9 @@ export function useCatanGame() {
         bankResources: updatedBank,
         settlements: updatedSettlements,
         hasBuiltThisTurn: true,
-        activeBuildMode: null,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        winnerId,
+        activeBuildMode: (winnerId !== null || !stillCanBuild) ? null : 'city',
       };
     });
   }, []);
@@ -1643,6 +1864,8 @@ export function useCatanGame() {
         updatedBankResources[res as ResourceType] += amt;
       }
       updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
+      
+      const winnerId = checkWinner(updatedPlayers);
 
       return {
         ...prev,
@@ -1650,6 +1873,8 @@ export function useCatanGame() {
         bankResources: updatedBankResources,
         bankDevCards: updatedBankDevCards,
         hasBuiltThisTurn: true,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        winnerId,
       };
     });
   }, []);
@@ -1672,6 +1897,16 @@ export function useCatanGame() {
       };
       let nextPhase = prev.phase;
       let freeRoads = prev.freeRoads;
+      
+      let newEvent = prev.lastDevCardEvent;
+      if (cardType !== DevCardType.VictoryPoint) {
+        let actionStr = '';
+        if (cardType === DevCardType.Knight) actionStr = '发动骑士';
+        else if (cardType === DevCardType.Monopoly) actionStr = '开启垄断';
+        else if (cardType === DevCardType.YearOfPlenty) actionStr = '使用丰收之年';
+        else if (cardType === DevCardType.RoadBuilding) actionStr = '使用道路建设';
+        newEvent = { playerName: player.name, cardType: actionStr, timestamp: Date.now() };
+      }
       
       if (cardType === DevCardType.VictoryPoint) {
         // VP cards shouldn't be playable manually, but just in case
@@ -1719,15 +1954,19 @@ export function useCatanGame() {
         }
       }
 
+      const winnerId = checkWinner(updatedPlayers);
+      
       return { 
         ...prev, 
         players: updatedPlayers, 
-        phase: nextPhase, 
+        phase: winnerId !== null ? 'finished' : nextPhase, 
+        winnerId,
         freeRoads,
         hasPlayedDevCardThisTurn: cardType !== DevCardType.VictoryPoint,
         playingDevCard: cardType !== DevCardType.VictoryPoint ? cardType : null,
         largestArmyPlayerId: newLargestArmyPlayerId,
         activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        lastDevCardEvent: newEvent,
       };
     });
   }, []);
@@ -1815,7 +2054,7 @@ export function useCatanGame() {
 
   const moveRobber = useCallback((hexId: string) => {
     setGameState(prev => {
-      if (!prev || prev.phase !== 'robber') return prev;
+      if (!prev || (prev.phase !== 'robber' && prev.phase !== 'robber_move')) return prev;
       const hex = prev.board.find(h => h.id === hexId);
       if (!hex || hex.type === HexType.Sea) return prev;
       
@@ -1846,7 +2085,7 @@ export function useCatanGame() {
 
   const movePirate = useCallback((hexId: string) => {
     setGameState(prev => {
-      if (!prev || prev.phase !== 'robber') return prev;
+      if (!prev || (prev.phase !== 'robber' && prev.phase !== 'robber_move')) return prev;
       const hex = prev.board.find(h => h.id === hexId);
       if (!hex || hex.type !== HexType.Sea) return prev;
       
@@ -1944,6 +2183,16 @@ export function useCatanGame() {
     });
   }, []);
 
+  const selectStealTarget = useCallback((playerId: number | null) => {
+    setGameState(prev => {
+      if (!prev || prev.phase !== 'stealing') return prev;
+      return {
+        ...prev,
+        selectedStealTarget: playerId
+      };
+    });
+  }, []);
+
   const stealResource = useCallback((fromPlayerId: number) => {
     setGameState(prev => {
       if (!prev || prev.phase !== 'stealing') return prev;
@@ -1973,6 +2222,7 @@ export function useCatanGame() {
         players: updatedPlayers,
         phase: 'main',
         pendingStealFrom: [],
+        selectedStealTarget: null,
         playingDevCard: null
       };
     });
@@ -2206,6 +2456,9 @@ export function useCatanGame() {
       if (!prev) return prev;
       const offers = (prev.tradeOffers || []).map(offer => {
         if (offer.id === tradeId) {
+          // Prevent duplicate reactions
+          if (offer.acceptedBy.includes(playerId) || offer.rejectedBy.includes(playerId)) return offer;
+          
           if (reaction === 'accept') {
             return { ...offer, acceptedBy: [...offer.acceptedBy, playerId] };
           } else {
@@ -2285,12 +2538,18 @@ export function useCatanGame() {
     });
   }, []);
 
+  const resetGame = useCallback(() => {
+    setGameState(null);
+  }, []);
+
   return {
     gameState,
     syncGameState,
+    resetGame,
     initGame,
     toggleBot,
     rollDice,
+    resolveInitialRoll,
     nextTurn,
     buildRoad,
     buildShip,
@@ -2304,6 +2563,7 @@ export function useCatanGame() {
     resolveMonopoly,
     moveRobber,
     movePirate,
+    selectStealTarget,
     stealResource,
     selectGoldResource,
     addResources,
