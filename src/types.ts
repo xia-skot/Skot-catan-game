@@ -55,6 +55,8 @@ export interface Player {
   playedDevCards: DevCardType[];
   knightsPlayed: number;
   longestRoadLength: number;
+  vpCardsCount: number;
+  islandBonusPoints: number;
   sessionId?: string;
 }
 
@@ -88,23 +90,28 @@ export interface GameState {
   settlements: Settlement[];
   roads: Road[];
   ships: Ship[];
-  phase: 'setup' | 'main' | 'discard' | 'robber' | 'stealing' | 'gold_selection' | 'year_of_plenty' | 'monopoly' | 'road_building' | 'rolling_7';
+  phase: 'setup' | 'main' | 'discard' | 'robber' | 'robber_move' | 'stealing' | 'gold_selection' | 'year_of_plenty' | 'monopoly' | 'road_building' | 'rolling_7' | 'finished' | 'initial_dice_roll' | 'order_determination';
   setupStep: number; // 0 to (playerCount * 2 - 1)
+  initialDiceRolls: Record<number, number[]>; // Maps playerId to dice roll history
+  initialRollQueue?: number[]; // Queue of playerIds who need to roll
   hasRolled: boolean;
   hasBuiltThisTurn: boolean;
   hasPlayedDevCardThisTurn: boolean;
   longestRoadPlayerId: number | null;
   largestArmyPlayerId: number | null;
+  winnerId: number | null;
   bankResources: Record<ResourceType, number>;
   bankDevCards: DevCardType[]; // Deck of development cards
   mapType: MapType;
   pendingStealFrom: number[]; // Player IDs to steal from
+  selectedStealTarget?: number | null; // Player ID being targeted for steal
   pendingGoldRewards: { playerId: number, amount: number }[]; // Players who need to pick gold rewards
   pendingDiscards: { playerId: number, amount: number }[]; // Players who need to discard cards
   freeRoads?: number;
   playingDevCard?: DevCardType | null;
   activeBuildMode?: 'road' | 'settlement' | 'city' | 'ship' | null;
   tradeOffers: TradeOffer[];
+  lastDevCardEvent?: { playerName: string; cardType: string; timestamp: number } | null;
 }
 
 export interface Settlement {
