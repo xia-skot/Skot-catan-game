@@ -19,6 +19,14 @@ export const RESOURCE_NAMES: Record<ResourceType, string> = {
   [ResourceType.Ore]: '矿石',
 };
 
+export const RESOURCE_EMOJIS: Record<ResourceType, string> = {
+  [ResourceType.Lumber]: '🌲',
+  [ResourceType.Brick]: '🧱',
+  [ResourceType.Wool]: '🐑',
+  [ResourceType.Grain]: '🌾',
+  [ResourceType.Ore]: '⛰️',
+};
+
 export const HEX_NAMES: Record<HexType, string> = {
   [HexType.Forest]: '森林',
   [HexType.Hills]: '丘陵',
@@ -45,7 +53,7 @@ export const PLAYER_COLORS = [
   '#E74C3C', // Red
   '#3498DB', // Blue
   '#F1C40F', // Yellow
-  '#FFFFFF', // White
+  '#E67E22', // Orange
   '#2ECC71', // Green
   '#8E44AD', // Purple
 ];
