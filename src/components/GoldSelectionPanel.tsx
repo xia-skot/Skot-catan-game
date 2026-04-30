@@ -1,15 +1,16 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { ResourceType } from '../types';
-import { RESOURCE_COLORS, RESOURCE_NAMES } from '../constants';
+import { RESOURCE_NAMES } from '../constants';
+import { RESOURCE_ICONS } from '../images';
 
 interface GoldSelectionPanelProps {
   bankResources: Record<ResourceType, number>;
   amount: number;
-  onSelect: (resources: Record<ResourceType, number>) => void;
+  onSelect: (selected: Record<ResourceType, number>) => void;
 }
 
-export const GoldSelectionPanel = ({ bankResources, amount, onSelect }: GoldSelectionPanelProps) => {
-  const [selected, setSelected] = useState<Record<ResourceType, number>>({
+export const GoldSelectionPanel: React.FC<GoldSelectionPanelProps> = ({ bankResources, amount, onSelect }) => {
+  const [selections, setSelections] = useState<Record<ResourceType, number>>({
     [ResourceType.Lumber]: 0,
     [ResourceType.Brick]: 0,
     [ResourceType.Wool]: 0,
@@ -17,60 +18,56 @@ export const GoldSelectionPanel = ({ bankResources, amount, onSelect }: GoldSele
     [ResourceType.Ore]: 0,
   });
 
-  const totalSelected = Object.values(selected).reduce((a, b) => a + b, 0);
+  const totalSelected = Object.values(selections).reduce((a, b) => a + b, 0);
 
-  const handleIncrement = (res: ResourceType) => {
-    if (totalSelected < amount && bankResources[res] > selected[res]) {
-      setSelected(prev => ({ ...prev, [res]: prev[res] + 1 }));
-    }
-  };
-
-  const handleDecrement = (res: ResourceType) => {
-    if (selected[res] > 0) {
-      setSelected(prev => ({ ...prev, [res]: prev[res] - 1 }));
+  const handleAdjust = (res: ResourceType, delta: number) => {
+    const newVal = selections[res] + delta;
+    if (newVal >= 0 && (delta < 0 || totalSelected < amount) && (delta < 0 || bankResources[res] > selections[res])) {
+      setSelections(prev => ({ ...prev, [res]: newVal }));
     }
   };
 
   return (
-    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xl shadow-indigo-50/50">
-      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] mb-4 text-center text-slate-400">选择 {amount} 张黄金资源 ({totalSelected}/{amount})</h4>
-      <div className="space-y-2 mb-6">
-        {Object.entries(bankResources).map(([res, count]) => {
-          const resourceType = res as ResourceType;
-          if (count === 0) return null;
-          return (
-            <div key={res} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-5 h-5 rounded-full shadow-sm border border-black/5" style={{ backgroundColor: RESOURCE_COLORS[resourceType] }} />
-                <span className="font-bold text-xs text-slate-700">{RESOURCE_NAMES[resourceType]} <span className="opacity-40 ml-1">({count})</span></span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => handleDecrement(resourceType)}
-                  disabled={selected[resourceType] === 0}
-                  className="w-8 h-8 bg-white border border-slate-200 rounded-full flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shadow-sm active:scale-95 text-slate-400"
-                >
-                  -
-                </button>
-                <span className="font-mono text-sm w-5 text-center font-bold text-slate-600">{selected[resourceType]}</span>
-                <button 
-                  onClick={() => handleIncrement(resourceType)}
-                  disabled={totalSelected >= amount || selected[resourceType] >= count}
-                  className="w-8 h-8 bg-slate-900 text-white rounded-full flex items-center justify-center hover:bg-black disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-md active:scale-95"
-                >
-                  +
-                </button>
-              </div>
+    <div className="bg-white p-4 lg:p-6 rounded-[2rem] border border-black/15 shadow-2xl">
+      <h3 className="text-lg lg:text-xl font-serif font-black italic text-orange-600 mb-1 lg:mb-2 text-center">淘金热！</h3>
+      <p className="text-[9px] lg:text-[10px] text-stone-500 uppercase tracking-widest mb-4 lg:mb-6 text-center">请选择 {amount} 份资源 (已选 {totalSelected}/{amount})</p>
+      
+      <div className="space-y-1.5 lg:space-y-2 mb-4 lg:mb-6">
+        {Object.values(ResourceType).map(res => (
+          <div key={res} className="flex items-center justify-between p-2 lg:p-3 rounded-xl border border-black/5 bg-stone-50/50">
+            <div className="flex items-center gap-2 lg:gap-3">
+              <img src={RESOURCE_ICONS[res]} className="w-5 h-5 lg:w-6 lg:h-6 object-contain" alt={RESOURCE_NAMES[res]} referrerPolicy="no-referrer" />
+              <span className="text-[10px] lg:text-xs font-bold font-serif">{RESOURCE_NAMES[res]}</span>
+              <span className="text-[8px] lg:text-[9px] opacity-30 font-mono">库存: {bankResources[res]}</span>
             </div>
-          );
-        })}
+            
+            <div className="flex items-center gap-2 lg:gap-3">
+              <button 
+                onClick={() => handleAdjust(res, -1)}
+                disabled={selections[res] <= 0}
+                className="w-6 h-6 lg:w-8 lg:h-8 rounded-full bg-white border border-black/10 flex items-center justify-center hover:bg-stone-100 disabled:opacity-20 transition-all font-bold text-[10px] lg:text-base"
+              >
+                -
+              </button>
+              <span className="w-3 lg:w-4 text-center font-mono font-bold text-xs lg:text-sm">{selections[res]}</span>
+              <button 
+                onClick={() => handleAdjust(res, 1)}
+                disabled={totalSelected >= amount || selections[res] >= bankResources[res]}
+                className="w-6 h-6 lg:w-8 lg:h-8 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:opacity-20 transition-all font-bold text-[10px] lg:text-base"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
+
       <button 
-        onClick={() => onSelect(selected)}
         disabled={totalSelected !== amount}
-        className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-[0.98]"
+        onClick={() => onSelect(selections)}
+        className="w-full py-3 lg:py-4 bg-orange-600 text-white rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[11px] shadow-xl shadow-orange-200 hover:bg-orange-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
       >
-        确认领取
+        确认领取资源
       </button>
     </div>
   );
