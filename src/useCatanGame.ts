@@ -50,23 +50,38 @@ export function getHexesForVertex(board: any[], vertexId: string) {
 }
 
 export function calculateLongestRoad(playerId: number, roads: Road[], ships: Ship[], settlements: Settlement[]): number {
-  const playerEdges = [...roads, ...ships].filter(e => e.playerId === playerId).map(e => e.edgeId);
-  if (playerEdges.length === 0) return 0;
+  const playerRoads = roads.filter(e => e.playerId === playerId).map(e => e.edgeId);
+  const playerShips = ships.filter(e => e.playerId === playerId).map(e => e.edgeId);
+  if (playerRoads.length === 0 && playerShips.length === 0) return 0;
 
   const opponentSettlements = new Set(settlements.filter(s => s.playerId !== playerId).map(s => s.vertexId));
 
-  const adj: Record<string, string[]> = {};
-  for (const edge of playerEdges) {
-    const [v1, v2] = edge.split('|');
+  const allPlayerEdges = [
+    ...playerRoads.map(e => ({ id: e, type: 'road' })),
+    ...playerShips.map(e => ({ id: e, type: 'ship' }))
+  ];
+
+  const edgeToIdx: Record<string, number> = {};
+  let eIdx = 0;
+  for (const e of allPlayerEdges) {
+    if (edgeToIdx[e.id] === undefined) {
+      edgeToIdx[e.id] = eIdx++;
+    }
+  }
+
+  const adj: Record<string, { idx: number, type: string, nextVertex: string }[]> = {};
+  for (const edge of allPlayerEdges) {
+    const [v1, v2] = edge.id.split('|');
     if (!adj[v1]) adj[v1] = [];
     if (!adj[v2]) adj[v2] = [];
-    adj[v1].push(edge);
-    adj[v2].push(edge);
+    const idx = edgeToIdx[edge.id];
+    adj[v1].push({ idx, type: edge.type, nextVertex: v2 });
+    adj[v2].push({ idx, type: edge.type, nextVertex: v1 });
   }
 
   let maxLength = 0;
 
-  function dfs(currentVertex: string, visitedEdges: Set<string>, currentLength: number) {
+  function dfsFast(currentVertex: string, visitedMask: number, currentLength: number) {
     if (currentLength > maxLength) {
       maxLength = currentLength;
     }
@@ -76,19 +91,17 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
     }
 
     const edges = adj[currentVertex] || [];
-    for (const edge of edges) {
-      if (!visitedEdges.has(edge)) {
-        visitedEdges.add(edge);
-        const [v1, v2] = edge.split('|');
-        const nextVertex = v1 === currentVertex ? v2 : v1;
-        dfs(nextVertex, visitedEdges, currentLength + 1);
-        visitedEdges.delete(edge);
+    for (let i = 0; i < edges.length; i++) {
+      const edge = edges[i];
+      const bit = 1 << edge.idx;
+      if ((visitedMask & bit) === 0) {
+        dfsFast(edge.nextVertex, visitedMask | bit, currentLength + 1);
       }
     }
   }
 
   for (const startVertex of Object.keys(adj)) {
-    dfs(startVertex, new Set<string>(), 0);
+    dfsFast(startVertex, 0, 0);
   }
 
   return maxLength;
@@ -286,6 +299,16 @@ export function useCatanGame() {
             innerHexes[i].category = 'Mainland';
         }
         fillMainlandHoles(shape);
+
+        // Standard map MUST have at least one desert (1 for small, 2 for large)
+        const mainlandHexes = shape.filter(s => s.category === 'Mainland');
+        const numStandardDeserts = isLarge ? 2 : 1;
+        for (let i = 0; i < numStandardDeserts && i < mainlandHexes.length; i++) {
+            // Picking random mainland hexes for desert
+            const randomIndex = Math.floor(Math.random() * mainlandHexes.length);
+            const target = mainlandHexes.splice(randomIndex, 1)[0];
+            target.category = 'Desert';
+        }
     } else {
         let minIslands = 2, maxIslands = 3, minIslandSize = 2, maxIslandSize = 4, minTotalIslandHexes = 8, maxTotalIslandHexes = 9;
         if (playerCount === 5) { minIslands = 3; maxIslands = 4; minIslandSize = 2; maxIslandSize = 4; minTotalIslandHexes = 10; maxTotalIslandHexes = 11; }
@@ -619,250 +642,128 @@ export function useCatanGame() {
   }, []);
 
   const distributeResources = useCallback((hexes: Hex[], mapType: MapType, playerCount: number) => {
-      const newHexes = hexes.map(h => ({...h}));
+      // Clone hexes to avoid mutating original topology data
+      const newHexes = hexes.map(h => ({...h, number: null}));
       
-      let landCounts: Partial<Record<HexType, number>> = {};
+      // Identify all land hexes (Mainland + Island)
+      const landHexes = newHexes.filter(h => h.isMainland || h.isIsland);
+      
+      // Separate Desert (Fixed position) from potential resource slots
+      const desertHexes = landHexes.filter(h => h._category === 'Desert' || h.type === HexType.Desert);
+      const availableLandSlots = landHexes.filter(h => !desertHexes.some(d => d.id === h.id));
+      
+      // Reset all land types to Sea temporarily so we can distribute everything fresh
+      availableLandSlots.forEach(h => h.type = HexType.Sea);
+
+      // 1. Determine Gold Mine count and distribution
       let goldCount = 0;
-      
       if (mapType === 'archipelago') {
-        goldCount = 2;
-        let desertCount = 3; // Used only for reference in landCounts, actual deserts are already placed
-        
-        if (playerCount <= 4) { goldCount = 2; desertCount = 3; }
-        else if (playerCount === 6) { goldCount = 3; desertCount = 5; }
-        
-        // Dynamically calculate available spots for resources
-        // Filter hexes that are Land (Mainland or Island) AND NOT Desert (which are already fixed)
-        const availableLandHexes = hexes.filter(h => (h.isMainland || h.isIsland) && h.type !== HexType.Desert);
-        const resourceTotal = availableLandHexes.length - goldCount;
-        
-        const resourceTypes = [HexType.Forest, HexType.Hills, HexType.Pasture, HexType.Fields, HexType.Mountains];
-        
-        if (playerCount <= 4) {
-             // For 2-4 players, we might want to stick to standard distribution if the map size is close to standard,
-             // but since map size is dynamic, we should scale.
-             // However, to ensure balance, let's try to keep the ratio or just fill dynamically.
-             // Let's use the dynamic filling logic for all player counts in archipelago to be safe.
-             const baseCount = Math.floor(resourceTotal / 5);
-             const counts: Record<string, number> = {};
-             resourceTypes.forEach(t => counts[t] = baseCount);
-             let remaining = resourceTotal - (baseCount * 5);
-             while (remaining > 0) {
-                 const type = resourceTypes[Math.floor(Math.random() * resourceTypes.length)];
-                 counts[type]++;
-                 remaining--;
-             }
-             landCounts = {
-                 [HexType.Forest]: counts[HexType.Forest], [HexType.Hills]: counts[HexType.Hills], [HexType.Pasture]: counts[HexType.Pasture],
-                 [HexType.Fields]: counts[HexType.Fields], [HexType.Mountains]: counts[HexType.Mountains],
-                 [HexType.Gold]: goldCount, [HexType.Desert]: desertCount
-             };
-        } else {
-            const baseCount = Math.floor(resourceTotal / 5);
-            const counts: Record<string, number> = {};
-            resourceTypes.forEach(t => counts[t] = baseCount);
-            let remaining = resourceTotal - (baseCount * 5);
-            while (remaining > 0) {
-                const type = resourceTypes[Math.floor(Math.random() * resourceTypes.length)];
-                counts[type]++;
-                remaining--;
-            }
-            landCounts = {
-                [HexType.Forest]: counts[HexType.Forest], [HexType.Hills]: counts[HexType.Hills], [HexType.Pasture]: counts[HexType.Pasture],
-                [HexType.Fields]: counts[HexType.Fields], [HexType.Mountains]: counts[HexType.Mountains],
-                [HexType.Gold]: goldCount, [HexType.Desert]: desertCount
-            };
-        }
+          goldCount = playerCount <= 4 ? 2 : 3;
       } else {
-         const isLarge = playerCount > 4;
-         landCounts = isLarge 
-          ? { [HexType.Forest]: 8, [HexType.Hills]: 6, [HexType.Pasture]: 8, [HexType.Fields]: 8, [HexType.Mountains]: 6, [HexType.Gold]: 0, [HexType.Desert]: 1 }
-          : { [HexType.Forest]: 4, [HexType.Hills]: 3, [HexType.Pasture]: 4, [HexType.Fields]: 4, [HexType.Mountains]: 3, [HexType.Gold]: 0, [HexType.Desert]: 1 };
+          goldCount = playerCount > 4 ? 1 : 0;
       }
 
-      const resourcePool: HexType[] = [];
-      for (const [type, count] of Object.entries(landCounts)) {
-          if (type === HexType.Desert || type === HexType.Gold) continue;
-          for (let i = 0; i < (count as number); i++) resourcePool.push(type as HexType);
-      }
-      resourcePool.sort(() => Math.random() - 0.5);
-
-      const landHexes = newHexes.filter(h => (h.isMainland || h.isIsland) && h.type !== HexType.Desert);
-      
-      // Distribute Gold Mines across different islands if possible
-      const islandHexes = landHexes.filter(h => h.isIsland);
-      const mainlandHexes = landHexes.filter(h => h.isMainland);
-      
-      // Group islands by ID
-      const islandsById = new Map<number, Hex[]>();
-      islandHexes.forEach(h => {
-          if (h.islandId) {
-              if (!islandsById.has(h.islandId)) islandsById.set(h.islandId, []);
-              islandsById.get(h.islandId)!.push(h);
-          }
-      });
-
-      const islandIds = Array.from(islandsById.keys()).sort(() => Math.random() - 0.5);
       let goldPlaced = 0;
+      // In Archipelago, gold should preferentially be on DIFFERENT Islands for balanced exploration
+      if (mapType === 'archipelago') {
+          const islandHexes = availableLandSlots.filter(h => h.isIsland);
+          const islandsById = new Map<number, Hex[]>();
+          islandHexes.forEach(h => {
+              if (h.islandId !== undefined) {
+                  if (!islandsById.has(h.islandId)) islandsById.set(h.islandId, []);
+                  islandsById.get(h.islandId)!.push(h);
+              }
+          });
 
-      // First pass: one gold per island
-      for (const id of islandIds) {
-          if (goldPlaced >= goldCount) break;
-          const hexesOnIsland = islandsById.get(id)!;
-          // Filter out hexes that are already gold (though in first pass none should be)
-          const candidates = hexesOnIsland.filter(h => h.type !== HexType.Gold && h.type !== HexType.Desert);
-          if (candidates.length > 0) {
-              const randomHex = candidates[Math.floor(Math.random() * candidates.length)];
+          const islandIds = Array.from(islandsById.keys()).sort(() => Math.random() - 0.5);
+          
+          // First pass: one gold per island
+          for (const id of islandIds) {
+              if (goldPlaced >= goldCount) break;
+              const islandHexes = islandsById.get(id)!;
+              const randomHex = islandHexes[Math.floor(Math.random() * islandHexes.length)];
               randomHex.type = HexType.Gold;
               goldPlaced++;
           }
       }
 
-      // Second pass: fill remaining gold on random islands ONLY (never mainland)
-      while (goldPlaced < goldCount) {
-          const remainingCandidates = islandHexes.filter(h => h.type !== HexType.Gold && h.type !== HexType.Desert);
-          if (remainingCandidates.length === 0) break;
-          const randomHex = remainingCandidates[Math.floor(Math.random() * remainingCandidates.length)];
-          randomHex.type = HexType.Gold;
+      // Fill remaining gold if needed (or for standard map)
+      const remainingForGold = availableLandSlots.filter(h => h.type === HexType.Sea);
+      const shuffledRemainingForGold = [...remainingForGold].sort(() => Math.random() - 0.5);
+      for (const hex of shuffledRemainingForGold) {
+          if (goldPlaced >= goldCount) break;
+          hex.type = HexType.Gold;
           goldPlaced++;
       }
-      
-      const remainingLand = landHexes.filter(h => h.type !== HexType.Gold);
-      
-      // Improved resource distribution to prevent clustering
-      // We process hexes one by one, trying to pick a resource that doesn't match neighbors
-      const shuffledLand = remainingLand.sort(() => Math.random() - 0.5);
-      
-      for (const hex of shuffledLand) {
-          // Identify neighbors that already have a resource assigned
-          const neighbors = newHexes.filter(n => 
-              n !== hex && 
-              n.type !== HexType.Sea && 
-              n.type !== HexType.Desert && 
-              n.type !== HexType.Gold &&
-              // Check if resource is already assigned (not default Sea/Desert/Gold)
-              // Note: In our logic, unassigned hexes are Sea by default until assigned here, 
-              // but we are iterating through 'remainingLand' which are the target hexes.
-              // However, 'newHexes' contains all hexes. We need to check if a neighbor 
-              // is part of 'remainingLand' AND has already been processed (assigned a type from pool).
-              // Since we haven't assigned yet, we need a way to track assigned status.
-              // Actually, we can just look at the current type. 
-              // But wait, 'remainingLand' hexes currently have their type set to whatever they were initialized with (likely Sea or previous type).
-              // We need to be careful.
-              // Let's use a temporary assignment map or just modify in place and check against the pool.
-              true
-          );
 
-          // Actually, a better approach:
-          // 1. Get neighbors of current hex.
-          // 2. See what resources they have (if they have been assigned a valid resource type).
-          // 3. Try to pick a resource from 'resourcePool' that is NOT in that set.
-          
+      // 2. Distribute Standard Resources
+      const resourceTypes = [HexType.Forest, HexType.Hills, HexType.Pasture, HexType.Fields, HexType.Mountains];
+      const standardResourceSlots = availableLandSlots.filter(h => h.type === HexType.Sea);
+      const resourceTotal = standardResourceSlots.length;
+
+      const baseCount = Math.floor(resourceTotal / 5);
+      const counts: Record<string, number> = {};
+      resourceTypes.forEach(t => counts[t] = baseCount);
+      let remainingExtras = resourceTotal - (baseCount * 5);
+      while (remainingExtras > 0) {
+          const type = resourceTypes[Math.floor(Math.random() * resourceTypes.length)];
+          counts[type]++;
+          remainingExtras--;
+      }
+
+      const resourcePool: HexType[] = [];
+      for (const [type, count] of Object.entries(counts)) {
+          for (let i = 0; i < (count as number); i++) {
+              resourcePool.push(type as HexType);
+          }
+      }
+      resourcePool.sort(() => Math.random() - 0.5);
+
+      // Shuffle slots and assign resources, trying to avoid same-type adjacency
+      const shuffledResourceSlots = [...standardResourceSlots].sort(() => Math.random() - 0.5);
+      for (const hex of shuffledResourceSlots) {
+          const adj = newHexes.filter(n => Math.max(Math.abs(n.q - hex.q), Math.abs(n.r - hex.r), Math.abs((n.q + n.r) - (hex.q + hex.r))) === 1);
           const neighborTypes = new Set<HexType>();
-          const adjacentHexes = newHexes.filter(n => {
-              const dq = Math.abs(n.q - hex.q);
-              const dr = Math.abs(n.r - hex.r);
-              const ds = Math.abs((n.q + n.r) - (hex.q + hex.r));
-              return Math.max(dq, dr, ds) === 1;
-          });
-          
-          adjacentHexes.forEach(n => {
-              // Only consider neighbors that are part of the resource distribution (not Sea/Desert/Gold)
-              // And have already been assigned a valid resource type from the pool
-              if (n.type !== HexType.Sea && n.type !== HexType.Desert && n.type !== HexType.Gold && 
-                  // Check if this neighbor has been assigned a resource from our pool types
-                  [HexType.Forest, HexType.Hills, HexType.Pasture, HexType.Fields, HexType.Mountains].includes(n.type)) {
-                  neighborTypes.add(n.type);
-              }
-          });
+          adj.forEach(n => { if (resourceTypes.includes(n.type)) neighborTypes.add(n.type); });
 
-          // Try to find a resource in the pool that is not in neighborTypes
           const candidateIndex = resourcePool.findIndex(r => !neighborTypes.has(r));
-          
           if (candidateIndex !== -1) {
-              // Found a non-conflicting resource
               hex.type = resourcePool.splice(candidateIndex, 1)[0];
           } else {
-              // No non-conflicting resource found (or pool only has conflicting ones), just take the first one
               hex.type = resourcePool.pop() || HexType.Sea;
           }
       }
 
+      // 3. Distribute Numbers (2-12, skip 7)
+      const hexesNeedingNumbers = newHexes.filter(h => (h.isMainland || h.isIsland) && h.type !== HexType.Desert);
       const baseNumbers = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12];
-      let numbers: number[] = [];
-      const resourceHexes = newHexes.filter(h => h.type !== HexType.Sea && h.type !== HexType.Desert);
-      while (numbers.length < resourceHexes.length) numbers.push(...baseNumbers);
-      numbers = numbers.slice(0, resourceHexes.length).sort(() => Math.random() - 0.5);
+      let numberPool: number[] = [];
+      while (numberPool.length < hexesNeedingNumbers.length) {
+          numberPool.push(...baseNumbers);
+      }
+      numberPool = numberPool.slice(0, hexesNeedingNumbers.length).sort(() => Math.random() - 0.5);
 
       const isRed = (n: number) => n === 6 || n === 8;
-      const areAdjacent = (h1: Hex, h2: Hex) => {
-          const dq = Math.abs(h1.q - h2.q);
-          const dr = Math.abs(h1.r - h2.r);
-          const ds = Math.abs((h1.q + h1.r) - (h2.q + h2.r));
-          return Math.max(dq, dr, ds) === 1;
-      };
+      const areAdjacent = (h1: Hex, h2: Hex) => Math.max(Math.abs(h1.q - h2.q), Math.abs(h1.r - h2.r), Math.abs((h1.q + h1.r) - (h2.q + h2.r))) === 1;
 
-      const getNum = (hex: Hex) => {
-          if (hex.type === HexType.Desert || hex.type === HexType.Sea) return null;
-          for (let i = 0; i < numbers.length; i++) {
-              const n = numbers[i];
-              if (isRed(n)) {
-                  const hasRedNeighbor = newHexes.some(other => other.number !== null && isRed(other.number) && areAdjacent(hex, other));
-                  if (hasRedNeighbor) continue;
-              }
-              return numbers.splice(i, 1)[0];
-          }
-          const nonRedIdx = numbers.findIndex(n => !isRed(n));
-          if (nonRedIdx !== -1) return numbers.splice(nonRedIdx, 1)[0];
-          return numbers.splice(0, 1)[0] || null;
-      };
-      
-      const hexesNeedingNumbers = newHexes.filter(h => h.type !== HexType.Sea && h.type !== HexType.Desert);
-      hexesNeedingNumbers.sort(() => Math.random() - 0.5);
-      hexesNeedingNumbers.forEach(h => h.number = getNum(h));
+      const shuffledHexes = [...hexesNeedingNumbers].sort(() => Math.random() - 0.5);
+      shuffledHexes.forEach(h => {
+          const numIdx = numberPool.findIndex(n => {
+             if (isRed(n)) {
+                 return !newHexes.some(other => other.number !== null && isRed(other.number) && areAdjacent(h, other));
+             }
+             return true;
+          });
+          h.number = numIdx !== -1 ? numberPool.splice(numIdx, 1)[0] : (numberPool.pop() || 2);
+      });
 
-      // Post-processing: Check for adjacent red numbers and fix them
-      let conflictFound = true;
-      let iterations = 0;
-      while (conflictFound && iterations < 100) {
-          conflictFound = false;
-          iterations++;
-          const redHexes = hexesNeedingNumbers.filter(h => h.number !== null && isRed(h.number));
-          
-          for (const rHex of redHexes) {
-              const redNeighbors = redHexes.filter(other => other !== rHex && areAdjacent(rHex, other));
-              if (redNeighbors.length > 0) {
-                  conflictFound = true;
-                  // Swap with a non-red number that is far away
-                  const candidates = hexesNeedingNumbers.filter(h => 
-                      h.number !== null && !isRed(h.number) && 
-                      !areAdjacent(h, rHex) && // Not adjacent to current red hex
-                      !redNeighbors.some(rn => areAdjacent(h, rn)) // Not adjacent to the conflicting neighbor
-                  );
-                  
-                  if (candidates.length > 0) {
-                      const swapTarget = candidates[Math.floor(Math.random() * candidates.length)];
-                      // Verify swap is safe for the target location too (target shouldn't become adjacent to another red)
-                      const targetNeighbors = hexesNeedingNumbers.filter(n => n !== swapTarget && areAdjacent(swapTarget, n));
-                      const targetHasRedNeighbor = targetNeighbors.some(n => n.number !== null && isRed(n.number) && n !== rHex); // Ignore rHex as it will move away
-                      
-                      if (!targetHasRedNeighbor) {
-                          const temp = rHex.number;
-                          rHex.number = swapTarget.number;
-                          swapTarget.number = temp;
-                          break; // Restart check after swap
-                      }
-                  }
-              }
-          }
-      }
-
+      // Special handling for archipelago gold mines - sometimes restrict numbers if needed for balance
       if (mapType === 'archipelago') {
           const goldHexes = newHexes.filter(h => h.type === HexType.Gold && h.number !== null);
-          const validGoldNumbers = [2, 3, 4, 10, 11, 12];
+          const preferredGoldNums = [2, 3, 4, 10, 11, 12];
           goldHexes.forEach(gHex => {
-              if (gHex.number && !validGoldNumbers.includes(gHex.number)) {
-                  const candidate = newHexes.find(h => h.type !== HexType.Gold && h.type !== HexType.Desert && h.type !== HexType.Sea && h.number !== null && validGoldNumbers.includes(h.number));
+              if (gHex.number && !preferredGoldNums.includes(gHex.number)) {
+                  const candidate = newHexes.find(h => h.type !== HexType.Gold && h.type !== HexType.Desert && h.type !== HexType.Sea && h.number !== null && preferredGoldNums.includes(h.number));
                   if (candidate && candidate.number) {
                       const temp = gHex.number;
                       gHex.number = candidate.number;
@@ -871,7 +772,6 @@ export function useCatanGame() {
               }
           });
       }
-      
       return newHexes;
   }, []);
 
@@ -922,21 +822,37 @@ export function useCatanGame() {
 
 
   const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[]) => {
-    const players: Player[] = Array.from({ length: playerCount }, (_, i) => ({
-      id: i,
-      name: (playerNames && playerNames[i]) ? playerNames[i] : `玩家 ${i + 1}`,
-      color: PLAYER_COLORS[i],
-      isBot: botConfig ? botConfig[i] : false,
-      sessionId: connectedPlayers ? connectedPlayers[i] : undefined,
-      resources: {
-        [ResourceType.Lumber]: 0,
-        [ResourceType.Brick]: 0,
-        [ResourceType.Wool]: 0,
-        [ResourceType.Grain]: 0,
-        [ResourceType.Ore]: 0,
-      },
-      victoryPoints: 0,
-      roads: 0,
+    let cpIndex = 0;
+    const players: Player[] = Array.from({ length: playerCount }, (_, i) => {
+      const isConfiguredBot = botConfig ? botConfig[i] : false;
+      const isRealPlayer = !isConfiguredBot && connectedPlayers && cpIndex < connectedPlayers.length;
+      
+      let pName = `玩家 ${i + 1}`;
+      let pSessionId: string | undefined = undefined;
+      
+      if (isRealPlayer) {
+        pName = (playerNames && playerNames[cpIndex]) ? playerNames[cpIndex] : pName;
+        pSessionId = connectedPlayers?.[cpIndex];
+        cpIndex++;
+      } else if (isConfiguredBot) {
+        pName = `领主 AI ${i + 1}`;
+      }
+
+      return {
+        id: i,
+        name: pName,
+        color: PLAYER_COLORS[i],
+        isBot: isConfiguredBot,
+        sessionId: pSessionId,
+        resources: {
+          [ResourceType.Lumber]: 0,
+          [ResourceType.Brick]: 0,
+          [ResourceType.Wool]: 0,
+          [ResourceType.Grain]: 0,
+          [ResourceType.Ore]: 0,
+        },
+        victoryPoints: 0,
+        roads: 0,
       ships: 0,
       settlements: 0,
       cities: 0,
@@ -945,9 +861,23 @@ export function useCatanGame() {
       playedDevCards: [],
       knightsPlayed: 0,
       longestRoadLength: 0,
-    }));
+      vpCardsCount: 0,
+      islandBonusPoints: 0,
+    };
+    });
 
-    const { hexes, edges, vertices } = customBoard ? { hexes: customBoard, ...generateEdgesAndVertices(customBoard) } : generateBoard(mapType, playerCount);
+    let initialHexes: Hex[];
+    if (customBoard) {
+      // Re-distribute resources and numbers for the custom board to ensure fresh game
+      initialHexes = distributeResources(customBoard, mapType, playerCount);
+    } else {
+      initialHexes = generateBoard(mapType, playerCount).hexes;
+    }
+
+    const { hexes, edges, vertices } = { 
+      hexes: initialHexes, 
+      ...generateEdgesAndVertices(initialHexes) 
+    };
 
     const desertHex = hexes.find(h => h.type === HexType.Desert);
 
@@ -1051,19 +981,22 @@ export function useCatanGame() {
       ports,
       players,
       currentPlayerIndex: 0,
-      dice: [1, 1],
+      dice: [0, 0],
       robberHexId: desertHex?.id || '0,0',
-      pirateHexId: hexes.find(h => h.type === HexType.Sea)?.id || null,
+      pirateHexId: mapType === 'standard' ? null : (hexes.find(h => h.type === HexType.Sea)?.id || null),
       settlements: [],
       roads: [],
       ships: [],
-      phase: 'setup',
+      phase: 'initial_dice_roll',
+      initialDiceRolls: {},
+      initialRollQueue: players.map((_, i) => i),
       setupStep: 0,
       hasRolled: false,
       hasBuiltThisTurn: false,
       hasPlayedDevCardThisTurn: false,
       longestRoadPlayerId: null,
       largestArmyPlayerId: null,
+      winnerId: null,
       bankResources: {
         [ResourceType.Lumber]: 24,
         [ResourceType.Brick]: 24,
@@ -1083,9 +1016,107 @@ export function useCatanGame() {
     return state;
   }, [generateBoard]);
 
+  const resolveInitialRoll = useCallback(() => {
+    setGameState(prev => {
+      if (!prev || prev.phase !== 'initial_dice_roll' || !prev.hasRolled) return prev;
+
+      const currentId = prev.players[prev.currentPlayerIndex].id;
+      const rollSum = prev.dice[0] + prev.dice[1];
+      
+      const playerHistory = prev.initialDiceRolls[currentId] || [];
+      const newHistory = [...playerHistory, rollSum];
+      const newRolls = { ...prev.initialDiceRolls, [currentId]: newHistory };
+
+      const queue = prev.initialRollQueue ? [...prev.initialRollQueue] : [];
+      const queueIndex = queue.indexOf(currentId);
+      if (queueIndex !== -1) queue.splice(queueIndex, 1);
+
+      if (queue.length > 0) {
+         return {
+             ...prev,
+             initialDiceRolls: newRolls,
+             initialRollQueue: queue,
+             currentPlayerIndex: prev.players.findIndex(p => p.id === queue[0]),
+             hasRolled: false,
+             dice: [0, 0]
+         };
+      }
+
+      const playersByHistory = prev.players.map(p => ({ id: p.id, history: newRolls[p.id] || [] }));
+
+      playersByHistory.sort((a, b) => {
+          const minLen = Math.min(a.history.length, b.history.length);
+          for (let i = 0; i < minLen; i++) {
+              if (b.history[i] !== a.history[i]) {
+                  return b.history[i] - a.history[i];
+              }
+          }
+          return b.history.length - a.history.length;
+      });
+
+      const ties = new Set<number>();
+      for (let i = 0; i < playersByHistory.length - 1; i++) {
+          const a = playersByHistory[i];
+          const b = playersByHistory[i+1];
+          if (a.history.length === b.history.length) {
+              let isTie = true;
+              for (let j = 0; j < a.history.length; j++) {
+                  if (a.history[j] !== b.history[j]) isTie = false;
+              }
+              if (isTie) {
+                  ties.add(a.id);
+                  ties.add(b.id);
+              }
+          }
+      }
+
+      if (ties.size > 0) {
+          const newQueue = Array.from(ties);
+          return {
+              ...prev,
+              initialDiceRolls: newRolls,
+              initialRollQueue: newQueue,
+              currentPlayerIndex: prev.players.findIndex(p => p.id === newQueue[0]),
+              hasRolled: false,
+              dice: [0, 0]
+          };
+      }
+
+      const newPlayers = playersByHistory.map(ph => {
+          return { ...prev.players.find(p => p.id === ph.id)! };
+      });
+      
+      const newRollsKeysReassigned: Record<number, number[]> = {};
+      newPlayers.forEach((p, idx) => {
+          newRollsKeysReassigned[idx] = newRolls[p.id];
+          p.id = idx;
+      });
+
+      return {
+          ...prev,
+          players: newPlayers,
+          initialDiceRolls: newRollsKeysReassigned,
+          initialRollQueue: [],
+          phase: 'setup',
+          currentPlayerIndex: 0,
+          hasRolled: false,
+          dice: [0, 0]
+      };
+    });
+  }, []);
+
   const rollDice = useCallback(() => {
     setGameState(prev => {
-      if (!prev || prev.phase === 'setup' || prev.hasRolled) return prev;
+      if (!prev) return prev;
+
+      if (prev.phase === 'initial_dice_roll') {
+        if (prev.hasRolled) return prev;
+        const d1 = Math.floor(Math.random() * 6) + 1;
+        const d2 = Math.floor(Math.random() * 6) + 1;
+        return { ...prev, dice: [d1, d2], hasRolled: true };
+      }
+
+      if (prev.phase === 'setup' || prev.hasRolled) return prev;
       
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
@@ -1094,6 +1125,7 @@ export function useCatanGame() {
       const next = { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
       
       if (total === 7) {
+        next.activeBuildMode = null;
         // Check for players with >= 7 cards
         const pendingDiscards: { playerId: number, amount: number }[] = [];
         next.players.forEach(p => {
@@ -1205,7 +1237,7 @@ export function useCatanGame() {
 
   const nextTurn = useCallback(() => {
     setGameState(prev => {
-      if (!prev || prev.phase === 'setup') return prev;
+      if (!prev || prev.phase === 'setup' || prev.phase === 'finished' || prev.phase === 'initial_dice_roll' || prev.phase === 'order_determination') return prev;
       
       const updatedPlayers = [...prev.players];
       updatedPlayers[prev.currentPlayerIndex] = {
@@ -1214,9 +1246,14 @@ export function useCatanGame() {
         devCardsBoughtThisTurn: []
       };
 
+      const pendingTradesClosed = (prev.tradeOffers || []).map(offer => 
+        offer.status === 'pending' ? { ...offer, status: 'canceled' as const } : offer
+      );
+
       return {
         ...prev,
         players: updatedPlayers,
+        tradeOffers: pendingTradesClosed,
         currentPlayerIndex: (prev.currentPlayerIndex + 1) % prev.players.length,
         phase: 'main',
         hasRolled: false,
@@ -1227,6 +1264,26 @@ export function useCatanGame() {
     });
   }, []);
 
+  const calculatePlayerScore = (p: Player) => {
+    const unplayedVPCards = p.devCards.filter(c => c === DevCardType.VictoryPoint).length;
+    const vpBoughtThisTurn = (p.devCardsBoughtThisTurn || []).filter(c => c === DevCardType.VictoryPoint).length;
+    // victoryPoints tracks other bonus points (Longest Road, Largest Army)
+    // we also include islandBonusPoints and total VP cards (unplayed + played)
+    // Note: p.victoryPoints is a bit redundant now if we use specific fields, 
+    // but we'll use it to store total VP from cards and bonuses for now to keep it simple, 
+    // or just sum everything here.
+    const totalVpCards = unplayedVPCards + vpBoughtThisTurn + (p.playedDevCards?.filter(c => c === DevCardType.VictoryPoint).length || 0);
+    
+    return (p.settlements * 1) + (p.cities * 2) + p.victoryPoints + unplayedVPCards + vpBoughtThisTurn;
+  };
+
+  const checkWinner = (players: Player[]) => {
+    // Standard Catan rule: you can only win during your turn
+    // (though in some digital versions it's immediate)
+    const winner = players.find(p => calculatePlayerScore(p) >= 14);
+    return winner ? winner.id : null;
+  };
+ 
   const buildRoad = useCallback((edgeId: string) => {
     setGameState(prev => {
       if (!prev) return null;
@@ -1238,11 +1295,18 @@ export function useCatanGame() {
       const hasLand = hexes.some(h => h.type !== HexType.Sea && !h.isOuterSea);
       if (!hasLand) return prev;
 
-      // Check for Pirate
-      const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
-      if (hasPirate) return prev;
+      // Check if occupied
+      if (prev.roads.some(r => r.edgeId === edgeId) || prev.ships.some(s => s.edgeId === edgeId)) return prev;
 
       const isSetup = prev.phase === 'setup';
+      
+      const totalRoads = prev.roads.filter(r => r.playerId === player.id).length;
+      if (totalRoads >= 15) {
+          console.warn("Road limit reached (15)");
+          // Clear build mode if active, since we hit the limit
+          return { ...prev, activeBuildMode: null };
+      }
+
       const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
       const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
 
@@ -1288,6 +1352,7 @@ export function useCatanGame() {
       const updatedPlayers = [...prev.players];
       const updatedPlayer = { 
         ...player, 
+        roads: player.roads + 1,
         resources: { ...player.resources } 
       };
       const updatedBank = { ...prev.bankResources };
@@ -1327,19 +1392,37 @@ export function useCatanGame() {
       const newRoads = [...prev.roads, { edgeId, playerId: player.id }];
       const { players: playersAfterRoad, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, newRoads, prev.ships, prev.settlements, prev.longestRoadPlayerId);
 
+      const winnerId = checkWinner(playersAfterRoad);
+
+      // Check if player can still build another road
+      const costRoad = COSTS.road;
+      let stillCanBuildRoad = true;
+      if (nextPhase === 'road_building') {
+        stillCanBuildRoad = (nextFreeRoads || 0) > 0;
+      } else {
+        for (const [res, amt] of Object.entries(costRoad)) {
+          if (playersAfterRoad[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+            stillCanBuildRoad = false;
+            break;
+          }
+        }
+        if (playersAfterRoad[prev.currentPlayerIndex].roads >= 15) stillCanBuildRoad = false;
+      }
+
       return {
         ...prev,
         players: playersAfterRoad,
         bankResources: updatedBank,
         roads: newRoads,
-        phase: nextPhase,
+        phase: winnerId !== null ? 'finished' : nextPhase,
+        winnerId,
         playingDevCard: nextPhase === 'main' ? null : prev.playingDevCard,
         setupStep: nextStep,
         currentPlayerIndex: nextPlayerIdx,
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
-        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        activeBuildMode: winnerId !== null ? null : (isSetup ? (nextPhase === 'main' ? null : 'settlement') : (stillCanBuildRoad ? 'road' : null)),
       };
     });
   }, []);
@@ -1351,6 +1434,12 @@ export function useCatanGame() {
       
       const isSetup = prev.phase === 'setup';
       if (isSetup) return prev; // Cannot build ships in setup
+
+      const totalShips = prev.ships.filter(s => s.playerId === player.id).length;
+      if (totalShips >= 15) {
+          console.warn("Ship limit reached (15)");
+          return { ...prev, activeBuildMode: null };
+      }
 
       if (prev.phase === 'road_building') {
         // Free ship
@@ -1392,9 +1481,13 @@ export function useCatanGame() {
       const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
       if (hasPirate) return prev;
 
+      // Check if occupied
+      if (prev.roads.some(r => r.edgeId === edgeId) || prev.ships.some(s => s.edgeId === edgeId)) return prev;
+
       const updatedPlayers = [...prev.players];
       const updatedPlayer = { 
         ...player, 
+        ships: player.ships + 1,
         resources: { ...player.resources } 
       };
       const updatedBank = { ...prev.bankResources };
@@ -1418,17 +1511,35 @@ export function useCatanGame() {
       const newShips = [...prev.ships, { edgeId, playerId: player.id }];
       const { players: playersAfterShip, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, newShips, prev.settlements, prev.longestRoadPlayerId);
 
+      const winnerId = checkWinner(playersAfterShip);
+
+      // Check if player can still build another ship
+      const costShip = COSTS.ship;
+      let stillCanBuildShip = true;
+      if (prev.phase === 'road_building') {
+        stillCanBuildShip = (nextFreeRoads || 0) > 0;
+      } else {
+        for (const [res, amt] of Object.entries(costShip)) {
+          if (playersAfterShip[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+            stillCanBuildShip = false;
+            break;
+          }
+        }
+        if (playersAfterShip[prev.currentPlayerIndex].ships >= 15) stillCanBuildShip = false;
+      }
+
       return {
         ...prev,
         players: playersAfterShip,
         bankResources: updatedBank,
         ships: newShips,
-        phase: nextPhase,
+        phase: winnerId !== null ? 'finished' : nextPhase,
+        winnerId,
         playingDevCard: nextPhase === 'main' ? null : prev.playingDevCard,
         freeRoads: nextFreeRoads,
         hasBuiltThisTurn: true,
         longestRoadPlayerId,
-        activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        activeBuildMode: (winnerId !== null || !stillCanBuildShip) ? null : 'ship',
       };
     });
   }, []);
@@ -1441,11 +1552,6 @@ export function useCatanGame() {
       const isSetup = prev.phase === 'setup';
       const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
       const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
-
-      // Check for Pirate
-      const hexes = getHexesForVertex(prev.board, vertexId);
-      const hasPirate = hexes.some(h => h.id === prev.pirateHexId);
-      if (hasPirate) return prev;
 
       // Cannot build on pure Sea vertices
       const isAllSea = hexIds.every(id => {
@@ -1465,6 +1571,12 @@ export function useCatanGame() {
         });
         if (isGold) return prev;
       } else {
+        // Settlement limit (5 in standard Catan)
+        if (player.settlements >= 5) {
+          console.warn("Settlement limit reached (5)");
+          return prev;
+        }
+
         const cost = COSTS.settlement;
         for (const [res, amt] of Object.entries(cost)) {
           if (player.resources[res as ResourceType] < amt) return prev;
@@ -1513,7 +1625,7 @@ export function useCatanGame() {
           }
         }
         if (hasNewIsland) {
-          bonusPoints = 2; // Island bonus
+          bonusPoints = 1; // Island bonus changed from 2 to 1
         }
       }
 
@@ -1522,7 +1634,8 @@ export function useCatanGame() {
         ...player, 
         settlements: player.settlements + 1,
         resources: { ...player.resources },
-        victoryPoints: player.victoryPoints + bonusPoints
+        victoryPoints: player.victoryPoints + bonusPoints,
+        islandBonusPoints: player.islandBonusPoints + bonusPoints
       };
       const updatedBank = { ...prev.bankResources };
 
@@ -1556,6 +1669,19 @@ export function useCatanGame() {
 
       const newSettlements = [...prev.settlements, { vertexId, hexIds, playerId: player.id, isCity: false }];
       const { players: playersAfterSettlement, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, prev.ships, newSettlements, prev.longestRoadPlayerId);
+      
+      const winnerId = checkWinner(playersAfterSettlement);
+      
+      // Check if player can still build another settlement
+      const cost = COSTS.settlement;
+      let stillCanBuild = true;
+      for (const [res, amt] of Object.entries(cost)) {
+        if (playersAfterSettlement[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+          stillCanBuild = false;
+          break;
+        }
+      }
+      if (playersAfterSettlement[prev.currentPlayerIndex].settlements >= 5) stillCanBuild = false;
 
       return {
         ...prev,
@@ -1564,7 +1690,9 @@ export function useCatanGame() {
         settlements: newSettlements,
         hasBuiltThisTurn: isSetup ? prev.hasBuiltThisTurn : true,
         longestRoadPlayerId,
-        activeBuildMode: null,
+        winnerId,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        activeBuildMode: winnerId !== null ? null : (isSetup ? 'road' : (stillCanBuild ? 'settlement' : null)),
       };
     });
   }, []);
@@ -1574,6 +1702,12 @@ export function useCatanGame() {
       if (!prev) return null;
       const player = prev.players[prev.currentPlayerIndex];
       const cost = COSTS.city;
+
+      // City limit (4 in standard Catan)
+      if (player.cities >= 4) {
+        console.warn("City limit reached (4)");
+        return prev;
+      }
 
       for (const [res, amt] of Object.entries(cost)) {
         if (player.resources[res as ResourceType] < amt) return prev;
@@ -1604,6 +1738,19 @@ export function useCatanGame() {
 
       const updatedSettlements = [...prev.settlements];
       updatedSettlements[settlementIdx] = { ...updatedSettlements[settlementIdx], isCity: true };
+      
+      const winnerId = checkWinner(updatedPlayers);
+
+      // Check if player can still build another city
+      const costCity = COSTS.city;
+      let stillCanBuild = true;
+      for (const [res, amt] of Object.entries(costCity)) {
+        if (updatedPlayers[prev.currentPlayerIndex].resources[res as ResourceType] < amt) {
+          stillCanBuild = false;
+          break;
+        }
+      }
+      if (updatedPlayers[prev.currentPlayerIndex].cities >= 4) stillCanBuild = false;
 
       return {
         ...prev,
@@ -1611,7 +1758,9 @@ export function useCatanGame() {
         bankResources: updatedBank,
         settlements: updatedSettlements,
         hasBuiltThisTurn: true,
-        activeBuildMode: null,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        winnerId,
+        activeBuildMode: (winnerId !== null || !stillCanBuild) ? null : 'city',
       };
     });
   }, []);
@@ -1643,6 +1792,8 @@ export function useCatanGame() {
         updatedBankResources[res as ResourceType] += amt;
       }
       updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
+      
+      const winnerId = checkWinner(updatedPlayers);
 
       return {
         ...prev,
@@ -1650,6 +1801,8 @@ export function useCatanGame() {
         bankResources: updatedBankResources,
         bankDevCards: updatedBankDevCards,
         hasBuiltThisTurn: true,
+        phase: winnerId !== null ? 'finished' : prev.phase,
+        winnerId,
       };
     });
   }, []);
@@ -1672,6 +1825,16 @@ export function useCatanGame() {
       };
       let nextPhase = prev.phase;
       let freeRoads = prev.freeRoads;
+      
+      let newEvent = prev.lastDevCardEvent;
+      if (cardType !== DevCardType.VictoryPoint) {
+        let actionStr = '';
+        if (cardType === DevCardType.Knight) actionStr = '发动骑士';
+        else if (cardType === DevCardType.Monopoly) actionStr = '开启垄断';
+        else if (cardType === DevCardType.YearOfPlenty) actionStr = '使用丰收之年';
+        else if (cardType === DevCardType.RoadBuilding) actionStr = '使用道路建设';
+        newEvent = { playerName: player.name, cardType: actionStr, timestamp: Date.now() };
+      }
       
       if (cardType === DevCardType.VictoryPoint) {
         // VP cards shouldn't be playable manually, but just in case
@@ -1719,15 +1882,19 @@ export function useCatanGame() {
         }
       }
 
+      const winnerId = checkWinner(updatedPlayers);
+      
       return { 
         ...prev, 
         players: updatedPlayers, 
-        phase: nextPhase, 
+        phase: winnerId !== null ? 'finished' : nextPhase, 
+        winnerId,
         freeRoads,
         hasPlayedDevCardThisTurn: cardType !== DevCardType.VictoryPoint,
         playingDevCard: cardType !== DevCardType.VictoryPoint ? cardType : null,
         largestArmyPlayerId: newLargestArmyPlayerId,
         activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
+        lastDevCardEvent: newEvent,
       };
     });
   }, []);
@@ -1815,7 +1982,7 @@ export function useCatanGame() {
 
   const moveRobber = useCallback((hexId: string) => {
     setGameState(prev => {
-      if (!prev || prev.phase !== 'robber') return prev;
+      if (!prev || (prev.phase !== 'robber' && prev.phase !== 'robber_move')) return prev;
       const hex = prev.board.find(h => h.id === hexId);
       if (!hex || hex.type === HexType.Sea) return prev;
       
@@ -1831,6 +1998,7 @@ export function useCatanGame() {
           ...prev,
           robberHexId: hexId,
           phase: 'stealing',
+          selectedStealTarget: null,
           pendingStealFrom: playersToStealFrom
         };
       }
@@ -1846,7 +2014,7 @@ export function useCatanGame() {
 
   const movePirate = useCallback((hexId: string) => {
     setGameState(prev => {
-      if (!prev || prev.phase !== 'robber') return prev;
+      if (!prev || (prev.phase !== 'robber' && prev.phase !== 'robber_move')) return prev;
       const hex = prev.board.find(h => h.id === hexId);
       if (!hex || hex.type !== HexType.Sea) return prev;
       
@@ -1861,6 +2029,7 @@ export function useCatanGame() {
           ...prev,
           pirateHexId: hexId,
           phase: 'stealing',
+          selectedStealTarget: null,
           pendingStealFrom: playersToStealFrom
         };
       }
@@ -1939,7 +2108,19 @@ export function useCatanGame() {
         ...prev,
         players: updatedPlayers,
         phase: 'main',
+        selectedStealTarget: null,
+        pendingStealFrom: [],
         playingDevCard: null
+      };
+    });
+  }, []);
+
+  const selectStealTarget = useCallback((playerId: number | null) => {
+    setGameState(prev => {
+      if (!prev || prev.phase !== 'stealing') return prev;
+      return {
+        ...prev,
+        selectedStealTarget: playerId
       };
     });
   }, []);
@@ -1954,7 +2135,7 @@ export function useCatanGame() {
         .filter(([_, count]) => count > 0)
         .flatMap(([res, count]) => Array(count).fill(res as ResourceType));
       
-      if (availableResources.length === 0) return { ...prev, phase: 'main', playingDevCard: null };
+      if (availableResources.length === 0) return { ...prev, phase: 'main', selectedStealTarget: null, pendingStealFrom: [], playingDevCard: null };
 
       const stolenRes = availableResources[Math.floor(Math.random() * availableResources.length)];
       
@@ -1973,10 +2154,18 @@ export function useCatanGame() {
         players: updatedPlayers,
         phase: 'main',
         pendingStealFrom: [],
+        selectedStealTarget: null,
         playingDevCard: null
       };
     });
   }, []);
+
+  const doSteal = useCallback((fromPlayerId: number) => {
+    selectStealTarget(fromPlayerId);
+    setTimeout(() => {
+      stealResource(fromPlayerId);
+    }, 1000);
+  }, [selectStealTarget, stealResource]);
 
   const selectGoldResource = useCallback((selectedResources: Record<ResourceType, number>) => {
     setGameState(prev => {
@@ -2206,9 +2395,17 @@ export function useCatanGame() {
       if (!prev) return prev;
       const offers = (prev.tradeOffers || []).map(offer => {
         if (offer.id === tradeId) {
+          // Prevent duplicate reactions
+          if (offer.acceptedBy.includes(playerId) || offer.rejectedBy.includes(playerId)) return offer;
+          
           if (reaction === 'accept') {
             return { ...offer, acceptedBy: [...offer.acceptedBy, playerId] };
           } else {
+            const newRejectedBy = [...offer.rejectedBy, playerId];
+            // If everyone (except initiator) rejected, mark as canceled/rejected
+            if (newRejectedBy.length >= prev.players.length - 1) {
+              return { ...offer, rejectedBy: newRejectedBy, status: 'canceled' as const };
+            }
             return { ...offer, rejectedBy: [...offer.rejectedBy, playerId] };
           }
         }
@@ -2271,7 +2468,7 @@ export function useCatanGame() {
       });
 
       const offers = (prev.tradeOffers || []).map(o => 
-        o.id === tradeId ? { ...o, status: 'completed' as const } : o
+        o.id === tradeId ? { ...o, status: 'completed' as const, completedWith: partnerId } : o
       );
 
       return { ...prev, players: updatedPlayers, tradeOffers: offers };
@@ -2285,12 +2482,18 @@ export function useCatanGame() {
     });
   }, []);
 
+  const resetGame = useCallback(() => {
+    setGameState(null);
+  }, []);
+
   return {
     gameState,
     syncGameState,
+    resetGame,
     initGame,
     toggleBot,
     rollDice,
+    resolveInitialRoll,
     nextTurn,
     buildRoad,
     buildShip,
@@ -2304,7 +2507,9 @@ export function useCatanGame() {
     resolveMonopoly,
     moveRobber,
     movePirate,
+    selectStealTarget,
     stealResource,
+    doSteal,
     selectGoldResource,
     addResources,
     generateMapTopology,

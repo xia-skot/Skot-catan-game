@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
 import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame';
-import { HexType, ResourceType, DevCardType, MapType } from './types';
+import { HexType, ResourceType, DevCardType, MapType, GameState } from './types';
 import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,66 +22,112 @@ import {
   BookOpen,
   Users,
   Play,
+  Eye,
   AlertTriangle,
   Bot,
   Check,
   Copy,
-  LogOut
+  LogOut,
+  Trash2,
+  Maximize,
+  Minimize,
+  RotateCw,
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
+import { MapAlbumModal } from './components/MapAlbumModal';
+import { MapGeneratorModal } from './components/MapGeneratorModal';
+import { socketService, RoomState } from './socketService';
+import { FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, RESOURCE_ICONS } from './images';
 
-import { FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG } from './images';
+const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
+  <img 
+    src={RESOURCE_ICONS[type]} 
+    className={`${className} object-contain inline-block align-middle`} 
+    alt={RESOURCE_NAMES[type]} 
+    referrerPolicy="no-referrer" 
+  />
+);
 
 const HEX_RADIUS = 40;
 const HEX_WIDTH = Math.sqrt(3) * HEX_RADIUS;
 const HEX_HEIGHT = 2 * HEX_RADIUS;
 
-const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, flip: boolean }) => {
-  let path = "";
-  let fill = "";
-  let scale = 0.55;
 
-  switch (type) {
-    case ResourceType.Lumber:
-      path = "M12 2 L5 10 H9 L5 18 H10 V22 H14 V18 H19 L15 10 H19 Z";
-      fill = "#2E8B57";
-      break;
-    case ResourceType.Brick:
-      path = "M4 8 L12 4 L20 8 L12 12 Z M4 10 V16 L12 20 V14 Z M14 13 V19 L22 15 V9 Z";
-      fill = "#CD5C5C";
-      break;
-    case ResourceType.Wool:
-      path = "M17.5 19C19.985 19 22 16.985 22 14.5C22 12.132 20.177 10.204 17.857 10.017C17.433 6.623 14.536 4 11 4C7.134 4 4 7.134 4 11C4 11.137 4.004 11.274 4.012 11.41C1.728 11.852 0 13.861 0 16.25C0 18.873 2.127 21 4.75 21H17.5Z";
-      fill = "#778899";
-      break;
-    case ResourceType.Grain:
-      path = "M12 22C12 22 11 16 7 12C3 8 2 2 2 2C2 2 8 3 12 7C16 11 22 12 22 12C22 12 21 18 17 22C13 26 12 22 12 22Z";
-      fill = "#DAA520";
-      break;
-    case ResourceType.Ore:
-      path = "M6 20 L10 12 L14 20 Z M12 20 L17 10 L22 20 Z M2 20 L5 15 L8 20 Z";
-      fill = "#708090";
-      break;
-    default: // '3:1'
-      path = "M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z";
-      fill = "#FFA500";
-      break;
+const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, flip: boolean }) => {
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (type === '3:1') return;
+    const resourceType = type as ResourceType;
+    const img = new window.Image();
+    img.src = RESOURCE_ICONS[resourceType];
+    img.referrerPolicy = 'no-referrer';
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => setImage(img);
+  }, [type]);
+
+  if (type === '3:1') {
+    return (
+      <Path
+        x={x}
+        y={y}
+        data="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"
+        fill="#FFA500"
+        scale={{ x: 0.55, y: 0.55 }}
+        offsetX={12}
+        offsetY={12}
+        rotation={flip ? 180 : 0}
+      />
+    );
   }
 
+  if (!image) return null;
+
   return (
-    <Path
+    <Image
+      image={image}
       x={x}
       y={y}
-      data={path}
-      fill={fill}
-      scale={{ x: scale, y: scale }}
-      offsetX={12}
-      offsetY={12}
+      width={18}
+      height={18}
+      offsetX={9}
+      offsetY={9}
       rotation={flip ? 180 : 0}
     />
   );
 };
+
+const PortraitOverlay = () => (
+  <div className="fixed inset-0 z-[9999] bg-stone-900/40 flex flex-col items-center justify-center text-white px-8 text-center backdrop-blur-md animate-in fade-in duration-500 pointer-events-auto">
+    <motion.div
+      animate={{ rotate: [0, 90, 90, 0] }}
+      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", times: [0, 0.4, 0.6, 1] }}
+      className="mb-8 p-6 bg-indigo-500/20 rounded-full border border-indigo-500/30 shadow-2xl shadow-indigo-500/20"
+    >
+      <RotateCw size={64} className="text-indigo-400" />
+    </motion.div>
+    <h2 className="text-2xl sm:text-3xl font-serif font-black italic mb-4 tracking-tight leading-none">请旋转手机屏幕</h2>
+    <p className="text-[11px] sm:text-sm opacity-100 max-w-[320px] sm:max-w-none whitespace-nowrap leading-relaxed font-black text-white drop-shadow-md">
+      为了获得最佳游戏体验，推荐使用横屏模式进行游戏。
+    </p>
+    <p className="text-[10px] sm:text-xs opacity-70 font-bold text-white mt-1">
+      (确保手机的“自动旋转”设置已打开)
+    </p>
+    <div className="mt-12 flex flex-col items-center gap-2 opacity-30">
+      <div className="w-1 h-12 bg-white/20 rounded-full overflow-hidden">
+        <motion.div 
+          animate={{ y: [0, 48, 0] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
+          className="w-full h-1/2 bg-indigo-400" 
+        />
+      </div>
+      <span className="text-[10px] uppercase font-black tracking-widest leading-none">LANDSCAPE ONLY</span>
+    </div>
+  </div>
+);
 
 const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx: number, ny: number }) => {
   const distance = 18; // Distance from edge to pill center
@@ -93,17 +139,19 @@ const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx:
   const flip = rotation > 90 && rotation < 270;
 
   return (
-    <Group x={cx} y={cy} rotation={rotation}>
+    <Group x={cx} y={cy} rotation={rotation} listening={false}>
       {/* Pier / Dock lines */}
       <Line
         points={[-4, 0, -4, -distance]}
         stroke="#8B5A2B"
         strokeWidth={3}
+        perfectDrawEnabled={false}
       />
       <Line
         points={[4, 0, 4, -distance]}
         stroke="#8B5A2B"
         strokeWidth={3}
+        perfectDrawEnabled={false}
       />
 
       {/* Pill Group */}
@@ -183,6 +231,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
           strokeWidth={4 * (1 - pulse)} 
           opacity={1 - pulse} 
           listening={false} 
+          perfectDrawEnabled={false}
         />
       )}
       {img ? (
@@ -197,6 +246,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
           shadowOpacity={0.6}
           shadowOffsetX={2}
           shadowOffsetY={4}
+          perfectDrawEnabled={false}
         />
       ) : (
         <Text text="👤" fontSize={24} offsetX={12} offsetY={12} />
@@ -237,6 +287,7 @@ const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
           strokeWidth={4 * (1 - pulse)} 
           opacity={1 - pulse} 
           listening={false} 
+          perfectDrawEnabled={false}
         />
       )}
       {img ? (
@@ -251,6 +302,7 @@ const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
           shadowOpacity={0.6}
           shadowOffsetX={2}
           shadowOffsetY={4}
+          perfectDrawEnabled={false}
         />
       ) : (
         <Text text="🏴‍☠️" fontSize={24} offsetX={12} offsetY={12} />
@@ -259,16 +311,26 @@ const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
   );
 };
 
-import { DevCard } from './components/DevCard';
-import { socketService, RoomState } from './services/socketService';
+const seededRandom = (seed: number) => {
+  return () => {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+};
 
 export default function App() {
+  const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
+  const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
+  
   const { 
     gameState, 
     syncGameState,
     initGame, 
     toggleBot,
     rollDice, 
+    resolveInitialRoll,
     nextTurn, 
     buildRoad, 
     buildShip,
@@ -282,7 +344,9 @@ export default function App() {
     resolveMonopoly,
     moveRobber,
     movePirate,
+    selectStealTarget,
     stealResource,
+    doSteal,
     selectGoldResource,
     addResources,
     generateMapTopology,
@@ -294,18 +358,94 @@ export default function App() {
     proposeTrade,
     reactToTrade,
     cancelTrade,
-    finalizeTrade
+    finalizeTrade,
+    resetGame
   } = useCatanGame();
 
+  const [hasResolvedGameOver, setHasResolvedGameOver] = useState(false);
+
+  const handleReturnToLobby = () => {
+    const roomId = roomState?.roomId || inputRoomId;
+    let shouldClearRoom = true;
+    
+    // If the game is finished, destroyed the room entirely as requested
+    if (gameState?.winnerId !== null && gameState?.winnerId !== undefined) {
+      shouldClearRoom = true;
+      socketService.resetGame(roomId);
+    } else {
+      // Players and hosts can both leave individually without destroying the room for others
+      if (!isSpectator) {
+        shouldClearRoom = false; // Keep the active room locked so they can reconnect
+      }
+      socketService.leaveRoom(roomId);
+    }
+    
+    if (shouldClearRoom) {
+      // Clear room from URL and storage to prevent auto-rejoin bug
+      localStorage.removeItem('catan_active_room');
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('room');
+      window.history.replaceState({}, '', newUrl.pathname);
+      setInputRoomId(roomId);
+    } else {
+      // Set the input to the previous room to keep it active natively
+      setInputRoomId(roomId);
+      localStorage.setItem('catan_active_room', roomId);
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('room', roomId);
+      window.history.replaceState({}, '', newUrl);
+    }
+    
+    // Immediate local reset for better UX
+    setRoomState(null);
+    setGameStarted(false);
+    setShowGameOver(false);
+    setHasResolvedGameOver(false);
+    setIsJoinedLobby(false);
+    resetGame(); // Clear from hook state as well
+    setIsStartingGame(false);
+  };
+
+  const handleReturnToMap = () => {
+    setShowGameOver(false);
+    setHasResolvedGameOver(true);
+  };
+
   const isRemoteUpdateRef = useRef(false);
+  const playerBarRef = useRef<HTMLDivElement>(null);
   
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const isSpectator = useMemo(() => {
+    if (!roomState) return false;
+    return roomState.spectators?.some(s => s.id === socketService.playerId);
+  }, [roomState, socketService.playerId]);
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`);
+  const [showCopyToast, setShowCopyToast] = useState(false);
+  const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
   const [inputRoomId, setInputRoomId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('room') || Math.random().toString().slice(2, 8);
+    return params.get('room') || localStorage.getItem('catan_active_room') || Math.random().toString().slice(2, 8);
   });
   const [isJoinedLobby, setIsJoinedLobby] = useState(false);
+  const [spectatorFocusId, setSpectatorFocusId] = useState<number | null>(null);
+
+  const myPlayerIndex = useMemo(() => {
+    if (!gameState) return -1;
+    if (isSpectator) return spectatorFocusId ?? -1;
+    return gameState.players.findIndex(p => p.sessionId === socketService.playerId);
+  }, [gameState, isSpectator, spectatorFocusId]);
+
+  const visiblePlayerIndex = useMemo(() => {
+    if (isSpectator && spectatorFocusId !== null && gameState?.players[spectatorFocusId]) {
+      return spectatorFocusId;
+    }
+    return myPlayerIndex !== -1 ? myPlayerIndex : 0;
+  }, [isSpectator, spectatorFocusId, gameState?.players, myPlayerIndex]);
+
+  const visiblePlayer = useMemo(() => {
+    if (!gameState) return null;
+    return gameState.players[visiblePlayerIndex];
+  }, [gameState, visiblePlayerIndex]);
 
   useEffect(() => {
     socketService.connect();
@@ -317,11 +457,21 @@ export default function App() {
       setInputRoomId(roomParam);
     }
     
-    socketService.onRoomState((state) => {
+    socketService.onRoomState((state: any) => {
+      if (!state) {
+        setIsCheckingSession(false);
+        setIsJoinedLobby(false);
+        localStorage.removeItem('catan_active_room');
+        return;
+      }
       setRoomState(state);
       setPlayerCount(state.settings.playerCount);
       setMapType(state.settings.mapType as MapType);
       setBotConfig(state.settings.botConfig);
+      
+      if (!state.gameState) {
+        setIsCheckingSession(false);
+      }
     });
 
     socketService.onGameInit((newState) => {
@@ -329,31 +479,52 @@ export default function App() {
       syncGameState(newState);
       setGameStarted(true);
       setHasManuallyInteracted(false);
+      setIsCheckingSession(false);
+      setIsStartingGame(false);
     });
 
     socketService.onGameUpdate((newState) => {
       isRemoteUpdateRef.current = true;
       syncGameState(newState);
       setGameStarted(true); // Always ensure UI switches to game
+      setIsCheckingSession(false);
+      setIsStartingGame(false);
     });
 
     socketService.onGameReset(() => {
       console.log('Game reset received from server - Cleaning up...');
+      
+      localStorage.removeItem('catan_active_room');
+      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+      setRoomState(prevRoom => {
+        const isSelfReset = prevRoom?.hostId === socketService.playerId;
+        if (!isSelfReset && prevRoom) {
+          setTimeout(() => alert('房间已被房主解散。'), 100);
+        }
+        return null; // implicitly clears the room state
+      });
+
       // 1. Clear local game state first to prevent re-sync
       syncGameState(null as any);
-      
-      // 2. Clear room state
-      setRoomState(null);
       
       // 3. Reset UI flags
       setGameStarted(false);
       setShowGameOver(false);
+      setHasResolvedGameOver(false);
       setIsJoinedLobby(false); // Force back to room search screen
+      setIsStartingGame(false);
       
       // 4. Remove room param from URL
       window.history.replaceState({}, '', window.location.pathname);
-      
-      alert('房间已被房主解散。');
+    });
+
+    socketService.onReturnedToLobby(() => {
+      console.log('Returned to lobby...');
+      syncGameState(null as any);
+      setGameStarted(false);
+      setShowGameOver(false);
+      setHasResolvedGameOver(false);
+      setIsStartingGame(false);
     });
 
     return () => {
@@ -371,6 +542,23 @@ export default function App() {
     }
   }, [gameState, roomState, inputRoomId]);
 
+  useEffect(() => {
+    // Only run on initial mount
+    const activeRoom = localStorage.getItem('catan_active_room');
+    if (activeRoom) {
+      setInputRoomId(activeRoom);
+    }
+    
+    // Check URL parameters for a room ID
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomFromUrl = urlParams.get('room');
+    if (roomFromUrl && !activeRoom) {
+      setInputRoomId(roomFromUrl);
+    }
+    
+    setIsCheckingSession(false);
+  }, []);
+
   const handleJoinRoom = () => {
     let finalRoomId = inputRoomId.trim();
     if (!finalRoomId || finalRoomId.length < 1) {
@@ -379,6 +567,7 @@ export default function App() {
     }
     
     localStorage.setItem('catan_player_name', playerName);
+    localStorage.setItem('catan_active_room', finalRoomId);
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', finalRoomId);
     window.history.replaceState({}, '', newUrl);
@@ -388,56 +577,128 @@ export default function App() {
   };
 
   const handleToggleReady = () => {
-    socketService.toggleReady(roomState!.roomId);
+    // Optimistically update the UI before the server response
+    setRoomState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        players: prev.players.map(p => 
+          p.id === socketService.playerId ? { ...p, isReady: !p.isReady } : p
+        )
+      };
+    });
+    if (roomState?.roomId) {
+      socketService.toggleReady(roomState.roomId);
+    }
   };
 
   const syncSettings = (newSettings: Partial<RoomState['settings']>) => {
-    if (!roomState) return;
+    if (!roomState?.roomId) return;
     socketService.updateSettings(roomState.roomId, { ...roomState.settings, ...newSettings });
   };
 
-  const activePlayerId = gameState?.phase === 'discard' && (gameState?.pendingDiscards?.length || 0) > 0 
+  const activePlayerId = (gameState?.phase === 'discard' && (gameState?.pendingDiscards?.length || 0) > 0)
     ? gameState!.pendingDiscards[0].playerId 
+    : (gameState?.phase === 'gold_selection' && (gameState?.pendingGoldRewards?.length || 0) > 0)
+    ? gameState!.pendingGoldRewards[0].playerId
     : gameState?.currentPlayerIndex ?? 0;
 
-  const myPlayerIndex = useMemo(() => {
-    if (!gameState) return -1;
-    return gameState.players.findIndex(p => p.sessionId === socketService.playerId);
-  }, [gameState]);
+  const botProcessorId = useMemo(() => {
+    if (!roomState) return null;
+    const hostPlayer = roomState.players.find(p => p.id === roomState.hostId);
+    if (hostPlayer && !hostPlayer.disconnected) return roomState.hostId;
+    const fallback = roomState.players.find(p => !p.disconnected && !p.isBot);
+    return fallback ? fallback.id : null;
+  }, [roomState]);
 
   const amIActivePlayer = useMemo(() => {
-    if (!gameState) return true;
+    if (!gameState) return false;
     const player = gameState.players[activePlayerId];
     if (!player) return false;
     
+    if (isSpectator) {
+      return myPlayerIndex === activePlayerId;
+    }
+    
     // If it's a bot's turn, only the host "is" the active player for processing purposes
     if (player.isBot) {
-      const isHost = !gameState.players[0].sessionId || gameState.players[0].sessionId === socketService.playerId;
-      return isHost;
+      if (!botProcessorId && !roomState) {
+        return !gameState.players[0].sessionId || gameState.players[0].sessionId === socketService.playerId;
+      }
+      return botProcessorId === socketService.playerId;
     }
     
     return player.sessionId === socketService.playerId;
-  }, [gameState, activePlayerId]);
+  }, [gameState, activePlayerId, botProcessorId, roomState, isSpectator, myPlayerIndex]);
 
   const me = useMemo(() => {
     if (!gameState || myPlayerIndex === -1) return gameState?.players[0]; 
     return gameState.players[myPlayerIndex];
   }, [gameState, myPlayerIndex]);
 
+  const currentPlayer = useMemo(() => {
+    if (!gameState) return null;
+    return gameState.players[gameState.currentPlayerIndex];
+  }, [gameState]);
+
+  useEffect(() => {
+    if (gameState?.lastDevCardEvent) {
+      // Show overlay if event is recent
+      if (Date.now() - gameState.lastDevCardEvent.timestamp < 1500) {
+        setDevCardOverlay({ 
+          playerName: gameState.lastDevCardEvent.playerName, 
+          actionStr: gameState.lastDevCardEvent.cardType 
+        });
+        const timer = setTimeout(() => {
+          setDevCardOverlay(null);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [gameState?.lastDevCardEvent?.timestamp]);
+
   const isMyHumanTurn = useMemo(() => {
     if (!gameState) return false;
+    if (isSpectator) return myPlayerIndex === activePlayerId;
     const player = gameState.players[activePlayerId];
     return player?.sessionId === socketService.playerId;
-  }, [gameState, activePlayerId]);
+  }, [gameState, activePlayerId, isSpectator, myPlayerIndex]);
 
   const canBuild = ((gameState?.phase === 'main' && gameState.hasRolled) || 
     gameState?.phase === 'setup' || 
     gameState?.phase === 'road_building') && isMyHumanTurn;
 
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
-  const isMobile = windowSize.width < 1024;
-  const [showLeftPanel, setShowLeftPanel] = useState(!isMobile);
-  const [showRightPanel, setShowRightPanel] = useState(!isMobile);
+  const isPortrait = windowSize.width < windowSize.height;
+  const logicalWindowSize = {
+    width: isPortrait ? windowSize.height : windowSize.width,
+    height: isPortrait ? windowSize.width : windowSize.height
+  };
+  const isMobile = logicalWindowSize.width < 1024;
+
+  // Auto-scroll to active player on mobile
+  useEffect(() => {
+    if (isMobile && playerBarRef.current && activePlayerId !== undefined && gameState) {
+      const timer = setTimeout(() => {
+        const container = playerBarRef.current;
+        const activeCard = container?.querySelector(`[data-player-index="${activePlayerId}"]`) as HTMLElement;
+        
+        if (activeCard && container) {
+          // Calculate the target scroll position to center the active card
+          const targetX = activeCard.offsetLeft - (container.clientWidth / 2) + (activeCard.clientWidth / 2);
+          
+          container.scrollTo({
+            left: targetX,
+            behavior: 'smooth'
+          });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [activePlayerId, isMobile, gameState?.phase]);
+
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [showRightPanel, setShowRightPanel] = useState(true);
 
   const lastCenter = useRef<{x: number, y: number} | null>(null);
   const lastDist = useRef<number>(0);
@@ -454,59 +715,98 @@ export default function App() {
   };
 
   const handleTouchMove = (e: any) => {
-    setHasManuallyInteracted(true);
+    // IMPORTANT: Always prevent default to stop native browser behavior (scrolling/zoom)
+    e.evt.preventDefault();
+
     const stage = stageRef.current;
     if (!stage) return;
 
-    const touch1 = e.evt.touches[0];
-    const touch2 = e.evt.touches[1];
+    const touches = e.evt.touches;
+    const numTouches = touches.length;
 
-    if (touch1 && touch2) {
+    if (numTouches === 1) {
+      if (!stage.draggable()) {
+        stage.draggable(true);
+      }
+    } else if (numTouches >= 2) {
       setHasManuallyInteracted(true);
+      
+      // PERFORMANCE: Cache layer during multi-touch zoom
+    if (boardLayerRef.current && !boardLayerRef.current.isCached()) {
+        // Use standard device pixel ratio for performance
+        boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+      }
+
+      // Stop any pending drag operation to allow smooth zoom
       if (stage.isDragging()) {
         stage.stopDrag();
       }
-
-      const p1 = { x: touch1.clientX, y: touch1.clientY };
-      const p2 = { x: touch2.clientX, y: touch2.clientY };
-
-      if (!lastCenter.current) {
-        lastCenter.current = getCenter(p1, p2);
-        return;
+      if (stage.draggable()) {
+        stage.draggable(false);
       }
 
-      const newCenter = getCenter(p1, p2);
-      const dist = getDistance(p1, p2);
+      const touch1 = touches[0];
+      const touch2 = touches[1];
+      const p1x = touch1.clientX;
+      const p1y = touch1.clientY;
+      const p2x = touch2.clientX;
+      const p2y = touch2.clientY;
+      
+      const dist = Math.sqrt((p2x - p1x)**2 + (p2y - p1y)**2);
+      const centerX = (p1x + p2x) / 2;
+      const centerY = (p1y + p2y) / 2;
 
       if (!lastDist.current) {
         lastDist.current = dist;
+        lastCenter.current = { x: centerX, y: centerY };
+        return;
       }
+      
+      const stageScale = stage.scaleX();
+      const stageX = stage.x();
+      const stageY = stage.y();
 
-      const pointTo = {
-        x: (newCenter.x - stage.x()) / stage.scaleX(),
-        y: (newCenter.y - stage.y()) / stage.scaleX(),
-      };
+      // Point relative to the stage coordinate system
+      const pointToX = (lastCenter.current!.x - stageX) / stageScale;
+      const pointToY = (lastCenter.current!.y - stageY) / stageScale;
 
-      const newScale = stage.scaleX() * (dist / lastDist.current);
-      if (newScale < 0.1 || newScale > 5) return;
+      const newScale = stageScale * (dist / lastDist.current);
+      // Reasonable scale limits for mobile
+      const clampedScale = Math.max(0.15, Math.min(4, newScale));
 
-      stage.scale({ x: newScale, y: newScale });
+      stage.scale({ x: clampedScale, y: clampedScale });
 
-      const newPos = {
-        x: newCenter.x - pointTo.x * newScale,
-        y: newCenter.y - pointTo.y * newScale,
-      };
-
-      stage.position(newPos);
+      stage.position({
+        x: centerX - pointToX * clampedScale,
+        y: centerY - pointToY * clampedScale,
+      });
+      
       lastDist.current = dist;
-      lastCenter.current = newCenter;
-      stage.batchDraw();
+      lastCenter.current = { x: centerX, y: centerY };
+      lastGestureTime.current = Date.now();
+    } else {
+      if (lastDist.current !== 0) {
+        lastDist.current = 0;
+        lastCenter.current = null;
+      }
     }
   };
 
   const handleTouchEnd = () => {
     lastDist.current = 0;
     lastCenter.current = null;
+
+    // PERFORMANCE: Clear cache after interaction
+    if (boardLayerRef.current?.isCached()) {
+      boardLayerRef.current.clearCache();
+      boardLayerRef.current.batchDraw();
+    }
+
+    // Restore draggable state after a short delay to prevent sudden jumps
+    setTimeout(() => {
+      const stage = stageRef.current;
+      if (stage && !stage.draggable()) stage.draggable(true);
+    }, 50);
   };
 
   const handleTouchStart = () => {
@@ -521,29 +821,201 @@ export default function App() {
 
   const [selectedHex, setSelectedHex] = useState<string | null>(null);
   const [showTradeModal, setShowTradeModal] = useState(false);
+  const [closedTradeIds, setClosedTradeIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!gameState?.tradeOffers) return;
+    gameState.tradeOffers.forEach(offer => {
+      if (offer.status !== 'pending' && !closedTradeIds.has(offer.id)) {
+        setTimeout(() => {
+          setClosedTradeIds(prev => {
+            const next = new Set(prev);
+            next.add(offer.id);
+            return next;
+          });
+        }, 1000);
+      }
+    });
+  }, [gameState?.tradeOffers, closedTradeIds]);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showDiscardModal, setShowDiscardModal] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
-  const [showGameOver, setShowGameOver] = useState(false);
-  const [showDissolveConfirm, setShowDissolveConfirm] = useState(false);
+  const [isStartingGame, setIsStartingGame] = useState(false);
+  const [showDebugConsole, setShowDebugConsole] = useState(false);
+  const [showDebugButton, setShowDebugButton] = useState(false);
+  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
+  const logoClickCountRef = useRef(0);
+  const logoStartTimeRef = useRef<number>(0);
+
   const [gameStarted, setGameStarted] = useState(false);
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showDissolveRoomConfirm, setShowDissolveRoomConfirm] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
+
+  const handleLogoClick = useCallback(() => {
+    const now = Date.now();
+    if (now - logoStartTimeRef.current > 3000) {
+      logoClickCountRef.current = 1;
+      logoStartTimeRef.current = now;
+    } else {
+      logoClickCountRef.current += 1;
+    }
+    
+    console.log(`Logo clicked ${logoClickCountRef.current} times`);
+
+    if (logoClickCountRef.current === 3) {
+      if (!isJoinedLobby && !gameStarted) {
+        console.log('Triggering seed modification prompt (3 clicks)');
+        const res = prompt('请输入你要设置的随机种子序号(数字):', mapPreviewSeed.toString());
+        if (res && !isNaN(Number(res))) {
+          setMapPreviewSeed(Number(res));
+          localStorage.setItem('catan_map_preview_seed', res);
+        }
+        logoClickCountRef.current = 0;
+        logoStartTimeRef.current = 0;
+      }
+    }
+
+    if (logoClickCountRef.current === 5) {
+      if (gameStarted) {
+        console.log('Toggling debug button visibility (5 clicks)');
+        setShowDebugButton(prev => {
+          const newState = !prev;
+          if (!newState) {
+            setDebugModeEnabled(false);
+            setShowDebugConsole(false);
+          }
+          return newState;
+        });
+        logoClickCountRef.current = 0;
+        logoStartTimeRef.current = 0;
+      }
+    }
+  }, [mapPreviewSeed, isJoinedLobby, gameStarted]);
+
+  useEffect(() => {
+    if (!gameStarted) {
+      setIsBoardReady(false);
+    }
+  }, [gameStarted]);
+
+  // Keep-alive ping (every 5 mins)
+  useEffect(() => {
+    const keepAliveInterval = setInterval(() => {
+      // Use silent failure for keep-alive
+      fetch('/api/health').catch(() => {
+        // Silently ignore ping failures as they are expected during server restarts or network hiccups
+      });
+    }, 5 * 60 * 1000);
+    return () => clearInterval(keepAliveInterval);
+  }, []);
+
+  useEffect(() => {
+    return socketService.onConnectionChange((connected) => {
+      setIsConnected(connected);
+      if (connected && isJoinedLobby) {
+        const roomId = roomState?.roomId || inputRoomId;
+        if (roomId) {
+          console.log('[App] Reconnected, rejoining room:', roomId);
+          socketService.joinRoom(roomId, playerName);
+        }
+      }
+    });
+  }, [isJoinedLobby, roomState?.roomId, inputRoomId, playerName]);
+
+  // Auto-request fullscreen on first interaction and handle orientation
+  useEffect(() => {
+    const handleOrientation = () => {
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    window.addEventListener('resize', handleOrientation);
+    window.addEventListener('orientationchange', handleOrientation);
+    return () => {
+      window.removeEventListener('resize', handleOrientation);
+      window.removeEventListener('orientationchange', handleOrientation);
+    };
+  }, []);
+
+  // Set meta tags for "Desktop" scaling feel on mobile
+  useEffect(() => {
+    if (isMobile) {
+      let meta = document.querySelector('meta[name="viewport"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', 'viewport');
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover');
+    }
+  }, [isMobile]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      const elem = document.documentElement as any;
+      const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+      if (request) {
+        request.call(elem).catch(() => {});
+      }
+      setIsFullscreen(true);
+    } else {
+      const exit = document.exitFullscreen || (document as any).webkitExitFullscreen || (document as any).mozCancelFullScreen || (document as any).msExitFullscreen;
+      if (exit) {
+        exit.call(document);
+      }
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  // Force fullscreen on immediate load (might be blocked by browser) and listener as fallback
+  useEffect(() => {
+    const triggerFullscreen = () => {
+      if (!document.fullscreenElement) {
+        toggleFullscreen();
+      }
+    };
+    
+    // Attempt immediate
+    triggerFullscreen();
+
+    // Fallback listeners
+    window.addEventListener('click', triggerFullscreen);
+    window.addEventListener('touchstart', triggerFullscreen);
+    return () => {
+      window.removeEventListener('click', triggerFullscreen);
+      window.removeEventListener('touchstart', triggerFullscreen);
+    };
+  }, [toggleFullscreen]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
   const [isInitializingGame, setIsInitializingGame] = useState(false);
   const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [playerCount, setPlayerCount] = useState(4);
   const [botConfig, setBotConfig] = useState<boolean[]>(Array(6).fill(false));
-  const [mapType, setMapType] = useState<MapType>('standard');
+  const [mapType, setMapType] = useState<MapType>('archipelago');
   const [tradeGive, setTradeGive] = useState<ResourceType | null>(null);
   const [tradeReceive, setTradeReceive] = useState<ResourceType | null>(null);
   const [tradeQuantity, setTradeQuantity] = useState(1);
-  const [buildMode, setBuildMode] = useState<'road' | 'settlement' | 'city' | 'ship' | null>(null);
+  const buildMode = gameState?.activeBuildMode ?? null;
+  const isHost = roomState?.hostId === socketService.playerId;
 
   const handleSetBuildMode = useCallback((mode: typeof buildMode) => {
-    setBuildMode(mode);
     if (isMyHumanTurn) {
       setBuildModeSync(mode);
     }
   }, [isMyHumanTurn, setBuildModeSync]);
   const stageRef = useRef<any>(null);
+  const boardLayerRef = useRef<any>(null);
+  const lastGestureTime = useRef(0);
   const [imageElements, setImageElements] = useState<Record<string, HTMLImageElement>>({});
 
   const [connectedPlayers, setConnectedPlayers] = useState<string[]>([]);
@@ -569,21 +1041,19 @@ export default function App() {
   }, [gameState?.pendingDiscards[0]?.playerId]);
 
   useEffect(() => {
-    if (!gameState) return;
-    
-    // Check for winner (14 points)
-    const winner = gameState.players.find(p => {
-      const unplayedVPCards = p.devCards.filter(c => c === DevCardType.VictoryPoint).length;
-      const totalScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints + unplayedVPCards;
-      return totalScore >= 14;
-    });
-
-    if (winner && !showGameOver) {
-      setTimeout(() => {
-        setShowGameOver(true);
-      }, 500);
+    if (!gameState) {
+      setHasResolvedGameOver(false);
+      return;
     }
-  }, [gameState, showGameOver]);
+    
+    if (gameState.phase === 'finished' && !hasResolvedGameOver && !showGameOver) {
+      setShowGameOver(true);
+    }
+
+    if (gameState.phase !== 'finished') {
+      setHasResolvedGameOver(false);
+    }
+  }, [gameState?.phase, hasResolvedGameOver, showGameOver]);
 
   const hexCoords = useMemo(() => {
     if (!gameState) return [];
@@ -599,6 +1069,8 @@ export default function App() {
   const setHasManuallyInteracted = useCallback((val: boolean) => {
     hasManuallyInteractedRef.current = val;
   }, []);
+
+  const [isBoardReady, setIsBoardReady] = useState(false);
 
   const centerMap = useCallback((force = false) => {
     if (!stageRef.current || hexCoords.length === 0) return;
@@ -621,23 +1093,31 @@ export default function App() {
 
     const mapWidth = bounds.maxX - bounds.minX;
     const mapHeight = bounds.maxY - bounds.minY;
-    const stageWidth = stage.width();
-    const stageHeight = stage.height();
+    const sWidth = stage.width();
+    const sHeight = stage.height();
 
-    if (mapWidth === 0 || mapHeight === 0 || stageWidth === 0 || stageHeight === 0) return;
+    if (mapWidth === 0 || mapHeight === 0 || sWidth === 0 || sHeight === 0) return;
 
-    const scaleX = stageWidth / mapWidth;
-    const scaleY = stageHeight / mapHeight;
+    const scaleX = sWidth / mapWidth;
+    const scaleY = sHeight / mapHeight;
     const scale = Math.min(scaleX, scaleY) * 0.9; // Use 90% of the space for a bit more padding
 
     stage.scale({ x: scale, y: scale });
 
     // Center the map within the stage
-    const newX = (stageWidth - mapWidth * scale) / 2 - bounds.minX * scale;
-    const newY = (stageHeight - mapHeight * scale) / 2 - bounds.minY * scale;
+    const newX = (sWidth - mapWidth * scale) / 2 - bounds.minX * scale;
+    const newY = (sHeight - mapHeight * scale) / 2 - bounds.minY * scale;
     
     stage.position({ x: newX, y: newY });
+    stage.scale({ x: scale, y: scale });
     stage.batchDraw();
+    
+    // Ensure the transformation is committed before revealing to avoid "jumps"
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        setIsBoardReady(true);
+      }, 100);
+    });
   }, [hexCoords]);
 
   useEffect(() => {
@@ -646,18 +1126,16 @@ export default function App() {
       const height = window.innerHeight;
       setWindowSize({ width, height });
       
-      // Auto toggle panels based on size
-      if (width < 1024) {
-        setShowLeftPanel(false);
-        setShowRightPanel(false);
-      } else {
-        setShowLeftPanel(true);
-        setShowRightPanel(true);
-      }
+      // Force panels to always show
+      setShowLeftPanel(true);
+      setShowRightPanel(true);
       
-      setTimeout(() => centerMap(), 50);
+      setTimeout(() => centerMap(true), 50);
+      setTimeout(() => centerMap(true), 150);
+      setTimeout(() => centerMap(true), 400);
     };
     window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
     
     // Recenter when the window is resized or the map data changes.
     // Use multiple timeouts to ensure layout has settled
@@ -667,17 +1145,32 @@ export default function App() {
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
     };
   }, [centerMap, gameStarted, isInitializingGame, assetsLoaded]);
 
+  const zoomEndTimeoutRef = useRef<any>(null);
+
   const handleWheel = (e: any) => {
     setHasManuallyInteracted(true);
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
+
+    // PERFORMANCE: Cache layer during wheel zoom
+    if (boardLayerRef.current) {
+      if (zoomEndTimeoutRef.current) clearTimeout(zoomEndTimeoutRef.current);
+      if (!boardLayerRef.current.isCached()) {
+        boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+      }
+      zoomEndTimeoutRef.current = setTimeout(() => {
+        boardLayerRef.current?.clearCache();
+        boardLayerRef.current?.batchDraw();
+      }, 400);
+    }
 
     const scaleBy = 1.1;
     const oldScale = stage.scaleX();
@@ -710,6 +1203,7 @@ export default function App() {
   });
   const [showMapGenerator, setShowMapGenerator] = useState(false);
   const [showMapAlbum, setShowMapAlbum] = useState(false);
+  const [atlasLogoError, setAtlasLogoError] = useState(false);
   const [albumFilter, setAlbumFilter] = useState<'2-4' | '5' | '6'>('2-4');
   const [previewTopology, setPreviewTopology] = useState<any>(null);
 
@@ -728,9 +1222,12 @@ export default function App() {
     return Object.entries(cost).every(([res, amt]) => me.resources[res as ResourceType] >= amt);
   }, [gameState, me]);
 
-  // Auto-exit build mode if resources are insufficient
+  // Auto-exit build mode if resources are insufficient (unless it's setup or road building card)
   useEffect(() => {
     if (buildMode && gameState?.phase === 'main') {
+      const freeRoads = gameState.freeRoads || 0;
+      if (buildMode === 'road' && freeRoads > 0) return;
+      
       const costs = {
         road: COSTS.road,
         settlement: COSTS.settlement,
@@ -738,10 +1235,10 @@ export default function App() {
         ship: COSTS.ship
       };
       if (!canAfford(costs[buildMode])) {
-        setBuildMode(null);
+        handleSetBuildMode(null);
       }
     }
-  }, [gameState?.players, gameState?.currentPlayerIndex, buildMode, canAfford]);
+  }, [gameState?.players, gameState?.currentPlayerIndex, buildMode, canAfford, handleSetBuildMode, gameState?.freeRoads, gameState?.phase]);
 
   const generatePreview = useCallback(() => {
     const topology = generateMapTopology(mapType, playerCount);
@@ -758,6 +1255,7 @@ export default function App() {
       playerCount,
       mapType,
       topology: previewTopology,
+      board: previewBoard,
       date: new Date().toLocaleString()
     };
     const updated = [...savedMaps, newMap];
@@ -766,30 +1264,22 @@ export default function App() {
     alert('地图已保存到图册！');
   };
 
-  const startWithPreviewMap = () => {
-    initGame(
-      playerCount, 
-      mapType, 
-      previewBoard, 
-      roomState?.settings.botConfig, 
-      roomState?.players.map(p => p.id),
-      roomState?.players.map(p => p.name)
-    );
-    setGameStarted(true);
+  const usePreviewMap = () => {
+    syncSettings({ 
+      customBoard: previewBoard,
+      customMapName: '随机生成地图',
+      customMapId: 'temp_preview'
+    });
     setShowMapGenerator(false);
   };
 
-  const startWithSavedMap = (savedMap: any) => {
-    const board = distributeResources(savedMap.topology, savedMap.mapType, savedMap.playerCount);
-    initGame(
-      savedMap.playerCount, 
-      savedMap.mapType, 
-      board, 
-      roomState?.settings.botConfig, 
-      roomState?.players.map(p => p.id),
-      roomState?.players.map(p => p.name)
-    );
-    setGameStarted(true);
+  const useSavedMap = (savedMap: any) => {
+    const board = savedMap.board || distributeResources(savedMap.topology, savedMap.mapType, savedMap.playerCount);
+    syncSettings({
+      customBoard: board,
+      customMapName: savedMap.name,
+      customMapId: savedMap.id
+    });
     setShowMapAlbum(false);
   };
 
@@ -808,35 +1298,36 @@ export default function App() {
       const shipsCount = gameState.ships.filter(s => s.playerId === pIdx).length;
       
       if (settlementsCount > (roadsCount + shipsCount)) {
-        handleSetBuildMode('road');
+        if (buildMode !== 'road' && buildMode !== 'ship') handleSetBuildMode('road');
       } else {
-        handleSetBuildMode('settlement');
+        if (buildMode !== 'settlement') handleSetBuildMode('settlement');
       }
+    } else if (gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'discard') {
+      if (buildMode !== null) handleSetBuildMode(null);
     }
-  }, [gameState?.phase, gameState?.currentPlayerIndex, gameState?.settlements.length, gameState?.roads.length, gameState?.ships.length, handleSetBuildMode]);
-
-  // Clear build mode on phase change to main
-  useEffect(() => {
-    if (gameState?.phase === 'main') {
-      handleSetBuildMode(null);
-    } else if (gameState?.phase === 'road_building') {
-      handleSetBuildMode('road');
-    }
-  }, [gameState?.phase, handleSetBuildMode]);
-
-
+  }, [gameState?.phase, gameState?.currentPlayerIndex, gameState?.settlements.length, gameState?.roads.length, gameState?.ships.length, handleSetBuildMode, buildMode]);
 
   const checkIsValidEdge = useCallback((edgeId: string, mode: 'road' | 'ship') => {
     if (!gameState) return false;
     const player = gameState.players[gameState.currentPlayerIndex];
     
+    // Check limits
+    const numRoads = gameState.roads.filter(r => r.playerId === player.id).length;
+    const numShips = gameState.ships.filter(s => s.playerId === player.id).length;
+    if (mode === 'road' && numRoads >= 15) return false;
+    if (mode === 'ship' && numShips >= 15) return false;
+
     // Check if occupied
     if (gameState.roads.some(r => r.edgeId === edgeId) || gameState.ships.some(s => s.edgeId === edgeId)) return false;
 
+
     const hexes = getHexesForEdge(gameState.board, edgeId);
     
-    // Pirate check
-    if (hexes.some(h => h.id === gameState.pirateHexId)) return false;
+    // Pirate check - only blocks SHIPS
+    if (mode === 'ship' && hexes.some(h => h.id === gameState.pirateHexId)) return false;
+
+    // Robber check - usually doesn't block roads, but let's keep consistency if needed. 
+    // In standard Catan, robber doesn't block building, but let's assume it doesn't here.
 
     if (mode === 'road') {
       // Road: Must have at least one land hex adjacent
@@ -891,8 +1382,9 @@ export default function App() {
 
     const hexes = getHexesForVertex(gameState.board, vertexId);
     
-    // Pirate check
-    if (hexes.some(h => h.id === gameState.pirateHexId)) return false;
+    // Pirate check - only blocks settlements if they are on a pure sea hex (which shouldn't happen for land settlements)
+    // In standard Seafarers, the Pirate moved to a sea hex blocks that hex's production and ships.
+    // It usually doesn't block building settlements on islands.
 
     if (mode === 'city') {
       // Must be own settlement and not city
@@ -939,12 +1431,10 @@ export default function App() {
     if (buildMode === 'settlement') {
         if (checkIsValidVertex(vertexId, 'settlement')) {
             buildSettlement(vertexId, hexIds);
-            if (gameState?.phase !== 'setup') handleSetBuildMode(null);
         }
     } else if (buildMode === 'city') {
         if (checkIsValidVertex(vertexId, 'city')) {
             upgradeToCity(vertexId);
-            handleSetBuildMode(null);
         }
     }
   }, [canBuild, buildMode, checkIsValidVertex, buildSettlement, upgradeToCity, gameState?.phase, handleSetBuildMode]);
@@ -955,14 +1445,10 @@ export default function App() {
     if (buildMode === 'road') {
         if (checkIsValidEdge(edgeId, 'road')) {
             buildRoad(edgeId);
-            if (gameState?.phase !== 'setup' && gameState?.phase !== 'road_building') handleSetBuildMode(null);
-            // In road_building phase, we might want to keep the mode until 2 roads are built, 
-            // but the game logic handles the phase transition.
         }
     } else if (buildMode === 'ship') {
         if (checkIsValidEdge(edgeId, 'ship')) {
             buildShip(edgeId);
-            if (gameState?.phase !== 'setup') handleSetBuildMode(null);
         }
     }
   }, [canBuild, buildMode, checkIsValidEdge, buildRoad, buildShip, gameState?.phase, handleSetBuildMode]);
@@ -1108,21 +1594,78 @@ export default function App() {
     }
   }, [maxTradeQuantity, tradeQuantity]);
 
+  // --- HUMAN STUCK STATE RECOVERY ---
+  useEffect(() => {
+    if (!gameState) return;
+    const activePlayer = gameState.players[activePlayerId];
+    if (activePlayer?.isBot || !isMyHumanTurn) return;
+
+    // If a human player is stuck in 'stealing' phase with a target selected but the action didn't complete
+    if (gameState.phase === 'stealing' && gameState.selectedStealTarget !== null) {
+      const timer = setTimeout(() => {
+        stealResource(gameState.selectedStealTarget!);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState?.phase, gameState?.selectedStealTarget, isMyHumanTurn, stealResource]);
+
+  // Auto-sync state periodically to prevent desync
+  useEffect(() => {
+    // Deliberately removed periodic sync to prevent optimistic state rollbacks.
+    // Instead we rely on WebSocket TCP delivery and manual sync on reconnect.
+  }, [roomState?.roomId, gameStarted]);
+
+  // --- BOT WATCHDOG LOGIC ---
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    const interval = setInterval(() => {
+      const activePlayer = gameState.players[gameState.currentPlayerIndex];
+      // Only forcibly end turn if it's main phase, bot is active, and they exceeded 10s.
+      if (activePlayer?.isBot && gameState.phase === 'main' && botTurnStartRef.current > 0) {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+          nextTurn();
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, botProcessorId, nextTurn]);
+
   // --- BOT LOGIC ---
   const isProcessingBotRef = useRef(false);
+  const botTurnStartRef = useRef<number>(0);
+  const lastBotStateKeyRef = useRef<string>('');
+
   useEffect(() => {
     if (!gameState || isProcessingBotRef.current) return;
     const activePlayer = gameState.players[activePlayerId];
-    if (!activePlayer?.isBot) return;
+    if (!activePlayer?.isBot) {
+        lastBotStateKeyRef.current = '';
+        return;
+    }
     
     // Use roomState host check to ensure only one client processes bots
-    const isHost = roomState?.hostId === socketService.playerId;
-    if (!isHost) return;
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    const currentStateKey = `${activePlayerId}-${gameState.phase}-${gameState.hasRolled}-${gameState.roads.length}-${gameState.settlements.length}-${gameState.ships.length}-${Object.values(activePlayer.resources).join(',')}`;
+    if (lastBotStateKeyRef.current !== currentStateKey) {
+      botTurnStartRef.current = Date.now();
+      lastBotStateKeyRef.current = currentStateKey;
+    }
 
     isProcessingBotRef.current = true;
     const timer = setTimeout(() => {
       isProcessingBotRef.current = false;
       const { phase } = gameState;
+
+      if (phase === 'initial_dice_roll') {
+        rollDice();
+        return;
+      }
 
       if (phase === 'setup') {
         const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
@@ -1160,7 +1703,12 @@ export default function App() {
             }
           }
         }
-      } else if (phase === 'main') {
+      } else if (phase === 'main' || phase === 'road_building') {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+           nextTurn();
+           return;
+        }
+
         if (!gameState.hasRolled) {
           // Bot: Should I play a Knight card before rolling?
           if (!gameState.hasPlayedDevCardThisTurn && activePlayer.devCards.includes(DevCardType.Knight)) {
@@ -1181,7 +1729,12 @@ export default function App() {
         // Try actions (using local check to avoid gameState.currentPlayerIndex mismatch)
         const canAffordLocal = (cost: Record<string, number>) => Object.entries(cost).every(([res, amt]) => (activePlayer.resources as any)[res] >= amt);
 
-        if (canAffordLocal(COSTS.city)) {
+        const playerRoadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+        const playerShipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+        const playerSettlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+        const playerCitiesCount = gameState.settlements.filter(s => s.playerId === activePlayerId && s.isCity).length;
+
+        if (canAffordLocal(COSTS.city) && playerCitiesCount < 4) {
           const upgradable = gameState.settlements.filter(s => s.playerId === activePlayerId && !s.isCity);
           if (upgradable.length > 0) {
             upgradeToCity(upgradable[0].vertexId);
@@ -1189,7 +1742,7 @@ export default function App() {
           }
         }
 
-        if (canAffordLocal(COSTS.settlement)) {
+        if (canAffordLocal(COSTS.settlement) && playerSettlementsCount < 5) {
           const validV = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
           if (validV.length > 0) {
             buildSettlement(validV[0].id, validV[0].hexIds);
@@ -1202,7 +1755,7 @@ export default function App() {
           return;
         }
 
-        if (canAffordLocal(COSTS.road)) {
+        if (canAffordLocal(COSTS.road) && playerRoadsCount < 15) {
           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
           if (validE.length > 0) {
             buildRoad(validE[0].id);
@@ -1210,12 +1763,22 @@ export default function App() {
           }
         }
 
-        if (canAffordLocal(COSTS.ship)) {
+        if (canAffordLocal(COSTS.ship) && playerShipsCount < 15) {
           const validS = edges.filter(e => checkIsValidEdge(e.id, 'ship'));
           if (validS.length > 0) {
             buildShip(validS[0].id);
             return;
           }
+        }
+
+        if (phase === 'road_building' && gameState.freeRoads && gameState.freeRoads > 0) {
+           // We are in road building mode, should have already built one if we were in main before.
+           // This block handles the second road if we didn't exit.
+           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
+           if (validE.length > 0) {
+             buildRoad(validE[0].id);
+             return;
+           }
         }
 
         // Try bank trade if we have a lot of one resource
@@ -1245,42 +1808,127 @@ export default function App() {
           }
           discardCards(activePlayerId, toDiscard);
         }
-      } else if (phase === 'robber') {
+      } else if (phase === 'robber' || phase === 'robber_move') {
         // Find a hex where opponent has buildings and move robber there
-        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.type !== HexType.Desert && h.id !== gameState.robberHexId);
-        if (validH.length > 0) {
-          const scoredH = validH.map(h => {
-             let score = 0;
-             const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
-             adjS.forEach(s => {
-               if (s.playerId === activePlayerId) score -= 10;
-               else score += (s.isCity ? 5 : 2);
-             });
-             return { id: h.id, score: score + Math.random() };
-          });
-          scoredH.sort((a,b) => b.score - a.score);
-          moveRobber(scoredH[0].id);
+        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.id !== gameState.robberHexId);
+        // Pirate can move to sea
+        const validSeaH = gameState.board.filter(h => h.type === HexType.Sea && h.id !== gameState.pirateHexId);
+
+        if (phase === 'robber_move' || phase === 'robber') {
+           // Decide between robber and pirate move if applicable, here we just pick one
+           const activePlayer = gameState.players[activePlayerId];
+           // Simple logic: if we have coastal settlements, maybe move pirate? 
+           // For now, let's just move the robber to a productive opponent hex.
+           
+           if (validH.length > 0) {
+              const scoredH = validH.map(h => {
+                 let score = 0;
+                 const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
+                 adjS.forEach(s => {
+                   if (s.playerId === activePlayerId) score -= 10;
+                   else score += (s.isCity ? 5 : 2);
+                 });
+                 if (h.type === HexType.Desert) score -= 5;
+                 return { id: h.id, score: score + Math.random() };
+              });
+              scoredH.sort((a,b) => b.score - a.score);
+              moveRobber(scoredH[0].id);
+           }
         }
       } else if (phase === 'stealing') {
         if (gameState.pendingStealFrom.length > 0) {
-          // Steal from player with most points
-          const targets = gameState.pendingStealFrom.map(pid => ({ id: pid, points: gameState.players[pid].victoryPoints + (gameState.settlements.filter(s=>s.playerId===pid).length) }));
-          targets.sort((a,b) => b.points - a.points);
-          stealResource(targets[0].id);
+          if (gameState.selectedStealTarget == null) {
+            // Steal from player with most points
+            const targets = gameState.pendingStealFrom.map(pid => ({ id: pid, points: gameState.players[pid].victoryPoints + (gameState.settlements.filter(s=>s.playerId===pid).length) }));
+            targets.sort((a,b) => b.points - a.points);
+            selectStealTarget(targets[0].id);
+            setTimeout(() => stealResource(targets[0].id), 1000);
+          } else {
+            // Recover from stuck state
+            stealResource(gameState.selectedStealTarget);
+          }
         }
       } else if (phase === 'gold_selection') {
-        selectGoldResource({ lumber: 0, brick: 0, wool: 0, grain: 0, ore: 1 });
+        const rewardAmount = gameState.pendingGoldRewards[0]?.amount || 1;
+        selectGoldResource({ lumber: 0, brick: 0, wool: 0, grain: 0, ore: rewardAmount });
       } else {
         // Fallback for other subphases
         nextTurn();
       }
-    }, (gameState.phase === 'main' && gameState.hasRolled) ? 400 : 1200);
+    }, 1000);
 
     return () => {
       clearTimeout(timer);
       isProcessingBotRef.current = false;
     };
-  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, roomState?.hostId]);
+  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, botProcessorId]);
+
+  // --- INITIAL DICE ROLL DELAY LOGIC ---
+  useEffect(() => {
+    if (gameState?.phase === 'initial_dice_roll' && gameState.hasRolled) {
+      if (botProcessorId === socketService.playerId) {
+        const timer = setTimeout(() => {
+          resolveInitialRoll();
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [gameState?.phase, gameState?.hasRolled, botProcessorId, resolveInitialRoll]);
+
+  // --- BOT TRADE EVALUATION LOGIC ---
+  const botTradeEvaluatedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    if (gameState.tradeOffers) {
+      gameState.tradeOffers.forEach(offer => {
+        if (offer.status !== 'pending') return;
+
+        gameState.players.forEach(p => {
+          if (!p.isBot) return;
+          if (p.id === offer.initiatorId) return;
+
+          // If trade targeted to specific player, check bot ID
+          if (offer.targetPlayerId !== null && offer.targetPlayerId !== p.id) return;
+
+          // Check if bot has already reacted
+          if (offer.acceptedBy.includes(p.id) || offer.rejectedBy.includes(p.id)) return;
+
+          // Check if we already evaluated this combination in current session
+          const evaluationKey = `${offer.id}-${p.id}`;
+          if (botTradeEvaluatedRef.current.has(evaluationKey)) return;
+          
+          botTradeEvaluatedRef.current.add(evaluationKey);
+
+          // Give a short delay to make it feel human-like
+          setTimeout(() => {
+            // Re-evaluate in case state changed
+            const canAfford = Object.values(ResourceType).every(
+              res => (p.resources[res] || 0) >= (offer.request[res] || 0)
+            );
+
+            if (!canAfford) {
+              if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
+            } else {
+              const totalRequested = Object.values(offer.request).reduce((a, b) => a + (b || 0), 0);
+              const totalOffered = Object.values(offer.offer).reduce((a, b) => a + (b || 0), 0);
+
+              const acceptProbability = totalOffered >= totalRequested ? 0.7 : 0.2;
+              
+              if (Math.random() <= acceptProbability) {
+                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept');
+              } else {
+                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
+              }
+            }
+          }, 800 + Math.random() * 1000);
+        });
+      });
+    }
+  }, [gameState?.tradeOffers, botProcessorId, roomState?.roomId]);
 
   useEffect(() => {
     const imagesToPreload = [
@@ -1311,171 +1959,385 @@ export default function App() {
   }, []);
 
   const handleStartGame = async () => {
-    if (!roomState) return;
-    if (roomState.hostId !== socketService.playerId) return; 
+    setIsStartingGame(true);
+    // Yield to the browser so the "世界生成中..." spinner actually renders
+    // Map generation can be extremely heavy and blocks the UI thread.
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    if (!roomState) { setIsStartingGame(false); return; }
+    if (roomState.hostId !== socketService.playerId) { setIsStartingGame(false); return; }
     
     const allReady = roomState.players.every(p => p.isReady);
     if (!allReady) {
-      alert("请等待所有玩家点击'准备'后再开始游戏");
+      console.warn("请等待所有玩家就绪后再开始游戏");
       return;
+    }
+
+    const totalBotCount = roomState.settings?.botConfig?.filter(b => b).length || 0;
+    const totalPlayersCount = roomState.players.length + totalBotCount;
+    const requiredPlayers = roomState.settings?.playerCount || 4;
+    
+    if (totalPlayersCount !== requiredPlayers) {
+        console.warn(`游戏需要配置刚好 ${requiredPlayers} 名玩家（包含真实玩家和机器人）`);
+        return;
     }
 
     const assignedSessions = roomState.players.map(p => p.id);
     const assignedNames = roomState.players.map(p => p.name);
+    
+    // Instead of directly initGame, set to initial_dice_roll phase
     const initialState = initGame(
       roomState.settings.playerCount, 
       roomState.settings.mapType as MapType, 
-      undefined, 
+      roomState.settings.customBoard, 
       roomState.settings.botConfig, 
       assignedSessions,
       assignedNames
     );
     
     if (initialState) {
-      socketService.startGame(roomState.roomId, initialState);
+      // Set to initial_dice_roll and initialize empty rolls
+      const initialStateWithRolls = {
+        ...initialState,
+        phase: 'initial_dice_roll' as const,
+        initialDiceRolls: {}
+      };
+      if (roomState?.roomId) {
+        socketService.startGame(roomState.roomId, initialStateWithRolls);
+      }
+    } else {
+      setIsStartingGame(false);
     }
   };
 
   const isHostInLobby = roomState?.hostId === socketService.playerId;
 
+  const standard2PlayerMap = useMemo(() => {
+    const originalMathRandom = Math.random;
+    try {
+      Math.random = seededRandom(mapPreviewSeed);
+      const topology = generateMapTopology('standard', 2);
+      return distributeResources(topology, 'standard', 2);
+    } finally {
+      Math.random = originalMathRandom;
+    }
+  }, [generateMapTopology, distributeResources, mapPreviewSeed]);
+
+  const archipelago6PlayerMap = useMemo(() => {
+    const originalMathRandom = Math.random;
+    try {
+      Math.random = seededRandom(mapPreviewSeed + 86420);
+      const topology = generateMapTopology('archipelago', 6);
+      return distributeResources(topology, 'archipelago', 6);
+    } finally {
+      Math.random = originalMathRandom;
+    }
+  }, [generateMapTopology, distributeResources, mapPreviewSeed]);
+
+  // Flexible style for Login and Lobby
+  const flexibleContainerStyle: React.CSSProperties = {
+    width: '100vw',
+    height: '100vh',
+    position: 'relative',
+    overflow: 'hidden'
+  };
+
+  // Locked landscape style for the Game
+  const lockedLandscapeStyle: React.CSSProperties = {
+    width: '100vw',
+    height: '100vh',
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    overflow: 'hidden'
+  };
+
+  if (isCheckingSession) {
+    return (
+      <>
+      {isSpectator && roomState && (
+        <button 
+          onClick={handleReturnToLobby}
+          className="fixed top-6 right-6 z-[9999] flex items-center gap-3 px-8 py-4 bg-red-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] shadow-[0_20px_50px_rgba(220,38,38,0.3)] hover:bg-red-700 hover:-translate-y-1 active:translate-y-0 active:scale-95 transition-all border-2 border-white/20 pointer-events-auto text-sm group"
+        >
+          <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
+          <span>退出观战</span>
+        </button>
+      )}
+      <div style={lockedLandscapeStyle}>
+        {isPortrait && <PortraitOverlay />}
+        <div className="flex flex-col items-center justify-center h-full w-full bg-[#0a0a0a] text-white relative overflow-hidden">
+          <div className="flex flex-col items-center gap-4 relative z-10 text-slate-300">
+            <div className="w-16 h-16 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+            <p className="font-bold tracking-[0.2em] uppercase text-sm animate-pulse">正在重连海域...</p>
+          </div>
+        </div>
+      </div>
+      </>
+    );
+  }
+
   if (!isJoinedLobby) {
     return (
-      <div className="flex flex-col h-screen w-full bg-slate-50 font-sans items-center justify-center p-8">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white p-10 rounded-[2.5rem] shadow-2xl shadow-indigo-100 border border-slate-200 max-w-md w-full text-center z-10 relative">
-          <div className="w-24 h-24 mx-auto mb-6 bg-indigo-50 rounded-3xl flex items-center justify-center">
-            <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-16 h-16 object-contain" />
+      <div style={flexibleContainerStyle}>
+        {isPortrait && <PortraitOverlay />}
+        <div className="flex flex-col h-full w-full bg-slate-50 font-sans items-center justify-center p-2 sm:p-4 relative selection:bg-indigo-600 selection:text-white overflow-hidden">
+          {/* Decorative elements */}
+        <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none opacity-20 z-0">
+          <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-indigo-200 rounded-full blur-[120px]" />
+          <div className="absolute top-[60%] -right-[10%] w-[50%] h-[50%] bg-emerald-100 rounded-full blur-[100px]" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20, scale: 0.95 }} 
+          animate={{ opacity: 1, y: 0, scale: 1 }} 
+          className="bg-white p-4 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl shadow-indigo-100 border border-slate-200 max-w-[90vw] sm:max-w-md w-full text-center z-10 relative flex flex-col items-center"
+        >
+          <div className="w-10 h-10 sm:w-14 sm:h-14 mx-auto mb-1 sm:mb-2 bg-slate-50 rounded-2xl flex items-center justify-center shadow-inner border border-slate-100" onClick={handleLogoClick}>
+            <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-6 h-6 sm:w-10 sm:h-10 object-contain drop-shadow-lg" />
           </div>
-          <h1 className="text-3xl font-serif font-black italic mb-2 text-slate-800">CATAN</h1>
-          <p className="text-[10px] uppercase tracking-[0.3em] opacity-40 font-black mb-8">Professional Online Edition</p>
+          <h1 className="text-lg sm:text-xl font-serif font-black italic mb-0.5 text-slate-800 tracking-tight leading-none">CATAN</h1>
+          <p className="text-[6px] sm:text-[8px] uppercase tracking-[0.4em] opacity-40 font-black mb-2 sm:mb-4 text-indigo-900">Professional Online Edition</p>
           
-          <div className="flex flex-col gap-5 text-left">
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-2 block">你的昵称</label>
+          <div className="flex flex-col gap-2 sm:gap-3 text-left w-full">
+            <div className="group">
+              <label className="text-[7px] sm:text-[8px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-0.5 block group-focus-within:text-indigo-500 transition-colors">你的昵称</label>
               <input 
                 type="text" 
                 value={playerName}
                 onChange={e => setPlayerName(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 px-5 py-3.5 rounded-2xl outline-none font-bold text-center mb-1 transition-all focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                placeholder="输入你的勇士之名"
+                className="w-full bg-slate-50 border border-slate-100 px-3 py-1.5 sm:py-2.5 rounded-lg outline-none font-bold text-center mb-0 transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white text-xs sm:text-sm"
               />
             </div>
-            <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-2 block">房间代码</label>
+            <div className="group">
+              <label className="text-[7px] sm:text-[8px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-0.5 block group-focus-within:text-indigo-500 transition-colors">房间代码</label>
               <input 
                 type="text" 
                 value={inputRoomId}
                 onChange={e => setInputRoomId(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 px-5 py-3.5 rounded-2xl outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                placeholder="6位房间代码"
+                className="w-full bg-slate-50 border border-slate-100 px-3 py-1.5 sm:py-2.5 rounded-lg outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white text-xs sm:text-sm"
               />
             </div>
             
             <button 
               onClick={handleJoinRoom}
-              className="w-full bg-indigo-600 text-white py-4.5 rounded-2xl font-black uppercase tracking-[0.15em] hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:scale-[0.98] transition-all mt-4 shadow-lg shadow-indigo-100"
+              className="w-full bg-indigo-600 text-white py-2.5 sm:py-3 rounded-lg font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-2xl hover:shadow-indigo-200 active:scale-[0.97] transition-all mt-0.5 shadow-lg shadow-indigo-100 relative overflow-hidden group text-[10px] sm:text-xs"
             >
-              进入大厅
+              <span className="relative z-10">进入海域</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500" />
             </button>
+            {localStorage.getItem('catan_active_room') && (
+              <button 
+                onClick={() => {
+                  localStorage.removeItem('catan_active_room');
+                  setInputRoomId('');
+                  setRoomState(null);
+                }}
+                className="w-full mt-2 text-center text-slate-400 hover:text-red-500 text-[9px] uppercase font-black tracking-widest transition-colors py-1 flex items-center justify-center gap-1.5 group"
+              >
+                <Trash2 size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                放弃重连，离开海域
+              </button>
+            )}
+          </div>
+          
+          <div className="mt-4 sm:mt-6 pt-4 sm:pt-6 border-t border-slate-50 w-full">
+            <p className="text-[9px] sm:text-[10px] text-slate-300 font-bold uppercase tracking-widest">© 2026 Catan Online . Skot</p>
           </div>
         </motion.div>
       </div>
+      {showDebugButton && (
+        <button 
+          onClick={() => {
+            const newMode = !debugModeEnabled;
+            setDebugModeEnabled(newMode);
+            setShowDebugConsole(newMode);
+          }}
+          className="fixed bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+        >
+          调试
+        </button>
+      )}
+    </div>
     );
   }
 
   if (!gameStarted) {
     return (
-      <div className="flex flex-col lg:flex-row h-screen w-full bg-slate-50 font-sans overflow-hidden relative selection:bg-indigo-600 selection:text-white">
+      <>
+      <MapAlbumModal
+        isOpen={showMapAlbum}
+        onClose={() => setShowMapAlbum(false)}
+        savedMaps={savedMaps}
+        onSelectMap={useSavedMap}
+        onDeleteMap={deleteSavedMap}
+        onGenerateNew={() => {
+          setShowMapAlbum(false);
+          setShowMapGenerator(true);
+        }}
+        albumFilter={albumFilter}
+        setAlbumFilter={setAlbumFilter}
+        MapPreviewRenderer={MapPreview}
+        selectedMapId={roomState?.settings?.customMapId}
+      />
+
+      <MapGeneratorModal
+        isOpen={showMapGenerator}
+        onClose={() => setShowMapGenerator(false)}
+        playerCount={roomState?.settings?.playerCount || 4}
+        mapType={roomState?.settings?.mapType as MapType || 'standard'}
+        generatePreview={generatePreview}
+        saveMapToAlbum={saveMapToAlbum}
+        startWithPreviewMap={usePreviewMap}
+        previewBoard={previewBoard}
+        MapPreviewRenderer={MapPreview}
+      />
+      
+      {isSpectator && roomState && (
+        <button 
+          onClick={handleReturnToLobby}
+          className="fixed top-6 right-6 z-[9999] flex items-center gap-3 px-8 py-4 bg-red-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] shadow-[0_20px_50px_rgba(220,38,38,0.3)] hover:bg-red-700 hover:-translate-y-1 active:translate-y-0 active:scale-95 transition-all border-2 border-white/20 pointer-events-auto text-sm group"
+        >
+          <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
+          <span>退出观战</span>
+        </button>
+      )}
+
+      <div style={flexibleContainerStyle}>
+        {isPortrait && <PortraitOverlay />}
+        <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-hidden relative selection:bg-indigo-600 selection:text-white">
         {/* Decorative Background Gradient */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.05)_0%,_transparent_60%)] pointer-events-none" />
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_transparent_60%)] pointer-events-none z-0" />
         
         {/* Left Side: Branding & Controls */}
         <motion.div 
           initial={{ opacity: 0, x: -50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
-          className="flex-1 flex flex-col p-8 lg:p-20 relative z-10"
+          className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 relative z-10 overflow-hidden min-h-0"
         >
-          {/* Header & Logo */}
-          <div className="flex items-center gap-8 mb-10 px-4">
-            <div className="w-20 h-20 lg:w-28 lg:h-28 bg-white rounded-[2rem] flex items-center justify-center shrink-0 shadow-2xl shadow-indigo-100 border border-slate-100 relative">
-              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-[2rem] opacity-50" />
-              <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-14 h-14 lg:w-16 lg:h-16 object-contain relative z-10 drop-shadow-xl" />
+          {/* Header & Logo Section */}
+          <div className="flex items-center gap-2 sm:gap-4 mb-2 sm:mb-4 px-1 lg:px-2 shrink-0 h-16 sm:h-20 lg:h-24" onClick={handleLogoClick}>
+            <div className="w-10 h-10 sm:w-16 lg:w-20 lg:h-20 bg-white rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 shadow-xl shadow-indigo-100 border border-slate-100 relative overflow-hidden group">
+              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-xl sm:rounded-b-2xl opacity-50" />
+              <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-6 h-6 sm:w-10 lg:w-12 lg:h-12 object-contain relative z-10 drop-shadow-xl group-hover:scale-110 transition-transform duration-500" />
             </div>
-            <div>
-              <h1 className="text-5xl lg:text-7xl font-serif font-black italic tracking-tighter text-slate-900 leading-none drop-shadow-sm">CATAN</h1>
-              <p className="text-[10px] lg:text-xs uppercase tracking-[0.5em] text-slate-400 font-bold mt-3">航海家版 · SEAFARERS</p>
-            </div>
-          </div>
-
-          <div className="w-full max-w-lg space-y-8 px-4">
-            {/* Map Settings */}
-            <div className={!isHostInLobby ? 'opacity-50 pointer-events-none' : ''}>
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 ml-2">地图选择</h3>
-              <div className="grid grid-cols-2 gap-4">
-                {[
-                  { id: 'standard', label: '标准大陆', icon: '🌍' },
-                  { id: 'archipelago', label: '群岛世界', icon: '🏝️' }
-                ].map(map => (
-                  <button
-                    key={map.id}
-                    onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id }); }}
-                    className={`flex flex-col items-center gap-3 p-6 rounded-[2.5rem] transition-all duration-300 border ${mapType === map.id ? 'bg-white border-indigo-500 shadow-2xl shadow-indigo-100 ring-4 ring-indigo-500/10' : 'bg-white border-slate-100 hover:border-indigo-200 text-slate-600'}`}
-                  >
-                    <div className="text-3xl">{map.icon}</div>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">{map.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-col gap-4 pt-2">
-              {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
-                <button 
-                  onClick={handleToggleReady}
-                  className="w-full bg-emerald-600 text-white py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] shadow-2xl shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-4 text-sm"
-                >
-                  <Play size={18} fill="currentColor" />
-                  准备开始
-                </button>
-              ) : (
-                <button 
-                  onClick={handleToggleReady}
-                  className="w-full bg-slate-100 text-slate-500 py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] border border-slate-200 hover:bg-slate-200 transition-all flex items-center justify-center gap-4 text-sm"
-                >
-                  <X size={18} />
-                  取消准备
-                </button>
-              )}
-
-              {isHostInLobby && (
-                <button 
-                  onClick={handleStartGame}
-                  disabled={!roomState?.players.every(p => p.isReady) || roomState.players.length === 0}
-                  className="w-full bg-slate-900 text-white py-5 rounded-2.5xl font-black uppercase tracking-[0.2em] shadow-2xl hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-sm"
-                >
-                  {roomState?.players.every(p => p.isReady) ? '开启游戏' : '等待全员准备'}
-                </button>
-              )}
-
-              <div className="pt-1">
-                <button 
-                  onClick={() => {
-                    if (confirm('确定要离开房间吗？')) {
-                      if (roomState) socketService.leaveRoom(roomState.roomId);
-                      setIsJoinedLobby(false);
-                      setRoomState(null);
-                      window.history.replaceState({}, '', window.location.pathname);
-                    }
-                  }}
-                  className="w-full py-2 text-slate-400 font-bold text-[9px] uppercase tracking-[0.3em] hover:text-red-500 transition-colors"
-                >
-                  离开房间
-                </button>
-              </div>
+            <div className="flex flex-col justify-center">
+              <h1 className="text-xl sm:text-3xl lg:text-6xl font-serif font-black italic tracking-tighter text-slate-900 leading-none drop-shadow-sm">CATAN</h1>
+              <p className="text-[6px] sm:text-[9px] lg:text-[11px] uppercase tracking-[0.5em] text-indigo-600 font-black mt-0.5 sm:mt-1">航海家版 · SEAFARERS</p>
             </div>
           </div>
 
-          
           <div className="flex-1" />
+
+          <div className="w-full max-w-lg space-y-2 sm:space-y-4 px-1 lg:px-2 flex flex-col justify-end min-h-0">
+            {/* Map Settings */}
+            <div className={!isHostInLobby ? 'opacity-70 pointer-events-none' : ''}>
+              <div className="flex items-center justify-between mb-0.5 sm:mb-2 ml-2">
+                <h3 className="text-[8px] font-black uppercase tracking-widest text-slate-400">地图选择</h3>
+                {isHostInLobby && <span className="text-[7px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">配置中</span>}
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                {[
+                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆' },
+                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿' }
+                ].map(map => {
+                  const isSelected = mapType === map.id && !roomState?.settings?.customBoard;
+                  return (
+                    <button
+                      key={map.id}
+                      onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined }); }}
+                      className={`flex flex-col items-center gap-1 sm:gap-2 p-1.5 sm:p-4 rounded-xl lg:rounded-2xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-white/50 border-slate-100 hover:border-indigo-200 text-slate-700'}`}
+                    >
+                      <div className={`w-14 h-10 sm:w-20 sm:h-16 lg:w-28 lg:h-20 relative overflow-hidden flex items-center justify-center transition-transform duration-500 ${isSelected ? 'scale-110' : ''}`}>
+                        <div className="absolute inset-x-0 inset-y-[-20%] pointer-events-none">
+                          <MapPreview board={map.board} isTopologyOnly={true} isLogo={true} />
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <span className={`text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] ${isSelected ? 'text-indigo-600' : ''}`}>{map.label}</span>
+                        <span className="text-[6px] sm:text-[8px] opacity-50 font-bold mt-0.5 uppercase tracking-wider">{map.desc}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex gap-2 items-stretch mt-1">
+              {isHostInLobby && (
+                <button
+                  onClick={() => setShowMapAlbum(true)}
+                  className={`flex-1 flex flex-col items-center justify-center p-2 rounded-xl transition-all group overflow-hidden relative border ${roomState?.settings?.customBoard ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-indigo-50/50 border-indigo-100/50 hover:bg-indigo-100/50'}`}
+                >
+                  {roomState?.settings?.customBoard ? (
+                    <div className="absolute inset-0 opacity-100 group-hover:scale-105 transition-transform duration-500">
+                      <MapPreview board={roomState.settings.customBoard} isTopologyOnly={true} isLogo={true} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center relative mb-0.5">
+                        {!atlasLogoError ? (
+                          <img 
+                            src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/地图册.png')}`} 
+                            className="w-full h-full object-contain relative z-10" 
+                            alt="Atlas" 
+                            referrerPolicy="no-referrer"
+                            onError={() => setAtlasLogoError(true)}
+                          />
+                        ) : (
+                          <span className="text-xl sm:text-2xl">🗺️</span>
+                        )}
+                      </div>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-900 mt-1 relative z-10 transition-opacity opacity-100">地图收藏册</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              <div className={`${isHostInLobby ? 'flex-[2]' : 'w-full'} flex flex-col gap-1.5`}>
+                {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
+                  <button 
+                    onClick={handleToggleReady}
+                    disabled={isSpectator}
+                    className={`relative z-50 w-full bg-emerald-600 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale ${isSpectator ? 'opacity-50 grayscale' : ''}`}
+                  >
+                    <Play size={isMobile ? 10 : 14} fill="currentColor" />
+                    {isHostInLobby ? '就绪' : '准备游戏'}
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleToggleReady}
+                    disabled={isSpectator}
+                    className={`w-full bg-white text-slate-500 py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] border-2 border-slate-100 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] ${isSpectator ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                  >
+                    <X size={isMobile ? 10 : 14} />
+                    等待房主开启游戏
+                  </button>
+                )}
+                {isHostInLobby && !isSpectator && (
+                  <button 
+                    onClick={handleStartGame}
+                    disabled={isStartingGame || !roomState?.players.every(p => p.isReady) || !roomState || (roomState.players.length + (roomState.settings?.botConfig?.filter(b => b).length || 0)) !== roomState.settings?.playerCount}
+                    className="w-full bg-slate-900 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-[9px] sm:text-[10px] relative overflow-hidden"
+                  >
+                    <span className="relative z-10 flex items-center justify-center gap-2">
+                      {isStartingGame ? (
+                        <>
+                          <div className="w-2.5 h-2.5 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                          生成中
+                        </>
+                      ) : (
+                        roomState?.players.every(p => p.isReady) ? '开启游戏' : '等待全体玩家就绪'
+                      )}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </motion.div>
 
 
@@ -1484,103 +2346,136 @@ export default function App() {
           initial={{ opacity: 0, x: 50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
-          className="w-full h-full flex flex-col p-8 lg:p-12 xl:p-16 bg-white/50 backdrop-blur-3xl border-l border-slate-200 z-20 lg:w-[480px] shrink-0"
+          className="w-full sm:h-full flex flex-col p-3 sm:p-4 lg:p-6 bg-white/80 sm:bg-white/60 backdrop-blur-3xl border-l border-slate-200 z-20 sm:w-[320px] md:w-[400px] lg:w-[480px] shrink-0 overflow-hidden min-h-0 shadow-2xl sm:shadow-none"
         >
-          <div className="flex flex-col gap-8 w-full max-w-sm mx-auto h-full">
+          <div className="flex flex-col gap-2 sm:gap-4 w-full max-w-sm mx-auto h-full">
             
-            {/* Room Info Section (Moved Back) */}
-            <div className="space-y-4 mb-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-black font-serif italic text-slate-800">在线玩家</h2>
-                <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100 shadow-sm shadow-emerald-50">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">{roomState?.players.length || 0} / {playerCount}</span>
+            {/* Room Info Section */}
+            <div className="relative">
+              <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-100 shadow-sm flex items-start justify-between gap-4 overflow-x-auto no-scrollbar min-h-[52px]">
+                <div className="flex items-start gap-4">
+                  {/* 1. 在线匹配玩家 and Player count */}
+                  <div className="flex flex-col gap-1 items-center shrink-0 pt-2 pb-1">
+                    <h2 className="text-[11px] sm:text-xs font-black font-serif italic text-emerald-600 tracking-tight leading-none">在线匹配玩家</h2>
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 mt-1 bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100 shadow-sm">
+                      <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest leading-none">{(roomState?.players.length || 0) + botConfig.filter(b => b).length} / {playerCount}</span>
+                    </div>
+                  </div>
+
+                  {/* 2. 设定人数 and dropdown */}
+                  <div className="flex flex-col gap-1.5 items-center pl-4 border-l border-slate-100 shrink-0 pt-0.5">
+                    <span className="text-[10px] sm:text-[11px] uppercase font-black tracking-widest text-slate-400 leading-none">设定人数</span>
+                    <div className="relative inline-block mt-1">
+                      <select 
+                        value={playerCount} 
+                        onChange={e => {
+                          const newCount = Number(e.target.value);
+                          setPlayerCount(newCount);
+                          syncSettings({ playerCount: newCount });
+                        }}
+                        disabled={!isHostInLobby}
+                        className="text-[13px] sm:text-sm font-black text-slate-800 outline-none disabled:opacity-50 appearance-none cursor-pointer pr-4 bg-transparent leading-none"
+                      >
+                        {[2, 3, 4, 5, 6].map(num => <option key={num} value={num}>{num} 人</option>)}
+                      </select>
+                      <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. 房间代码 and copy */}
+                <div className="flex flex-col gap-1.5 items-start pl-4 border-l border-slate-100 shrink-0 pt-0.5 pr-1">
+                  <span className="text-[9px] uppercase font-black tracking-widest text-slate-400 leading-none -ml-1">房间代码</span>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-[12px] sm:text-sm font-mono font-black text-slate-800 tracking-tighter leading-none">{roomState?.roomId || inputRoomId}</span>
+                    {roomState?.spectators && roomState.spectators.length > 0 && (
+                      <div className="flex items-center gap-0.5 ml-1">
+                        <Eye size={10} className="text-stone-500 fill-stone-100/50" />
+                        <span className="text-[9px] font-mono font-black text-stone-500">{roomState.spectators.length}</span>
+                      </div>
+                    )}
+                    <button 
+                      onClick={() => {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('room', roomState?.roomId || inputRoomId);
+                        window.focus();
+                        navigator.clipboard.writeText(url.toString()).then(() => {
+                          setShowCopyToast(true);
+                          setTimeout(() => setShowCopyToast(false), 2000);
+                        });
+                      }}
+                      className="hover:bg-indigo-50 p-1 rounded-md transition-all border border-transparent -my-1 -mr-1"
+                    >
+                      <Copy size={11} className="text-indigo-400 block" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mb-1">房间代码</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-mono font-bold text-slate-800">{roomState?.roomId || inputRoomId}</span>
-                        <button 
-                          onClick={() => {
-                            const url = new URL(window.location.href);
-                            url.searchParams.set('room', roomState?.roomId || inputRoomId);
-                            navigator.clipboard.writeText(url.toString());
-                            alert('已复制邀请链接');
-                          }}
-                          className="hover:bg-slate-100 p-1 rounded-md transition-colors"
-                        >
-                          <Copy size={12} className="text-slate-400" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400 block mb-1">游戏人数</span>
-                      <div className="relative inline-block">
-                        <select 
-                          value={playerCount} 
-                          onChange={e => {
-                            const newCount = Number(e.target.value);
-                            setPlayerCount(newCount);
-                            syncSettings({ playerCount: newCount });
-                          }}
-                          disabled={!isHostInLobby}
-                          className="text-sm font-bold text-slate-800 outline-none disabled:opacity-50 appearance-none cursor-pointer pr-4"
-                        >
-                          {[2, 3, 4, 5, 6].map(num => <option key={num} value={num}>{num} 人</option>)}
-                        </select>
-                        <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-40" />
-                      </div>
-                    </div>
-                  </div>
-              </div>
+              <AnimatePresence>
+                {showCopyToast && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                    className="fixed top-12 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[12px] sm:text-sm px-4 py-2 rounded-xl shadow-2xl whitespace-nowrap z-[9999] font-medium"
+                  >
+                    已复制房间代码，去邀请好友来玩吧
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Players List */}
-            <div className="flex flex-col gap-3 overflow-y-auto pr-2 no-scrollbar">
-              {roomState?.players.map((p, i) => (
-                <div key={p.id} className="flex items-center justify-between p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-indigo-100 group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 relative bg-slate-50 border border-slate-100 group-hover:scale-105 transition-transform">
-                      <User size={18} className="text-slate-400" />
-                      {roomState.hostId === p.id && (
-                        <div className="absolute -top-1.5 -right-1.5 bg-indigo-600 border-2 border-white text-white p-1 rounded-full text-[6px]" title="房主">👑</div>
+            <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-1 no-scrollbar pt-2">
+              {Array.from({ length: playerCount }).map((_, globalIndex) => {
+                const isBot = botConfig[globalIndex];
+                const nonBotSlotsBefore = botConfig.slice(0, globalIndex).filter(b => !b).length;
+                const p = roomState?.players[nonBotSlotsBefore];
+
+                if (!isBot && p) {
+                  return (
+                    <div key={p.id} className="flex items-center justify-between p-2.5 sm:p-3 rounded-xl bg-white border border-slate-100 shadow-sm transition-all hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-50 group">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 relative bg-slate-50 border border-slate-100 group-hover:scale-105 transition-transform duration-300">
+                          <User size={14} className="text-slate-400" />
+                          {roomState.hostId === p.id && (
+                            <div className="absolute -top-1 -right-1 bg-indigo-600 border border-white text-white p-0.5 rounded-full text-[5px] shadow-lg" title="房主">👑</div>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-black text-[11px] sm:text-xs block leading-none text-slate-800 tracking-tight">{p.name}</span>
+                          {p.id === socketService.playerId && <span className="text-[6px] font-black uppercase tracking-widest text-indigo-500 mt-0.5 block">你的势力</span>}
+                        </div>
+                      </div>
+                      {p.isReady ? (
+                        <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                          <Check size={8} className="text-emerald-600" />
+                          <span className="text-[7px] font-black uppercase tracking-widest text-emerald-600">已就绪</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200">
+                          <div className="w-0.5 h-0.5 rounded-full bg-slate-300 animate-pulse" />
+                          <span className="text-[7px] font-black uppercase tracking-widest text-slate-400">筹备中</span>
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <span className="font-bold text-sm block leading-none text-slate-700">{p.name}</span>
-                      {p.id === socketService.playerId && <span className="text-[8px] font-black uppercase tracking-widest text-indigo-500 mt-1 block">这是你</span>}
-                    </div>
-                  </div>
-                  {p.isReady ? (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                      <Check size={10} className="text-emerald-600" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600">已就绪</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 border border-slate-200">
-                      <div className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-pulse" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">准备中</span>
-                    </div>
-                  )}
-                </div>
-              ))}
-              
-              {/* Bot slots */}
-              {Array.from({ length: Math.max(0, playerCount - (roomState?.players.length || 0)) }).map((_, i) => {
-                const globalIndex = (roomState?.players.length || 0) + i;
+                  );
+                }
+
                 return (
-                  <div key={`empty-${i}`} className="flex items-center justify-between p-4 rounded-2xl border border-dashed border-slate-200 opacity-40 group hover:opacity-100 transition-opacity">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl border border-dashed border-slate-200 flex items-center justify-center">
-                        {botConfig[globalIndex] ? <Bot size={18} className="text-slate-300" /> : <Users size={18} className="text-slate-200" />}
+                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100 shadow-lg shadow-indigo-50/50' : 'border-dashed border-slate-200 opacity-40 hover:opacity-100 hover:border-indigo-200 group'}`}>
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200 group-hover:bg-slate-50'}`}>
+                        {isBot ? <Bot size={14} className="text-indigo-600" /> : <Users size={12} className="text-slate-300" />}
                       </div>
-                      <span className="text-xs font-bold text-slate-400 group-hover:text-slate-600 transition-colors">{botConfig[globalIndex] ? '中级 AI' : '待加入...'}</span>
+                      <div className="flex flex-col">
+                        <span className={`text-[11px] font-black transition-colors ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
+                        {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest">高级AI</span>}
+                      </div>
                     </div>
-                    {isHostInLobby && (
+                    {isHostInLobby && (!p) && (
                       <button 
                         onClick={() => {
                           const newConfig = [...botConfig];
@@ -1588,9 +2483,9 @@ export default function App() {
                           setBotConfig(newConfig);
                           syncSettings({ botConfig: newConfig });
                         }}
-                        className="text-[9px] font-black uppercase tracking-[0.1em] text-indigo-600 hover:bg-indigo-50 px-3 py-2 rounded-xl transition-all border border-transparent hover:border-indigo-100"
+                        className={`text-[7px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
                       >
-                        {botConfig[globalIndex] ? '移除' : '配置 AI'}
+                        {isBot ? '撤防' : '配置AI玩家'}
                       </button>
                     )}
                   </div>
@@ -1598,29 +2493,106 @@ export default function App() {
               })}
             </div>
             
-            <div className="flex-1" />
-            <p className="text-center text-[10px] text-slate-300 font-bold uppercase tracking-[0.2em] pt-4">
-              等待全员就位后由房主开启游戏
-            </p>
+            <div className="pt-2 sm:pt-4 flex flex-col items-center gap-2 border-t border-slate-100">
+               <button 
+                 onClick={() => {
+                   const roomId = roomState?.roomId || inputRoomId;
+                   if (roomId) {
+                     socketService.leaveRoom(roomId);
+                   }
+                   localStorage.removeItem('catan_active_room');
+                   setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                   setRoomState(null);
+                   setIsJoinedLobby(false);
+                   window.history.replaceState({}, '', window.location.pathname);
+                 }}
+                 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-2"
+               >
+                 <LogOut size={12} className="scale-x-[-1]" />
+                 {isSpectator ? '退出观战' : '离开房间'}
+               </button>
+               
+               {isSpectator && (
+                 <div className="mt-2">
+                 </div>
+               )}
+               
+               {isHostInLobby && !isSpectator && (
+                 <button 
+                   onClick={() => {
+                     if (confirm('确定要解散此房间吗？所有玩家将被移出。')) {
+                       const roomId = roomState?.roomId || inputRoomId;
+                       if (roomId) {
+                         socketService.resetGame(roomId);
+                       }
+                     }
+                   }}
+                   className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500 hover:text-red-700 transition-colors flex items-center gap-2 mt-2"
+                 >
+                   <Trash2 size={12} />
+                   解散房间
+                 </button>
+               )}
+            </div>
           </div>
         </motion.div>
       </div>
+      {showDebugButton && (
+        <button 
+          onClick={() => {
+            const newMode = !debugModeEnabled;
+            setDebugModeEnabled(newMode);
+            setShowDebugConsole(newMode);
+          }}
+          className="fixed bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+        >
+          调试
+        </button>
+      )}
+    </div>
+    </>
     );
   }
 
-  if (!gameState) return (
-    <div className="flex flex-col items-center justify-center h-screen bg-[#0a0a0a] text-white">
+  if (!gameState) {
+    return (
+      <>
+      {isSpectator && roomState && (
+        <button 
+          onClick={handleReturnToLobby}
+          className="fixed top-6 right-6 z-[9999] flex items-center gap-3 px-8 py-4 bg-red-600 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] shadow-[0_20px_50px_rgba(220,38,38,0.3)] hover:bg-red-700 hover:-translate-y-1 active:translate-y-0 active:scale-95 transition-all border-2 border-white/20 pointer-events-auto text-sm group"
+        >
+          <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
+          <span>退出观战</span>
+        </button>
+      )}
+      <div style={lockedLandscapeStyle}>
+        {isPortrait && <PortraitOverlay />}
+        <div className="flex flex-col items-center justify-center h-full w-full bg-[#0a0a0a] text-white relative overflow-hidden">
+      {/* Ocean atmosphere */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,_rgba(30,58,138,0.1)_0%,_transparent_70%)] pointer-events-none" />
+      
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="text-center"
+        className="text-center relative z-10"
       >
-        <h1 className="text-6xl font-serif italic mb-4">Catan</h1>
-        <div className="w-12 h-1 bg-white/20 mx-auto mb-8" />
-        <p className="text-sm uppercase tracking-[0.3em] opacity-50">正在初始化世界...</p>
+        <h1 className="text-6xl sm:text-8xl font-serif italic font-black mb-4 tracking-tighter text-white">CATAN</h1>
+        <div className="w-24 h-1 bg-white/20 mx-auto mb-10 overflow-hidden rounded-full">
+          <motion.div 
+            initial={{ x: '-100%' }}
+            animate={{ x: '100%' }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="w-full h-full bg-indigo-500"
+          />
+        </div>
+        <p className="text-[10px] sm:text-xs uppercase tracking-[0.5em] font-black text-indigo-400">正在开辟新世界...</p>
       </motion.div>
     </div>
+  </div>
+  </>
   );
+}
 
   const actingPlayer = gameState?.players[activePlayerId];
   const settlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
@@ -1631,110 +2603,201 @@ export default function App() {
   const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
   const canPlayDevCard = gameState?.phase === 'main' && gameState.hasRolled && isMyHumanTurn;
 
-  const sidebarWidth = 320;
-  const leftOffset = showLeftPanel && !isMobile ? sidebarWidth : 0;
-  const rightOffset = showRightPanel && !isMobile ? sidebarWidth : 0;
-  const stageWidth = windowSize.width - leftOffset - rightOffset;
-  const headerHeight = 80;
+  const leftWidth = isMobile ? Math.max(logicalWindowSize.width * 0.18, 160) : 280;
+  const rightWidth = isMobile ? Math.max(logicalWindowSize.width * 0.20, 180) : 280;
+  const stageWidth = logicalWindowSize.width - leftWidth - rightWidth;
+  const headerHeight = isMobile ? 40 : 54;
+
+  const nextAction = (() => {
+    if (!gameState) return null;
+    const actingPlayerName = actingPlayer?.name || `玩家 ${activePlayerId + 1}`;
+    
+    if (gameState.phase === 'order_determination' || gameState.phase === 'initial_dice_roll') {
+      const myRolls = gameState.initialDiceRolls[myPlayerIndex];
+      const hasRolled = myRolls && myRolls.length > 0;
+      if (activePlayerId === myPlayerIndex) {
+        return hasRolled ? "等待结果..." : "请掷骰决定顺序";
+      }
+      return hasRolled ? "等待结果..." : `等待 ${actingPlayerName} 掷骰`;
+    }
+
+    if (gameState.phase === 'setup') {
+      return activePlayerId === myPlayerIndex 
+        ? "初始建设：请放置建筑" 
+        : `等待 ${actingPlayerName} 建设`;
+    }
+
+    if (activePlayerId === myPlayerIndex) {
+      if (!gameState.hasRolled && gameState.phase === 'main') return "请掷骰子回合开始";
+      if (gameState.phase === 'main') return "交易与建设中";
+      if (gameState.phase === 'discard') return "请弃置一半资源";
+      if (gameState.phase === 'robber' || gameState.phase === 'robber_move') return "请移动强盗";
+      if (gameState.phase === 'stealing') return "请选择窃取对象";
+      if (gameState.phase === 'road_building') return "建设道路/船只";
+      if (gameState.phase === 'year_of_plenty') return "领取丰收资源";
+      if (gameState.phase === 'monopoly') return "执行资源垄断";
+      if (gameState.phase === 'gold_selection') return "领取金矿奖励";
+    }
+
+    // Waiting for others
+    const phaseShortNames: Record<string, string> = {
+      'main': '回合中',
+      'discard': '弃牌中',
+      'robber': '移动强盗',
+      'robber_move': '移动强盗',
+      'stealing': '窃取中',
+      'road_building': '道路/船只建设',
+      'year_of_plenty': '丰收之年',
+      'monopoly': '垄断中',
+      'gold_selection': '奖励确认'
+    };
+    const phaseDesc = phaseShortNames[gameState.phase] || '行动中';
+    return `${actingPlayerName} ${phaseDesc}...`;
+  })();
 
   return (
-    <div className="flex flex-col h-screen bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative">
-      {/* Mobile Sidebar Toggles */}
-      {isMobile && gameStarted && (
-        <>
-          <button 
-            onClick={() => setShowLeftPanel(!showLeftPanel)}
-            className="fixed bottom-24 left-4 z-[60] w-12 h-12 bg-white rounded-full shadow-lg border border-black/5 flex items-center justify-center text-stone-600"
-          >
-            <Users size={20} />
-          </button>
-          <button 
-            onClick={() => setShowRightPanel(!showRightPanel)}
-            className="fixed bottom-24 right-4 z-[60] w-12 h-12 bg-white rounded-full shadow-lg border border-black/5 flex items-center justify-center text-stone-600"
-          >
-            <Hammer size={20} />
-          </button>
-        </>
-      )}
+    <>
+    {/* {isSpectator && roomState && (
+      <button 
+        onClick={handleReturnToLobby}
+        className="fixed top-2 right-2 z-[9999] flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-full font-black uppercase tracking-[0.2em] shadow-md hover:bg-red-700 transition-all border border-white/20 pointer-events-auto text-[10px] group"
+      >
+        <LogOut size={12} className="group-hover:-translate-x-1 transition-transform" />
+        <span>退出</span>
+      </button>
+    )} */}
+    <div style={lockedLandscapeStyle}>
+      {isPortrait && <PortraitOverlay />}
+      <div className="flex flex-col h-full w-full bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative">
 
-      {/* Floating Waiting Banner (Bottom Left of Map) */}
-      {!amIActivePlayer && (
-        <div className="fixed bottom-6 left-6 z-[100] pointer-events-none lg:left-[calc(320px+1.5rem)]">
-          <motion.div 
-            initial={{ x: -10, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            className="bg-black/80 px-5 py-2.5 rounded-2xl shadow-xl flex items-center gap-3 backdrop-blur-md border border-white/10"
-          >
-            <div className="w-3 h-3 rounded-full border-2 border-white/20 border-r-white animate-spin" />
-            <span className="font-bold text-[10px] uppercase tracking-[0.15em] text-white/90">
-              等待 {gameState.players[activePlayerId]?.name} ...
-            </span>
-          </motion.div>
-        </div>
-      )}
-      <header className="w-full p-4 bg-white border-b border-black/5 flex items-center relative z-50">
-        {/* Left: Logo */}
-        <div className="flex items-center gap-3 shrink-0 absolute left-8">
-          <div className="w-12 h-12 flex items-center justify-center">
+      <header className="w-full flex items-center bg-white border-b border-black/5 px-2 z-50 overflow-hidden" style={{ height: headerHeight }}>
+        {/* Left: Logo & Room Code */}
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 cursor-default lg:absolute lg:left-2" onClick={handleLogoClick}>
+          <div className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center">
             <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/C3eURTs - Imgur.png')}`} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
           </div>
-          <div className="hidden sm:block">
-            <h1 className="text-xl font-serif font-black tracking-tight leading-none">CATAN</h1>
-            <p className="text-[8px] uppercase tracking-[0.2em] opacity-40 font-bold mt-0.5">航海家版 · SEAFARERS</p>
+          <div className="flex flex-col items-start leading-none pr-4 border-r border-black/5">
+            <span className="text-[8px] lg:text-[9px] uppercase font-black tracking-[0.2em] opacity-30">海域代码</span>
+            <div className="flex items-center gap-1.5 grayscale-0">
+              <span className="text-xs lg:text-sm uppercase font-black tracking-tighter opacity-90">{roomState?.roomId || 'OFFLINE'}</span>
+              {roomState?.spectators && roomState.spectators.length > 0 && (
+                <div className="flex items-center gap-0.5 ml-1">
+                  <Eye size={12} className="text-stone-500 fill-stone-100/50" />
+                  <span className="text-[10px] font-mono font-black text-stone-500">{roomState.spectators.length}</span>
+                </div>
+              )}
+            </div>
           </div>
+          {isSpectator && roomState && (
+            <button 
+              onClick={handleReturnToLobby}
+              className="ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-lg font-black uppercase text-[10px] hover:bg-red-700 transition-all border border-white/20 shadow-md active:scale-95"
+            >
+              <LogOut size={12} />
+              <span>退出观战</span>
+            </button>
+          )}
         </div>
 
         {/* Center: Player Cards */}
-        <div className="flex-1 flex justify-center overflow-x-auto no-scrollbar pb-1 px-4 ml-48 mr-48">
-          <div className="flex items-center gap-8">
+        <div 
+          ref={playerBarRef}
+          className="flex-1 flex justify-start lg:justify-center overflow-x-auto no-scrollbar py-1 lg:ml-32 lg:mr-32"
+        >
+          <div className="flex items-center gap-2 lg:gap-4 px-4 lg:px-0">
             {gameState.players.map((p, i) => {
-            const isCurrent = i === activePlayerId;
-            const resourceCount = Object.values(p.resources).reduce((a, b) => a + b, 0);
-            const devCardCount = p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0);
-            const totalCards = resourceCount + devCardCount;
-            const publicScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints;
-            return (
-              <div 
-                key={p.id} 
-                className={`relative shrink-0 group flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-500 ${isCurrent ? 'bg-white shadow-md scale-105' : 'opacity-60 hover:opacity-100'}`}>
+              const isCurrent = i === activePlayerId;
+              const resourceCount = Object.values(p.resources).reduce((a, b) => a + b, 0);
+              const publicScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints;
+              const isFocused = isSpectator && i === spectatorFocusId;
+
+              return (
+                <div 
+                  key={p.id} 
+                  data-player-index={i}
+              onClick={() => {
+                    console.log("Player card clicked for index:", i);
+                    if (isSpectator) {
+                      setSpectatorFocusId(i);
+                      console.log("Spectator focus set to:", i);
+                    }
+                  }}
+                  className={`relative shrink-0 group flex items-center ${isMobile ? 'gap-1 px-1.5 py-0.5' : 'gap-2 px-3 py-1'} rounded-full transition-all duration-500 
+                    ${isCurrent ? 'bg-indigo-50 border border-indigo-100 shadow-sm' : 'opacity-60 hover:opacity-100'}
+                    ${isFocused && !isCurrent ? 'ring-2 ring-indigo-400 bg-indigo-50/50 opacity-100' : ''}
+                    ${isSpectator ? 'cursor-pointer active:scale-95' : 'cursor-default'}
+                  `}>
                 <div 
                   onClick={() => {
                     if (p.sessionId === socketService.playerId) {
                       toggleBot(p.id);
                     }
                   }}
-                  className={`w-5 h-5 rounded-full border-2 border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
+                  className={`rounded-full border border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${isMobile ? 'w-5 h-5' : 'w-4 h-4'} ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
                   style={{ backgroundColor: p.color }}
-                  title={p.sessionId === socketService.playerId ? (p.isBot ? "点击接管" : "点击托管") : `${p.name} (${p.isBot ? '机器人' : '玩家'})`}
                 >
                   {p.isBot ? (
-                    <Bot size={10} color={p.color === '#FFFFFF' ? '#000' : '#FFF'} />
+                    <Bot size={isMobile ? 10 : 8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
                   ) : (
-                    <User size={10} color={p.color === '#FFFFFF' ? '#000' : '#FFF'} />
+                    <User size={isMobile ? 10 : 8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
                   )}
                 </div>
-                <div className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold leading-none">{p.name}</span>
-                      {gameState.longestRoadPlayerId === p.id && <span title={`最长道路 (${p.longestRoadLength})`} className="text-[10px]">🛤️</span>}
-                      {gameState.largestArmyPlayerId === p.id && <span title={`最大骑士 (${p.knightsPlayed})`} className="text-[10px]">⚔️</span>}
+                <div className="flex flex-col flex-1 pl-0.5">
+                    <div className="flex items-center gap-1">
+                      <span className={`${isMobile ? 'text-[9px]' : 'text-[11px]'} font-bold leading-none truncate max-w-[40px] md:max-w-[80px]`}>{p.name}</span>
+                      {roomState?.players?.find(rp => rp.id === p.sessionId)?.disconnected && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded font-bold shadow-sm whitespace-nowrap animate-pulse">掉线</span>
+                          {isSpectator && roomState?.roomId && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`确定要接管 ${p.name} 吗？`)) {
+                                  socketService.reclaimSlot(roomState.roomId, p.sessionId);
+                                }
+                              }}
+                              className="text-[8px] bg-indigo-500 hover:bg-indigo-600 text-white px-1 py-0.5 rounded shadow-sm whitespace-nowrap transition-colors"
+                            >
+                              接管
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {gameState.longestRoadPlayerId === p.id && (
+                        <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-[#b79148]/20 border border-[#b79148]/40 shadow-sm" title={`最长道路 (${p.longestRoadLength})`}>
+                          <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
+                        </div>
+                      )}
+                      {gameState.largestArmyPlayerId === p.id && (
+                        <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-slate-500/20 border border-slate-500/40 shadow-sm" title={`最大名望骑士 (${p.knightsPlayed})`}>
+                          <span className="text-[8px] leading-none">⚔️</span>
+                        </div>
+                      )}
+                      {((gameState.phase === 'initial_dice_roll' || gameState.phase === 'order_determination' || (gameState.phase === 'setup' && gameState.settlements.length < gameState.players.length)) && gameState.initialDiceRolls[i]) ? (
+                        <div className="flex items-center gap-0.5 px-1 rounded-sm bg-orange-500/10 border border-orange-500/20">
+                          <span className="text-[8px] font-black text-orange-600">
+                            {String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[11px] font-bold opacity-80" title="公开分数">{publicScore}分</span>
-                      <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="资源卡">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png')}`} alt="res" className="w-3 h-3 object-contain" />
+                    <div className="flex items-center mt-0.5 leading-none">
+                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}分</span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/nVgige5 - Imgur.png')}`} alt="res" className="w-2.5 h-2.5 object-contain" />
                         {resourceCount}
                       </span>
-                      <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="发展卡">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png')}`} alt="dev" className="w-3 h-3 object-contain" />
-                        {devCardCount}
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/xgqjQo7 - Imgur.png')}`} alt="dev" className="w-2.5 h-2.5 object-contain" />
+                        {p.devCards.length + p.playedDevCards.length}
                       </span>
-                      <span className="text-[10px] opacity-20">|</span>
-                      <span className="flex items-center gap-0.5 text-[11px] font-mono opacity-80" title="道路长度">
-                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="road" className="w-3 h-3 object-contain" />
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
+                        <img src={`/api/proxy-image?url=${encodeURIComponent('http://tdyuzzmmy.hn-bkt.clouddn.com/img/TdfNSeV - Imgur.png')}`} alt="road" className="w-2.5 h-2.5 object-contain" />
                         {p.longestRoadLength}
+                      </span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="骑士">
+                        <span className="text-[10px]">⚔️</span>
+                        {p.knightsPlayed}
                       </span>
                     </div>
                 </div>
@@ -1745,182 +2808,87 @@ export default function App() {
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden relative">
+        {/* Spectator interaction blocker */}
+        {isSpectator && (
+          <div className="fixed inset-0 z-[80] pointer-events-auto bg-transparent select-none cursor-default" />
+        )}
         {/* Left Panel */}
         <AnimatePresence>
           {showLeftPanel && (
             <motion.aside 
-              initial={isMobile ? { x: -320 } : { width: 0 }}
-              animate={isMobile ? { x: 0 } : { width: 320 }}
-              exit={isMobile ? { x: -320 } : { width: 0 }}
-              className={`border-r border-black/5 p-6 flex flex-col gap-6 bg-white/40 backdrop-blur-md overflow-y-auto shrink-0 z-50 ${isMobile ? 'fixed inset-y-0 left-0 shadow-2xl' : 'relative'}`}
+              initial={{ width: leftWidth }}
+              animate={{ width: leftWidth }}
+              exit={{ width: 0 }}
+              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white overflow-y-auto no-scrollbar overflow-x-hidden shrink-0 z-50 relative`}
             >
-              {isMobile && (
-                <button 
-                  onClick={() => setShowLeftPanel(false)}
-                  className="absolute top-4 right-4 p-2 hover:bg-black/5 rounded-full"
-                >
-                  <X size={20} />
-                </button>
-              )}
-              <section>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">银行库存</h3>
+              <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
+            <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
+              <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">银行库存</h3>
             </div>
-            <div className="grid grid-cols-3 grid-rows-2 gap-2">
-              {Object.entries(gameState.bankResources).map(([res, count]) => (
-                <div key={res} className="flex items-center justify-between p-2 rounded-xl bg-stone-100/50 border border-black/5">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: RESOURCE_COLORS[res as ResourceType] }} />
-                  <span className="text-[10px] font-mono font-bold opacity-60">{count}</span>
+            <div className={`grid grid-cols-3 grid-rows-2 ${isMobile ? 'gap-0.5' : 'gap-1'}`}>
+              {Object.entries(gameState.bankResources).map(([res, count]) => {
+                return (
+                <div key={res} className={`flex items-center justify-between ${isMobile ? 'p-0.5 px-1' : 'p-1.5'} rounded-md bg-stone-100/50 border border-black/10`}>
+                  <ResourceIcon type={res as ResourceType} className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
+                  <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold opacity-60`}>{count}</span>
                 </div>
-              ))}
-              <div className="flex items-center justify-between p-2 rounded-xl bg-zinc-800 text-white">
-                <span className="text-[8px] font-black uppercase tracking-widest opacity-50">DEV</span>
-                <span className="text-[10px] font-mono font-bold">{gameState.bankDevCards.length}</span>
+                );
+              })}
+              <div className={`flex items-center justify-between ${isMobile ? 'p-0.5 px-1' : 'p-1.5'} rounded-md bg-red-600 shadow-sm text-white`}>
+                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-black`}>发</span>
+                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold`}>{gameState.bankDevCards.length}</span>
               </div>
             </div>
           </section>
 
-          <section className="pt-6 border-t border-black/5">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">
-                {gameState.phase === 'discard' && gameState.pendingDiscards[0]?.playerId === myPlayerIndex ? '弃牌阶段' : '你的资源'}
+          <section className={`${isMobile ? 'pt-1' : 'pt-4'} border-t border-black/5`}>
+            <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-2'}`}>
+              <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">
+                {isSpectator ? `${visiblePlayer?.name || '玩家'}的资源卡` : (gameState.phase === 'discard' && gameState.pendingDiscards[0]?.playerId === myPlayerIndex ? '弃牌阶段' : '我的资源卡')}
               </h3>
-              <Info size={14} className="opacity-20" />
+              <Info size={12} className="opacity-20" />
             </div>
-            {gameState.phase === 'discard' && gameState.pendingDiscards[0]?.playerId === myPlayerIndex ? (
-              <DiscardPanel 
-                key={myPlayerIndex} 
-                player={me} 
-                amount={gameState.pendingDiscards[0].amount} 
-                onDiscard={(res) => discardCards(myPlayerIndex, res)} 
-              />
-            ) : gameState.phase === 'year_of_plenty' && amIActivePlayer ? (
-              <div>
-                <ResourceSelector 
-                  title="选择第一张资源"
-                  selected={tradeGive}
-                  onSelect={setTradeGive}
-                />
-                <div className="h-2" />
-                <ResourceSelector 
-                  title="选择第二张资源"
-                  selected={tradeReceive}
-                  onSelect={setTradeReceive}
-                />
-                <div className="h-2" />
-                <div className="flex gap-2">
-                  <button 
-                    onClick={cancelDevCard}
-                    className="w-full bg-stone-200 text-black py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-stone-300 transition-all"
-                  >
-                    取消
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (tradeGive && tradeReceive) {
-                        resolveYearOfPlenty(tradeGive, tradeReceive);
-                        setTradeGive(null);
-                        setTradeReceive(null);
-                      }
-                    }}
-                    disabled={!tradeGive || !tradeReceive}
-                    className="w-full bg-black text-white py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-zinc-800 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    确认领取
-                  </button>
-                </div>
-              </div>
-            ) : gameState.phase === 'monopoly' && amIActivePlayer ? (
-              <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-sm">
-                <h4 className="text-[10px] font-black uppercase tracking-widest mb-3 text-center">选择垄断资源</h4>
-                <div className="grid grid-cols-5 gap-2 mb-4">
-                  {Object.values(ResourceType).map(res => (
-                    <button
-                      key={`mono-${res}`}
-                      onClick={() => setTradeGive(res)}
-                      className={`p-2 rounded-xl border transition-all flex flex-col items-center gap-1 ${tradeGive === res ? 'border-black bg-stone-50 scale-105 shadow-md' : 'border-black/5 hover:border-black/20 hover:bg-stone-50'}`}
-                    >
-                      <div className="w-4 h-4 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[res] }} />
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                   <button 
-                    onClick={cancelDevCard}
-                    className="w-full bg-stone-200 text-black py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-stone-300 transition-all"
-                  >
-                    取消
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (tradeGive) {
-                        resolveMonopoly(tradeGive);
-                        setTradeGive(null);
-                      }
-                    }}
-                    disabled={!tradeGive}
-                    className="w-full bg-black text-white py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-zinc-800 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    确认垄断
-                  </button>
-                </div>
-              </div>
-            ) : gameState.phase === 'gold_selection' && amIActivePlayer ? (
-              <>
-                <GoldSelectionPanel 
-                  bankResources={gameState.bankResources}
-                  amount={gameState.pendingGoldRewards[0].amount}
-                  onSelect={selectGoldResource}
-                />
-                <div className="h-4" />
-                <div className="grid grid-cols-1 gap-2 opacity-60">
-                  {Object.entries(me.resources).map(([res, count]) => (
-                    <ResourceRow key={res} type={res as ResourceType} count={count} />
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="grid grid-cols-1 gap-2">
-                {Object.entries(me.resources).map(([res, count]) => (
-                  <ResourceRow key={res} type={res as ResourceType} count={count} />
+            {/* Action panels removed from here, now in Central overlay */}
+            <div className="grid grid-cols-1 gap-1">
+              {Object.entries(visiblePlayer?.resources || {}).map(([res, count]) => (
+                  <ResourceRow key={res} type={res as ResourceType} count={count} compact={isMobile} />
                 ))}
               </div>
-            )}
           </section>
 
-          <section className="pt-6 border-t border-black/5">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">你的发展卡</h3>
+          <section className="pt-2 border-t border-black/5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">我的发展卡</h3>
             </div>
-            <div className="space-y-4">
-              {me.devCards.length === 0 && (!me.devCardsBoughtThisTurn || me.devCardsBoughtThisTurn.length === 0) && (!me.playedDevCards || me.playedDevCards.length === 0) ? (
+            <div className="space-y-1.5">
+              {visiblePlayer?.devCards.length === 0 && (!visiblePlayer?.devCardsBoughtThisTurn || visiblePlayer?.devCardsBoughtThisTurn.length === 0) && (!visiblePlayer?.playedDevCards || visiblePlayer?.playedDevCards.length === 0) ? (
                 <p className="text-[10px] opacity-30 italic">暂无发展卡</p>
               ) : (
                 <>
                   {/* Playable Cards */}
-                  {me.devCards.length > 0 && (
+                  {visiblePlayer && visiblePlayer.devCards.length > 0 && (
                     <div className="space-y-2">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">可使用</h4>
-                      {Object.values(DevCardType).map(type => {
-                        const count = me.devCards.filter(c => c === type).length;
-                        if (count === 0) return null;
-                        
-                        return (
-                          <div key={`playable-${type}`} className="flex flex-col p-3 rounded-xl bg-white border border-black/5 shadow-sm">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-zinc-100 flex items-center justify-center text-xs relative">
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {Object.values(DevCardType).map(type => {
+                          const count = visiblePlayer.devCards.filter(c => c === type).length;
+                          if (count === 0) return null;
+                          
+                          return (
+                            <div key={`playable-${type}`} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100 shadow-sm group hover:border-red-200 transition-all">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-lg bg-zinc-100 flex items-center justify-center text-xs relative shadow-inner">
                                   {type === DevCardType.Knight ? '⚔️' : 
                                    type === DevCardType.VictoryPoint ? '🏆' :
                                    type === DevCardType.RoadBuilding ? '🛣️' :
                                    type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
                                   {count > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold">
+                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold ring-2 ring-white">
                                       {count}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[10px] font-black uppercase tracking-tight">
+                                <span className="text-[9px] font-black uppercase tracking-tight">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -1928,19 +2896,16 @@ export default function App() {
                                 </span>
                               </div>
                               {type !== DevCardType.VictoryPoint && (
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5 grayscale group-hover:grayscale-0 transition-all">
                                   {gameState.playingDevCard === type ? (
-                                    <button 
-                                      onClick={cancelDevCard}
-                                      className="text-[8px] font-black uppercase tracking-widest bg-red-500 text-white px-3 py-1.5 rounded-full hover:bg-red-600 transition-all shadow-md active:scale-95"
-                                    >
-                                      取消
-                                    </button>
+                                    <span className="text-[8px] font-black uppercase tracking-widest bg-stone-100 text-stone-400 px-2 py-1 rounded-full">
+                                      正在使用
+                                    </span>
                                   ) : (
                                     <button 
-                                      onClick={() => playDevCard(type)}
-                                      disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn}
-                                      className="text-[8px] font-black uppercase tracking-widest bg-black text-white px-3 py-1.5 rounded-full hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+                                      onClick={() => setConfirmDevCard(type)}
+                                      disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn || visiblePlayer.id !== me.id}
+                                      className="text-[8px] font-black uppercase tracking-widest bg-black text-white px-1.5 py-0.5 rounded-full hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed"
                                     >
                                       使用
                                     </button>
@@ -1948,42 +2913,36 @@ export default function App() {
                                 </div>
                               )}
                             </div>
-                            <p className="text-[9px] opacity-40 leading-tight">
-                              {type === DevCardType.Knight ? '移动强盗并从相邻玩家处偷取一张资源卡。' : 
-                               type === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
-                               type === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
-                               type === DevCardType.YearOfPlenty ? '从银行免费领取任意 2 张资源卡。' : '选择一种资源，所有玩家必须交出该资源。'}
-                            </p>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
                   {/* Bought This Turn */}
-                  {me.devCardsBoughtThisTurn && me.devCardsBoughtThisTurn.length > 0 && (
-                    <div className="space-y-2">
+                  {visiblePlayer && visiblePlayer.devCardsBoughtThisTurn && visiblePlayer.devCardsBoughtThisTurn.length > 0 && (
+                    <div className="space-y-1.5">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">本回合购买</h4>
                       {Object.values(DevCardType).map(type => {
-                        const count = me.devCardsBoughtThisTurn.filter(c => c === type).length;
+                        const count = visiblePlayer.devCardsBoughtThisTurn.filter(c => c === type).length;
                         if (count === 0) return null;
                         
                         return (
-                          <div key={`bought-${type}`} className="flex flex-col p-3 rounded-xl bg-stone-100 border border-black/5 shadow-sm opacity-60">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-zinc-200 flex items-center justify-center text-xs relative">
+                          <div key={`bought-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/50 border border-red-100 shadow-sm opacity-60">
+                            <div className="flex items-center justify-between mx-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
                                   {type === DevCardType.Knight ? '⚔️' : 
                                    type === DevCardType.VictoryPoint ? '🏆' :
                                    type === DevCardType.RoadBuilding ? '🛣️' :
                                    type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
                                   {count > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold">
+                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
                                       {count}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[10px] font-black uppercase tracking-tight">
+                                <span className="text-[8px] font-black uppercase tracking-tight">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -1998,33 +2957,32 @@ export default function App() {
                   )}
 
                   {/* Played Cards */}
-                  {me.playedDevCards && me.playedDevCards.length > 0 && (
-                    <div className="space-y-2">
+                  {visiblePlayer && visiblePlayer.playedDevCards && visiblePlayer.playedDevCards.length > 0 && (
+                    <div className="space-y-1.5">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">已使用</h4>
                       {Object.values(DevCardType).map(type => {
-                        const count = me.playedDevCards.filter(c => c === type).length;
-                        // Don't show the card if it's currently being played (handled in playable section)
+                        const count = visiblePlayer.playedDevCards.filter(c => c === type).length;
                         if (count === 0 || (gameState.playingDevCard === type && count === 1)) return null;
                         
                         const displayCount = gameState.playingDevCard === type ? count - 1 : count;
                         if (displayCount === 0) return null;
                         
                         return (
-                          <div key={`played-${type}`} className="flex flex-col p-3 rounded-xl bg-stone-100 border border-black/5 shadow-sm opacity-40 grayscale">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-lg bg-zinc-200 flex items-center justify-center text-xs relative">
+                          <div key={`played-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/30 border border-red-100/50 opacity-40 grayscale">
+                            <div className="flex items-center justify-between mx-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
                                   {type === DevCardType.Knight ? '⚔️' : 
                                    type === DevCardType.VictoryPoint ? '🏆' :
                                    type === DevCardType.RoadBuilding ? '🛣️' :
                                    type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
                                   {displayCount > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold">
+                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
                                       {displayCount}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[10px] font-black uppercase tracking-tight line-through">
+                                <span className="text-[8px] font-black uppercase tracking-tight line-through">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -2048,44 +3006,150 @@ export default function App() {
         {/* Center Map */}
         <main className="flex-1 flex relative overflow-hidden bg-[#e4e3e0]">
           <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
-          
-          {gameStarted && (
-            <div className="absolute top-4 left-4 z-40">
-              <button 
-                onClick={() => setShowDissolveConfirm(true)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-white/90 backdrop-blur-xl border border-black/5 text-red-500 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl hover:bg-red-500 hover:text-white transition-all transform active:scale-95 group"
+
+          {/* Dev Card Overlay */}
+          <AnimatePresence>
+            {devCardOverlay && (
+              <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
               >
-                <LogOut size={14} className="group-hover:-translate-x-1 transition-transform scale-x-[-1]" />
-                <span>退出房间</span>
-              </button>
+                <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full text-white shadow-2xl flex items-center gap-3 border border-white/10">
+                  <span className="text-xl">✨</span>
+                  <p className="font-bold tracking-widest text-sm whitespace-nowrap">
+                    <span className="text-amber-400">{devCardOverlay.playerName}</span> {devCardOverlay.actionStr}
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Action Guidance Text */}
+          {gameStarted && nextAction && (
+            <div className="absolute bottom-1.5 left-1.5 z-40 max-w-[40%] pointer-events-none">
+              <p className="text-[10px] font-black italic uppercase tracking-[0.2em] text-black/25 leading-none">
+                {nextAction}
+              </p>
             </div>
           )}
 
+          
           {gameStarted && (
-            <div className="absolute top-4 right-4 z-40">
+            <div className={`absolute top-1 left-1 z-[50] flex flex-col gap-0.5 pointer-events-auto ${isMobile ? 'scale-90 origin-top-left' : ''}`}>
+              {!isSpectator && (
+                <button 
+                  onClick={handleReturnToLobby}
+                  className="flex items-center gap-2 px-6 py-3 bg-white/90 backdrop-blur-xl border-2 border-black/5 text-stone-600 text-[14px] rounded-xl font-black uppercase tracking-widest shadow-2xl hover:bg-stone-100 transition-all transform active:scale-95 group pointer-events-auto h-12"
+                  style={{ cursor: 'pointer' }}
+                >
+                  <LogOut size={isMobile ? 14 : 18} className="group-hover:-translate-x-0.5 transition-transform scale-x-[-1]" />
+                  <span>中途离开</span>
+                </button>
+              )}
+
+              {isHost && !isSpectator && (
+                <button 
+                  onClick={() => setShowDissolveRoomConfirm(true)}
+                  className={`flex items-center gap-2 ${isMobile ? 'px-3 py-2 text-[11px] rounded-lg' : 'px-6 py-3 text-[14px] rounded-xl'} bg-white/90 backdrop-blur-xl border border-black/5 text-red-500 font-bold uppercase tracking-widest shadow-xl hover:bg-red-500 hover:text-white transition-all transform active:scale-95 group h-12`}
+                >
+                  <Trash2 size={isMobile ? 14 : 18} className="group-hover:rotate-12 transition-transform" />
+                  <span>解散房间</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Connection Error Banner */}
+          {!isConnected && (
+            <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-auto">
+              <div className="bg-red-500 text-white px-8 py-6 rounded-[2rem] shadow-2xl shadow-red-500/20 text-center flex flex-col items-center animate-pulse">
+                <RefreshCw size={48} className="animate-spin mb-4" />
+                <h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-sm">连接已断开</h3>
+                <p className="text-sm opacity-90 mt-2 font-medium max-w-sm leading-relaxed">正在尝试重新连接到服务器，请稍候...</p>
+              </div>
+            </div>
+          )}
+
+
+
+          {gameStarted && (
+            <div className={`absolute top-2 right-2 z-[100] flex gap-1 ${isMobile ? 'flex-col gap-1' : ''}`}>
+              {gameState.winnerId !== null && (
+                <button
+                  onClick={() => setShowGameOver(true)}
+                  className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 bg-white/90 text-amber-600 animate-pulse`}
+                >
+                  <Trophy size={isMobile ? 10 : 16} />
+                  <span>结算</span>
+                </button>
+              )}
+              <button
+                onClick={toggleFullscreen}
+                className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 bg-white/90 text-stone-600`}
+              >
+                {isFullscreen ? <Minimize size={isMobile ? 10 : 16} /> : <Maximize size={isMobile ? 10 : 16} />}
+                <span>{isFullscreen ? '退屏' : '全屏'}</span>
+              </button>
               <button
                 id="toggle-bot-button"
                 onClick={() => toggleBot(myPlayerIndex)}
-                className={`flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border border-black/5 font-bold text-[11px] uppercase tracking-widest rounded-2xl shadow-xl transition-all transform active:scale-95 ${me.isBot ? 'bg-indigo-500 text-white' : 'bg-white/90 text-stone-600'}`}
+                className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 ${me?.isBot ? 'bg-indigo-500 text-white' : 'bg-white/90 text-stone-600'} ${isSpectator ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={isSpectator}
               >
-                <Bot size={14} />
+                <Bot size={isMobile ? 10 : 16} />
                 <span>托管</span>
               </button>
             </div>
           )}
 
-          <Stage 
+          {/* Debug Button */}
+          {showDebugButton && (
+            <button 
+              onClick={() => {
+                const newMode = !debugModeEnabled;
+                setDebugModeEnabled(newMode);
+                setShowDebugConsole(newMode);
+              }}
+              className="absolute bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+            >
+              调试
+            </button>
+          )}
+
+          <div className={`w-full h-full transition-opacity duration-700 ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
+            <Stage 
             ref={stageRef}
             width={stageWidth} 
-            height={windowSize.height - headerHeight}
+            height={logicalWindowSize.height - headerHeight}
             draggable
-            onDragStart={() => setHasManuallyInteracted(true)}
+            onDragStart={() => {
+              setHasManuallyInteracted(true);
+              if (boardLayerRef.current) {
+                // Standard pixel ratio for performance during interaction
+                boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+              }
+            }}
+            onDragEnd={() => {
+              boardLayerRef.current?.clearCache();
+            }}
             onWheel={handleWheel}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
+            onDblClick={() => {
+              if (Date.now() - lastGestureTime.current > 300) {
+                centerMap(true);
+              }
+            }}
+            onDblTap={() => {
+              if (Date.now() - lastGestureTime.current > 300) {
+                centerMap(true);
+              }
+            }}
           >
-            <Layer>
+            <Layer ref={boardLayerRef}>
               {hexCoords.filter(hex => !hex.isOuterSea).map((hex) => (
                 <HexCell 
                   key={hex.id} 
@@ -2096,13 +3160,27 @@ export default function App() {
                   onClick={() => handleHexClick(hex.id, hex.type as HexType)}
                 />
               ))}
+              
+              {/* Debug: Detection Areas */}
+              {debugModeEnabled && hexCoords.filter(hex => !hex.isOuterSea).map(hex => (
+                <Circle
+                  key={`debug-${hex.id}`}
+                  x={hex.x}
+                  y={hex.y}
+                  radius={12}
+                  fill="rgba(255, 0, 0, 0.3)"
+                  stroke="red"
+                  strokeWidth={1}
+                  listening={false}
+                />
+              ))}
 
               {/* Edges for Roads/Ships */}
               {edges.map(edge => {
                 const road = gameState.roads.find(r => r.edgeId === edge.id);
                 const ship = gameState.ships.find(s => s.edgeId === edge.id);
                 const port = gameState.ports.find(p => p.edgeId === edge.id);
-                const color = road ? PLAYER_COLORS[road.playerId] : ship ? PLAYER_COLORS[ship.playerId] : 'transparent';
+                const color = road ? gameState.players.find(p => p.id === road.playerId)?.color : ship ? gameState.players.find(p => p.id === ship.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 
                 let nx = 0;
@@ -2136,15 +3214,27 @@ export default function App() {
                       />
                     )}
                     <Line
+                      id={`edge-debug-${edge.id}`}
+                      points={[edge.x1, edge.y1, edge.x2, edge.y2]}
+                      stroke="rgba(255, 0, 0, 0.2)"
+                      strokeWidth={20}
+                      listening={false}
+                      perfectDrawEnabled={false}
+                      visible={debugModeEnabled}
+                    />
+                    <Line
                       id={`edge-${edge.id}`}
                       points={[edge.x1, edge.y1, edge.x2, edge.y2]}
                       stroke={color !== 'transparent' ? color : ((effectiveBuildMode === 'road' || effectiveBuildMode === 'ship') && checkIsValidEdge(edge.id, effectiveBuildMode as any) ? 'rgba(0,0,0,0.3)' : 'transparent')}
                       strokeWidth={6}
-                      hitStrokeWidth={20}
+                      hitStrokeWidth={25}
                       dash={ship ? [10, 5] : []}
                       lineCap="round"
+                      lineJoin="round"
+                      listening={color !== 'transparent' || ((effectiveBuildMode === 'road' || effectiveBuildMode === 'ship') && checkIsValidEdge(edge.id, effectiveBuildMode as any))}
                       onClick={() => handleEdgeClick(edge.id)}
                       onTap={() => handleEdgeClick(edge.id)}
+                      perfectDrawEnabled={false}
                       onMouseEnter={(e: any) => {
                         if (canBuild && (buildMode === 'road' || buildMode === 'ship') && checkIsValidEdge(edge.id, buildMode)) {
                           e.target.stroke('rgba(0,0,0,0.5)');
@@ -2165,19 +3255,21 @@ export default function App() {
               {/* Vertices for Settlements/Cities */}
               {vertices.map(vertex => {
                 const settlement = gameState.settlements.find(s => s.vertexId === vertex.id);
-                const color = settlement ? PLAYER_COLORS[settlement.playerId] : 'transparent';
+                const color = settlement ? gameState.players.find(p => p.id === settlement.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 const isValid = (isMyHumanTurn ? canBuild : true) && (effectiveBuildMode === 'settlement' || effectiveBuildMode === 'city') && checkIsValidVertex(vertex.id, effectiveBuildMode as any);
 
+                const isValidCityUpgrade = settlement && !settlement.isCity && effectiveBuildMode === 'city' && checkIsValidVertex(vertex.id, 'city');
+                
                 const handleMouseEnter = (e: any) => {
-                  if (isValid || (settlement && effectiveBuildMode === 'city' && !settlement.isCity)) {
+                  if (isValid || isValidCityUpgrade) {
                     if (isMyHumanTurn) e.target.getStage().container().style.cursor = 'pointer';
                     e.target.to({ scaleX: 1.2, scaleY: 1.2, duration: 0.1 });
                   }
                 };
 
                 const handleMouseLeave = (e: any) => {
-                  if (isValid || (settlement && effectiveBuildMode === 'city' && !settlement.isCity)) {
+                  if (isValid || isValidCityUpgrade) {
                     if (isMyHumanTurn) e.target.getStage().container().style.cursor = 'default';
                     e.target.to({ scaleX: 1, scaleY: 1, duration: 0.1 });
                   }
@@ -2187,13 +3279,23 @@ export default function App() {
 
                 return (
                   <Group key={vertex.id} id={`vertex-${vertex.id}`} x={vertex.x} y={vertex.y}>
+                    {/* Debug hit area for vertices */}
+                    {debugModeEnabled && (
+                      <Circle
+                        radius={12}
+                        fill="rgba(0, 255, 0, 0.2)"
+                        stroke="green"
+                        strokeWidth={1}
+                        listening={false}
+                      />
+                    )}
                     {/* Invisible hit area for city upgrade */}
-                    {settlement && !settlement.isCity && effectiveBuildMode === 'city' && (
-                      <Path 
-                        data="M-8 0 L0 -8 L8 0 L8 8 L-8 8 Z"
-                        fill="transparent"
-                        scaleX={1.5}
-                        scaleY={1.5}
+                    {isValidCityUpgrade && (
+                      <Circle 
+                        radius={16}
+                        fill={debugModeEnabled ? "rgba(0, 0, 255, 0.2)" : "transparent"}
+                        stroke={debugModeEnabled ? "blue" : "transparent"}
+                        strokeWidth={debugModeEnabled ? 1 : 0}
                         onClick={handleClick}
                         onTap={handleClick}
                         onMouseEnter={handleMouseEnter}
@@ -2214,6 +3316,7 @@ export default function App() {
                           shadowBlur={5}
                           shadowOpacity={0.3}
                           listening={false} // Visual only
+                          perfectDrawEnabled={false}
                         />
                       ) : (
                         // Settlement Icon (House SVG)
@@ -2227,10 +3330,12 @@ export default function App() {
                           shadowColor="black"
                           shadowBlur={5}
                           shadowOpacity={0.3}
+                          listening={isValidCityUpgrade}
                           onClick={handleClick}
                           onTap={handleClick}
                           onMouseEnter={handleMouseEnter}
                           onMouseLeave={handleMouseLeave}
+                          perfectDrawEnabled={false}
                         />
                       )
                     ) : (
@@ -2238,17 +3343,21 @@ export default function App() {
                       isValid && (
                         <>
                           <Circle
-                            radius={15} // Increased hit area
-                            fill="transparent"
+                            radius={16} // Provide a generous hit area for ease of use
+                            fill={debugModeEnabled ? "rgba(255, 0, 0, 0.2)" : "transparent"}
+                            stroke={debugModeEnabled ? "red" : "transparent"}
+                            strokeWidth={debugModeEnabled ? 1 : 0}
                             onClick={handleClick}
                             onTap={handleClick}
                             onMouseEnter={handleMouseEnter}
                             onMouseLeave={handleMouseLeave}
+                            perfectDrawEnabled={false}
                           />
                           <Circle
                             radius={6} // Visual indicator
                             fill={'rgba(0,0,0,0.3)'}
                             listening={false}
+                            perfectDrawEnabled={false}
                           />
                         </>
                       )
@@ -2273,6 +3382,7 @@ export default function App() {
               })}
             </Layer>
           </Stage>
+          </div>
 
           {/* Dice Floating Controls */}
           <AnimatePresence>
@@ -2280,46 +3390,48 @@ export default function App() {
               <motion.div
                 initial={{ opacity: 0, y: 50, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5, x: 200, y: 200 }}
+                exit={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 transition={{ type: 'spring', bounce: 0.4, duration: 0.6 }}
-                className="absolute bottom-1/4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-6 z-40"
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
                 <motion.button 
                   whileHover={isMyHumanTurn ? { scale: 1.05 } : {}}
                   whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
                   onClick={() => isMyHumanTurn && rollDice()}
                   disabled={!isMyHumanTurn}
-                  className={`px-12 py-6 rounded-full shadow-[0_20px_50px_rgba(249,115,22,0.4)] border border-orange-400 flex items-center gap-4 group transition-all ${
+                  className={`${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
                     isMyHumanTurn 
-                      ? "bg-orange-500 hover:bg-orange-600 text-white" 
-                      : "bg-gray-400 text-gray-200 cursor-not-allowed opacity-50 shadow-none border-gray-500"
+                      ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
+                      : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
                   }`}
                 >
-                  <Dices size={32} className={isMyHumanTurn ? "animate-pulse" : ""} />
-                  <span className="text-2xl font-black tracking-[0.2em]">掷骰子</span>
+                  <Dices size={isMobile ? 14 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
+                  <span className={`${isMobile ? 'text-[10px]' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
                 </motion.button>
               </motion.div>
             )}
           </AnimatePresence>
 
-          <AnimatePresence>
-            {gameState.hasRolled && (
+          <AnimatePresence mode="wait">
+            {(gameState.hasRolled || (gameState.phase === 'initial_dice_roll' && gameState.dice && gameState.dice[0] > 0)) && (
               <motion.div
+                key={gameState.hasRolled ? 'main-roll' : `initial-roll-${Object.keys(gameState.initialDiceRolls).length}`}
                 initial={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-                transition={{ type: 'spring', bounce: 0.5, duration: 0.6, delay: 0.2 }}
+                exit={{ opacity: 0, scale: 0.5, y: -50 }}
+                transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
                 className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
-                <div className="bg-white p-4 rounded-3xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-6">
-                  <div className="flex gap-3">
+                <div className={`bg-white ${isMobile ? 'p-2' : 'p-4'} rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-3`}>
+                  <div className="flex gap-1.5">
                     <DiceFace value={gameState.dice[0]} />
                     <DiceFace value={gameState.dice[1]} />
                   </div>
-                  <div className="pr-2 text-left">
-                    <p className="text-[10px] uppercase tracking-[0.2em] font-black opacity-40">
+                  <div className="pr-1 text-left">
+                    <p className="text-[8px] uppercase tracking-[0.2em] font-black opacity-40">
                       点数
                     </p>
-                    <p className="text-3xl font-serif font-black italic leading-none text-orange-500">
+                    <p className={`${isMobile ? 'text-lg' : 'text-3xl'} font-serif font-black italic leading-none text-orange-500`}>
                       {gameState.dice[0] + gameState.dice[1]}
                     </p>
                   </div>
@@ -2327,193 +3439,58 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
-        </main>
-
-        {/* Right Panel */}
-        <AnimatePresence>
-          {showRightPanel && (
-            <motion.aside 
-              initial={isMobile ? { x: 320 } : { width: 0 }}
-              animate={isMobile ? { x: 0 } : { width: 320 }}
-              exit={isMobile ? { x: 320 } : { width: 0 }}
-              className={`border-l border-black/5 p-6 flex flex-col gap-6 bg-white/40 backdrop-blur-md overflow-y-auto shrink-0 z-50 ${isMobile ? 'fixed inset-y-0 right-0 shadow-2xl' : 'relative'}`}
-            >
-              {isMobile && (
-                <button 
-                  onClick={() => setShowRightPanel(false)}
-                  className="absolute top-4 right-4 p-2 hover:bg-black/5 rounded-full"
-                >
-                  <X size={20} />
-                </button>
-              )}
-              {gameState.phase === 'setup' && (
-            <section className="bg-black text-white p-4 rounded-2xl shadow-xl">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-50 mb-2">初始阶段</h3>
-              <p className="text-xs font-medium leading-relaxed">
-                {gameState.players[gameState.currentPlayerIndex].name}，请放置一个村庄和一条道路。
-                {gameState.setupStep >= gameState.players.length ? ' (第二轮：逆序放置)' : ' (第一轮：顺序放置)'}
-              </p>
-            </section>
-          )}
-
-          {gameState.phase === 'road_building' && isMyHumanTurn && (
-            <section className="bg-amber-100 border border-amber-300 text-amber-900 p-4 rounded-2xl shadow-sm flex items-center justify-between">
-              <div>
-                <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-50 mb-1">道路建设</h3>
-                <p className="text-xs font-bold">请放置免费道路 ({2 - (gameState.freeRoads || 0)}/2)</p>
-              </div>
-              <button 
-                onClick={cancelDevCard}
-                className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest shadow-sm active:scale-95 transition-all"
-              >
-                {gameState.freeRoads === 2 ? '取消此卡' : '结束建造'}
-              </button>
-            </section>
-          )}
-
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">建筑施工</h3>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <BuildItem 
-                id="build-road"
-                icon={<Hammer size={16} />} 
-                label="道路" 
-                cost={COSTS.road} 
-                active={buildMode === 'road'}
-                disabled={!canBuild || (!canAfford(COSTS.road) && gameState?.phase !== 'setup' && gameState?.phase !== 'road_building') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
-                onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
-              />
-              <BuildItem 
-                id="build-ship"
-                icon={<ShipIcon size={16} />} 
-                label="船只" 
-                cost={COSTS.ship} 
-                active={buildMode === 'ship'}
-                disabled={!canBuild || ((!canAfford(COSTS.ship) && gameState?.phase !== 'road_building') || gameState?.mapType === 'standard') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
-                onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
-              />
-              <BuildItem 
-                id="build-settlement"
-                icon={<Home size={16} />} 
-                label="村庄" 
-                cost={COSTS.settlement} 
-                active={buildMode === 'settlement'}
-                disabled={!canBuild || (!canAfford(COSTS.settlement) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount > totalRoadsAndShips)}
-                onClick={() => handleSetBuildMode(buildMode === 'settlement' ? null : 'settlement')} 
-              />
-              <BuildItem 
-                id="build-city"
-                icon={<Trophy size={16} />} 
-                label="城市" 
-                cost={COSTS.city} 
-                active={buildMode === 'city'}
-                disabled={!canBuild || !canAfford(COSTS.city) || gameState?.phase === 'setup'}
-                onClick={() => handleSetBuildMode(buildMode === 'city' ? null : 'city')} 
-              />
-              <BuildItem 
-                id="buy-dev-card"
-                icon={<BookOpen size={16} />} 
-                label="发展卡" 
-                cost={COSTS.devCard} 
-                disabled={!canBuild || !canAfford(COSTS.devCard) || gameState?.phase === 'setup'}
-                onClick={buyDevCard} 
-              />
-            </div>
-          </section>
-
-          {/* Removed duplicate development cards section here */}
-
-          <section className="pt-4 mt-auto border-t border-black/5 space-y-2">
-            <div className="flex gap-2">
-              <button 
-                id="trade-bank-button"
-                onClick={() => setShowTradeModal(true)}
-                disabled={!canTrade}
-                className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white border border-black/5 hover:border-black/20 hover:shadow-xl transition-all group disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <Repeat size={16} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
-                <span className="text-[11px] font-bold uppercase tracking-widest whitespace-nowrap">系统交易</span>
-              </button>
-              <button 
-                id="trade-player-button"
-                onClick={openPlayerTradeModal}
-                disabled={!canTrade}
-                className="flex-1 flex items-center justify-center gap-2 p-3 rounded-2xl bg-white border border-black/5 hover:border-black/20 hover:shadow-xl transition-all group disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                <Users size={16} className="opacity-40" />
-                <span className="text-[11px] font-bold uppercase tracking-widest whitespace-nowrap">玩家交易</span>
-              </button>
-            </div>
-            <div className="relative">
-               <div className="relative group">
-                <button 
-                  id="end-turn-button"
-                  onClick={nextTurn}
-                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard'}
-                  className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed h-16"
-                >
-                  <ChevronRight size={18} className="opacity-40" />
-                  <span className="text-xs font-bold uppercase tracking-widest">结束回合</span>
-                </button>
-              </div>
-            </div>
-          </section>
-        </motion.aside>
-      )}
-    </AnimatePresence>
-    </div>
-
-      {/* Dissolve Room Confirmation Modal */}
+        
+{/* Dissolve Room Confirmation Modal */}
       <AnimatePresence>
-        {showDissolveConfirm && (
+        {showDissolveRoomConfirm && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowDissolveConfirm(false)}
-              className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
+              onClick={() => setShowDissolveRoomConfirm(false)}
+              className="absolute inset-0 bg-stone-900/40"
             />
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-white rounded-[2.5rem] shadow-2xl p-8 max-w-sm w-full border border-black/5 flex flex-col items-center text-center overflow-hidden"
+              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-xs w-full border border-black/5 flex flex-col items-center text-center max-h-[85vh] overflow-hidden"
             >
-              <div className="absolute top-0 right-0 p-4 opacity-10">
-                <LogOut size={120} />
+              <div className="absolute top-0 right-0 p-3 opacity-5">
+                <Trash2 size={60} />
               </div>
               
-              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                <LogOut size={32} />
+              <div className="w-10 h-10 bg-red-50 text-red-500 rounded-xl flex items-center justify-center mb-3 shadow-sm">
+                <Trash2 size={20} />
               </div>
               
-              <h3 className="text-2xl font-black text-stone-800 mb-3">确定退出房间？</h3>
-              <p className="text-stone-500 text-sm mb-10 leading-relaxed px-4">
-                退出后您可以通过房间号再次加入，<br />若所有玩家退出，房间将自动解散。
+              <h3 className="text-lg font-black text-stone-800 mb-1">确定解散房间？</h3>
+              <p className="text-stone-500 text-[9px] mb-4 leading-relaxed px-2">
+                解散后所有玩家将被移出房间，<br />房间数据将永久删除且不可恢复。
               </p>
               
-              <div className="flex flex-col w-full gap-3">
+              <div className="flex flex-col w-full gap-1.5">
                 <button 
                   onClick={() => {
                     const roomId = roomState?.roomId || inputRoomId;
-                    socketService.leaveRoom(roomId);
+                    socketService.resetGame(roomId);
+                    localStorage.removeItem('catan_active_room');
+                    setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
                     setIsJoinedLobby(false);
                     setRoomState(null);
                     syncGameState(null as any);
                     setGameStarted(false);
-                    setShowDissolveConfirm(false);
                     window.history.replaceState({}, '', window.location.pathname);
+                    setShowDissolveRoomConfirm(false);
                   }}
-                  className="w-full py-4.5 bg-red-500 text-white font-black text-sm uppercase tracking-widest rounded-2xl hover:bg-red-600 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
+                  className="w-full py-2 bg-red-500 text-white font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-red-600 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
                 >
-                  确定退出
+                  确定解散
                 </button>
                 <button 
-                  onClick={() => setShowDissolveConfirm(false)}
-                  className="w-full py-4.5 bg-stone-100 text-stone-600 font-bold text-sm uppercase tracking-widest rounded-2xl hover:bg-stone-200 transition-all active:scale-[0.98]"
+                  onClick={() => setShowDissolveRoomConfirm(false)}
+                  className="w-full py-2 bg-stone-100 text-stone-600 font-bold text-[10px] uppercase tracking-widest rounded-lg hover:bg-stone-200 transition-all active:scale-[0.98]"
                 >
                   取消
                 </button>
@@ -2524,29 +3501,35 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {gameState?.tradeOffers?.filter(o => o.status === 'pending').map(offer => {
+        {gameState?.tradeOffers?.filter(o => !closedTradeIds.has(o.id)).map(offer => {
             const initiator = gameState.players.find(p => p.id === offer.initiatorId);
             if (!initiator) return null;
             const isInitiator = offer.initiatorId === myPlayerIndex;
             const isTarget = offer.targetPlayerId === null || offer.targetPlayerId === myPlayerIndex;
-            const hasReacted = offer.acceptedBy.includes(myPlayerIndex) || offer.rejectedBy.includes(myPlayerIndex);
+            
+            // Only show targeted trades to relevant players
+            if (offer.targetPlayerId !== null && !isInitiator && !isTarget) return null;
 
-            if (!isInitiator && (!isTarget || hasReacted)) return null;
+            const completedWith = (offer as any).completedWith;
 
             return (
               <motion.div
                 key={`trade-alert-${offer.id}`}
                 initial={{ opacity: 0, y: -50 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -50 }}
-                className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-white border border-stone-200 shadow-2xl rounded-3xl p-6 w-[400px]"
+                exit={{ opacity: 0, scale: 0.95, y: -50 }}
+                className="absolute top-4 lg:top-6 left-1/2 -translate-x-1/2 z-[200] bg-white border border-stone-200 shadow-2xl rounded-3xl p-4 lg:p-6 w-[95%] max-w-[400px] max-h-[90%] flex flex-col pointer-events-auto"
               >
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="font-black text-lg">玩家交易</h3>
+                    <h3 className="font-black text-lg flex items-center gap-2">
+                       玩家交易
+                       {offer.status === 'completed' && <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full">已成交</span>}
+                       {offer.status === 'canceled' && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">已取消</span>}
+                    </h3>
                     <p className="text-xs text-stone-500 font-medium">来自 {initiator.name}</p>
                   </div>
-                  {isInitiator && (
+                  {isInitiator && offer.status === 'pending' && (
                     <button onClick={() => cancelTrade(offer.id)} className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors">
                       取消交易
                     </button>
@@ -2559,7 +3542,7 @@ export default function App() {
                     <div className="flex gap-1 flex-wrap justify-center">
                       {Object.values(ResourceType).filter(r => (offer.offer[r] || 0) > 0).map(r => (
                         <div key={`offer-res-${r}`} className="flex items-center gap-1">
-                              <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
+                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
                             <span className="text-xs font-bold px-1">{offer.offer[r]}</span>
                         </div>
                       ))}
@@ -2571,7 +3554,7 @@ export default function App() {
                     <div className="flex gap-1 flex-wrap justify-center">
                       {Object.values(ResourceType).filter(r => (offer.request[r] || 0) > 0).map(r => (
                         <div key={`req-res-${r}`} className="flex items-center gap-1">
-                            <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
+                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
                             <span className="text-xs font-bold px-1">{offer.request[r]}</span>
                         </div>
                       ))}
@@ -2579,45 +3562,90 @@ export default function App() {
                   </div>
                 </div>
 
-                {isInitiator ? (
-                   <div className="space-y-2">
-                     {offer.acceptedBy.map(pid => {
-                       const p = gameState.players.find(x => x.id === pid);
-                       return (
-                         <div key={`accept-${pid}`} className="flex items-center justify-between bg-green-50/50 p-2 rounded-xl">
-                           <span className="text-sm font-bold text-green-700">{p?.name} 接受了</span>
-                           <button onClick={() => finalizeTrade(offer.id, pid)} className="bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-green-600 transition-colors">
-                             成交
-                           </button>
-                         </div>
-                       );
-                     })}
-                     {offer.rejectedBy.map(pid => {
-                       const p = gameState.players.find(x => x.id === pid);
-                       return (
-                         <div key={`reject-${pid}`} className="flex items-center justify-between bg-red-50/50 p-2 rounded-xl">
-                           <span className="text-sm font-bold text-red-700">{p?.name} 拒绝了</span>
-                         </div>
-                       );
-                     })}
-                     {offer.acceptedBy.length === 0 && offer.rejectedBy.length === 0 && (
-                       <p className="text-center text-xs font-medium text-stone-500 py-2">等待其他玩家回应...</p>
-                     )}
-                   </div>
-                ) : (
-                   <div className="flex gap-2">
-                     <button onClick={() => reactToTrade(offer.id, myPlayerIndex, 'reject')} className="flex-1 py-3 bg-stone-100 text-stone-600 rounded-xl text-xs font-bold hover:bg-stone-200 transition-colors">
-                       拒绝
-                     </button>
-                     <button 
-                       disabled={!Object.values(ResourceType).every(r => (me.resources[r] || 0) >= (offer.request[r] || 0))}
-                       onClick={() => reactToTrade(offer.id, myPlayerIndex, 'accept')} 
-                       className="flex-1 py-3 bg-black text-white rounded-xl text-xs font-bold hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                     >
-                       接受
-                     </button>
-                   </div>
-                )}
+                {/* Trade Reaction List */}
+                <div className="space-y-2 flex-1 overflow-y-auto no-scrollbar py-2">
+                  {gameState.players.map(p => {
+                    if (p.id === initiator.id) return null;
+                    const isMe = p.id === myPlayerIndex;
+                    const isAccepted = offer.acceptedBy.includes(p.id);
+                    let isRejected = offer.rejectedBy.includes(p.id);
+                    
+                    const canAfford = Object.entries(offer.request || {}).every(
+                      ([r, count]) => !count || (p.resources[r as ResourceType] || 0) >= (count as number)
+                    );
+                    
+                    if (!canAfford) {
+                      isRejected = true;
+                    }
+
+                    const status = isAccepted ? 'accept' : (isRejected ? 'reject' : 'pending');
+                    const isFinalPartner = completedWith === p.id;
+
+                    return (
+                      <div key={`player-react-${p.id}`} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${isFinalPartner ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-100'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
+                          <span className={`text-sm font-black ${isFinalPartner ? 'text-emerald-700' : 'text-stone-700'}`}>{p.name} {isMe && '(你)'}</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {isMe && status === 'pending' && !isInitiator && offer.status === 'pending' ? (
+                            <div className="flex gap-1.5">
+                              <button 
+                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject')}
+                                className="px-3 py-1.5 bg-red-50 text-red-500 border border-red-100 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all"
+                              >
+                                拒绝
+                              </button>
+                              <button 
+                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept')}
+                                className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 transition-all"
+                              >
+                                接受
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {isFinalPartner && (
+                                <span className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-md">
+                                  🤝 成交
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'accept' && (
+                                <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  接受
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'reject' && (
+                                <span className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                                  拒绝
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'pending' && !isMe && offer.status === 'pending' && (
+                                <div className="w-4 h-4 rounded-full border-2 border-stone-100 border-t-stone-200 animate-spin opacity-20" />
+                              )}
+
+                              {isInitiator && status === 'accept' && offer.status === 'pending' && (
+                                <button 
+                                  onClick={() => {
+                                      // Delay finalization to let all players see the result
+                                      setTimeout(() => {
+                                        if (roomState?.roomId) socketService.sendFinalizeTrade(roomState.roomId, offer.id, p.id);
+                                      }, 500);
+                                  }}
+                                  className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 active:scale-95"
+                                >
+                                  成交
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </motion.div>
             );
         })}
@@ -2653,16 +3681,16 @@ export default function App() {
 
       {/* Debug Panel */}
       <AnimatePresence>
-        {showDebug && (
+        {showDebugConsole && (
           <motion.div
             initial={{ opacity: 0, x: 300 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 300 }}
-            className="fixed top-20 right-4 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-black/5 w-80 z-50 max-h-[80vh] overflow-y-auto"
+            className="fixed top-20 right-4 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-black/5 w-80 z-[300] max-h-[80vh] overflow-y-auto no-scrollbar"
           >
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-black uppercase tracking-widest text-xs">调试控制台</h3>
-              <button onClick={() => setShowDebug(false)} className="p-2 hover:bg-black/5 rounded-full">
+              <button onClick={() => setShowDebugConsole(false)} className="p-2 hover:bg-black/5 rounded-full">
                 <X size={16} />
               </button>
             </div>
@@ -2694,19 +3722,19 @@ export default function App() {
                   {Object.values(ResourceType).map(res => (
                     <div key={res} className="flex items-center justify-between p-2 bg-stone-50 rounded-xl">
                       <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: RESOURCE_COLORS[res] }} />
+                        <ResourceIcon type={res as ResourceType} className="w-4 h-4" />
                         <span className="text-xs font-bold">{RESOURCE_NAMES[res]}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <button 
-                          onClick={() => setPlayerResource(activePlayerId, res, Math.max(0, actingPlayer.resources[res] - 1))}
+                          onClick={() => setPlayerResource(activePlayerId, res, Math.max(0, actingPlayer.resources[res] - 5))}
                           className="w-6 h-6 bg-white border border-black/10 rounded-full flex items-center justify-center hover:bg-stone-100"
                         >
                           -
                         </button>
                         <span className="font-mono text-xs w-4 text-center">{actingPlayer.resources[res]}</span>
                         <button 
-                          onClick={() => setPlayerResource(activePlayerId, res, actingPlayer.resources[res] + 1)}
+                          onClick={() => setPlayerResource(activePlayerId, res, actingPlayer.resources[res] + 5)}
                           className="w-6 h-6 bg-black text-white rounded-full flex items-center justify-center hover:bg-zinc-800"
                         >
                           +
@@ -2721,13 +3749,7 @@ export default function App() {
         )}
       </AnimatePresence>
       
-      {/* Debug Toggle Button */}
-      <button 
-        onClick={() => setShowDebug(!showDebug)}
-        className="fixed bottom-4 right-4 bg-black/10 hover:bg-black/20 text-black p-2 rounded-full z-50 transition-colors"
-      >
-        <Settings size={20} />
-      </button>
+      {/* Debug Toggle Button Removed - Replaced by logo 5-click toggle */}
 
       {/* Removed DiscardModal rendering here as it's now in the left panel */}
 
@@ -2740,45 +3762,45 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm shadow-2xl z-50 flex items-center justify-center p-4"
+            className="absolute inset-0 z-[200] flex items-center justify-center pointer-events-none p-4 w-full"
           >
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-white rounded-3xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-stone-200 rounded-3xl p-4 lg:p-5 max-w-[400px] w-full max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl"
             >
-              <div className="flex justify-between items-center mb-6">
+              <div className="flex justify-between items-center mb-4">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight">玩家交易</h2>
-                  <p className="text-stone-500 font-medium">与其他玩家交换资源</p>
+                  <h2 className="text-xl font-black tracking-tight">玩家交易</h2>
+                  <p className="text-stone-500 font-medium text-xs">与其他玩家交换资源</p>
                 </div>
                 <button 
                   onClick={() => setShowPlayerTradeModal(false)}
-                  className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center hover:bg-stone-200 transition-colors"
+                  className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center hover:bg-stone-200 transition-colors"
                 >
-                  <X size={20} />
+                  <X size={16} />
                 </button>
               </div>
 
-              <div className="space-y-6">
+              <div className="space-y-2 overflow-y-auto text-[10px]">
                 <div>
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-3">你送出 (Offer)</h3>
-                  <div className="grid gap-2 grid-cols-2 md:grid-cols-5">
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你送出 (Offer)</h3>
+                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
                     {Object.values(ResourceType).map(r => (
-                      <div key={`offer-${r}`} className="p-3 border rounded-xl flex flex-col items-center gap-2">
-                        <div className="w-5 h-5 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
-                        <div className="flex items-center gap-2 mt-2">
+                      <div key={`offer-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
+                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
+                        <div className="flex items-center gap-1.5 mt-1">
                           <button 
                             disabled={(playerTradeOffer[r] || 0) <= 0}
                             onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
-                            className="w-6 h-6 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
                           >-</button>
-                          <span className="font-bold">{playerTradeOffer[r] || 0}</span>
+                          <span className="font-bold text-xs">{playerTradeOffer[r] || 0}</span>
                           <button 
                             disabled={(playerTradeOffer[r] || 0) >= (me.resources[r] || 0)}
                             onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
-                            className="w-6 h-6 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
                           >+</button>
                         </div>
                       </div>
@@ -2787,21 +3809,21 @@ export default function App() {
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-3">你希望得到 (Request)</h3>
-                  <div className="grid gap-2 grid-cols-2 md:grid-cols-5">
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你希望得到 (Request)</h3>
+                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
                     {Object.values(ResourceType).map(r => (
-                      <div key={`request-${r}`} className="p-3 border rounded-xl flex flex-col items-center gap-2">
-                        <div className="w-5 h-5 rounded-full shadow-sm" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
-                        <div className="flex items-center gap-2 mt-2">
+                      <div key={`request-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
+                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
+                        <div className="flex items-center gap-1.5 mt-1">
                           <button 
                             disabled={(playerTradeRequest[r] || 0) <= 0}
                             onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
-                            className="w-6 h-6 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
                           >-</button>
-                          <span className="font-bold">{playerTradeRequest[r] || 0}</span>
+                          <span className="font-bold text-xs">{playerTradeRequest[r] || 0}</span>
                           <button 
                             onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
-                            className="w-6 h-6 rounded bg-stone-100 flex items-center justify-center"
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center"
                           >+</button>
                         </div>
                       </div>
@@ -2810,11 +3832,11 @@ export default function App() {
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-stone-400 mb-3">交易对象</h3>
-                  <div className="flex flex-wrap gap-2">
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">交易对象</h3>
+                  <div className="flex flex-wrap gap-1.5">
                     <button
                       onClick={() => setPlayerTradeTarget(null)}
-                      className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${playerTradeTarget === null ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === null ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
                     >
                       所有人
                     </button>
@@ -2822,7 +3844,7 @@ export default function App() {
                       <button
                         key={`target-${p.id}`}
                         onClick={() => setPlayerTradeTarget(p.id)}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${playerTradeTarget === p.id ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === p.id ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
                       >
                         {p.name}
                       </button>
@@ -2839,7 +3861,7 @@ export default function App() {
                     proposeTrade(playerTradeOffer, playerTradeRequest, playerTradeTarget);
                     setShowPlayerTradeModal(false);
                   }}
-                  className="w-full bg-black text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all hover:bg-zinc-800"
+                  className="w-full bg-black text-white px-4 py-3 rounded-lg font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all hover:bg-zinc-800 text-xs"
                 >
                   发起交易
                 </button>
@@ -2849,6 +3871,62 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Dev Card Confirmation Modal */}
+      <AnimatePresence>
+        {confirmDevCard && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-transparent"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-[280px] lg:max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden p-6 lg:p-10 text-center"
+            >
+              <div className="w-16 h-16 lg:w-20 lg:h-20 rounded-2xl lg:rounded-3xl bg-zinc-50 mx-auto flex items-center justify-center text-3xl lg:text-4xl shadow-inner mb-4 lg:mb-6">
+                {confirmDevCard === DevCardType.Knight ? '⚔️' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '🏆' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '🛣️' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+              </div>
+              <h2 className="text-xl lg:text-2xl font-serif font-black italic mb-1 lg:mb-2">
+                {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '开启垄断'}
+              </h2>
+              <p className="text-[10px] lg:text-xs opacity-50 uppercase tracking-[0.1em] lg:tracking-[0.2em] font-bold mb-6 lg:mb-8 leading-relaxed">
+                {confirmDevCard === DevCardType.Knight ? '移动强盗并从相邻玩家处偷取一张资源卡。' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '从银行免费领取任意 2 张资源卡。' : '选择一种资源，所有玩家必须交出该资源。'}
+              </p>
+              
+              <div className="space-y-2 lg:space-y-3">
+                <button 
+                  onClick={() => {
+                    playDevCard(confirmDevCard);
+                    setConfirmDevCard(null);
+                  }}
+                  className="w-full bg-black text-white py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] shadow-xl hover:bg-zinc-800 transition-all active:scale-95"
+                >
+                  确认使用
+                </button>
+                <button 
+                  onClick={() => setConfirmDevCard(null)}
+                  className="w-full py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] text-stone-400 hover:text-stone-600 transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+ 
       {/* Trade Modal */}
       <AnimatePresence>
         {showTradeModal && (
@@ -2856,87 +3934,89 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-8 bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-none p-4 w-full"
           >
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden"
+              className="bg-white border border-stone-200 w-full max-w-[340px] rounded-[2rem] shadow-2xl overflow-hidden max-h-[95%] flex flex-col pointer-events-auto"
             >
-              <div className="p-10 border-b border-black/5 flex items-center justify-between">
+              <div className="p-4 border-b border-black/5 flex items-center justify-between bg-stone-50/50">
                 <div>
-                  <h2 className="text-3xl font-serif font-black italic">海上贸易</h2>
-                  <p className="text-xs opacity-40 uppercase tracking-widest mt-1">与银行进行 {currentTradeRatio}:1 资源交换</p>
+                  <h2 className="text-lg font-serif font-black italic">海上贸易</h2>
+                  <p className="text-[8px] opacity-40 uppercase tracking-widest mt-0.5">与银行进行 {currentTradeRatio}:1 资源交换</p>
                 </div>
-                <button onClick={() => setShowTradeModal(false)} className="p-4 rounded-full hover:bg-black/5 transition-colors">
-                  <X size={24} />
+                <button onClick={() => setShowTradeModal(false)} className="p-2 rounded-full hover:bg-black/5 transition-colors">
+                  <X size={14} />
                 </button>
               </div>
-              <div className="p-10 grid grid-cols-2 gap-10">
-                <div>
-                  <h4 className="text-[10px] uppercase tracking-widest font-black opacity-30 mb-6">支付 ({currentTradeRatio})</h4>
-                  <div className="space-y-2">
+              <div className="flex-1 overflow-y-auto p-4 flex flex-row gap-4">
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">支付 ({currentTradeRatio})</h4>
+                  <div className="grid grid-cols-1 gap-1">
                     {Object.values(ResourceType).map(r => (
                       <button 
                         key={r} 
                         onClick={() => setTradeGive(r)}
-                        className={`w-full p-5 rounded-2xl border transition-all flex items-center justify-between ${tradeGive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
+                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeGive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
                       >
-                        <div className="flex items-center gap-4">
-                          <div className="w-5 h-5 rounded-full shadow-inner" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
-                          <span className="text-base font-bold">{RESOURCE_NAMES[r]}</span>
+                        <div className="flex items-center gap-1.5">
+                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
+                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
                         </div>
-                        <span className={`text-sm font-mono ${tradeGive === r ? 'opacity-60' : 'opacity-40'}`}>x{me.resources[r]}</span>
+                        <span className={`text-[10px] font-mono ${tradeGive === r ? 'opacity-60' : 'opacity-40'}`}>x{me.resources[r]}</span>
                       </button>
                     ))}
                   </div>
                 </div>
-                <div>
-                  <h4 className="text-[10px] uppercase tracking-widest font-black opacity-30 mb-6">获得 (1)</h4>
-                  <div className="space-y-2">
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">获得 (1)</h4>
+                  <div className="grid grid-cols-1 gap-1">
                     {Object.values(ResourceType).map(r => (
                       <button 
                         key={r} 
                         onClick={() => setTradeReceive(r)}
-                        className={`w-full p-5 rounded-2xl border transition-all flex items-center justify-between ${tradeReceive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
+                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeReceive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
                       >
-                        <div className="flex items-center gap-4">
-                          <div className="w-5 h-5 rounded-full shadow-inner" style={{ backgroundColor: RESOURCE_COLORS[r] }} />
-                          <span className="text-base font-bold">{RESOURCE_NAMES[r]}</span>
+                        <div className="flex items-center gap-1.5">
+                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
+                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
               </div>
-              <div className="p-10 bg-stone-50 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <span className="text-xs font-black uppercase tracking-widest opacity-40">交易次数:</span>
-                  <div className="flex items-center gap-2 bg-white border border-black/5 rounded-full p-1">
-                    <button 
-                      onClick={() => setTradeQuantity(Math.max(1, tradeQuantity - 1))}
-                      className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
-                    >
-                      -
-                    </button>
-                    <span className="w-8 text-center font-mono font-black">{tradeQuantity}</span>
-                    <button 
-                      onClick={() => setTradeQuantity(Math.min(maxTradeQuantity, tradeQuantity + 1))}
-                      className="w-8 h-8 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors"
-                      disabled={tradeQuantity >= maxTradeQuantity}
-                    >
-                      +
-                    </button>
+              <div className="p-4 bg-stone-50 flex flex-col gap-3 shrink-0 border-t border-black/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-widest opacity-40">交换数量:</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white border border-black/5 rounded-full p-0.5">
+                      <button 
+                        onClick={() => setTradeQuantity(Math.max(1, tradeQuantity - 1))}
+                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
+                      >
+                        -
+                      </button>
+                      <span className="w-5 text-center font-mono font-bold text-xs">{tradeQuantity}</span>
+                      <button 
+                        onClick={() => setTradeQuantity(Math.min(maxTradeQuantity, tradeQuantity + 1))}
+                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
+                        disabled={tradeQuantity >= maxTradeQuantity}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <span className="text-[8px] opacity-30 font-medium">限额 {maxTradeQuantity}</span>
                   </div>
-                  <span className="text-[10px] opacity-30 font-medium">最多可交易 {maxTradeQuantity} 次</span>
                 </div>
                 <button 
                   disabled={!tradeGive || !tradeReceive || tradeGive === tradeReceive || maxTradeQuantity < 1}
                   onClick={handleTrade}
-                  className="bg-black text-white px-10 py-4 rounded-full font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl active:scale-95"
+                  className="w-full bg-black text-white py-3 rounded-full font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl active:scale-95 text-[10px]"
                 >
-                  确认交易 ({tradeQuantity * currentTradeRatio} 换 {tradeQuantity})
+                  确认 ({tradeQuantity * currentTradeRatio} 换 {tradeQuantity})
                 </button>
               </div>
             </motion.div>
@@ -2945,38 +4025,353 @@ export default function App() {
       </AnimatePresence>
 
       {/* Stealing Modal */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {gameState.phase === 'stealing' && (
           <motion.div 
+            key="stealing-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-auto p-4 w-full"
           >
-            <div className="bg-white p-10 rounded-[3rem] shadow-2xl border border-black/5 max-w-md w-full text-center">
-              <h3 className="text-2xl font-serif font-black italic mb-2">选择偷取对象</h3>
-              <p className="text-xs opacity-40 uppercase tracking-widest mb-8">从相邻建筑的玩家手中随机抽取一张资源卡</p>
-              <div className="grid grid-cols-1 gap-3">
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white border-2 border-stone-100 rounded-[2rem] shadow-2xl overflow-hidden max-w-[280px] w-full p-4 lg:p-6 flex flex-col items-center text-center relative pointer-events-auto"
+            >
+              <div className="w-10 h-10 rounded-xl bg-stone-50 flex items-center justify-center text-xl mb-2 shadow-inner">
+                🕵️
+              </div>
+              <h3 className="text-lg font-serif font-black italic mb-1 text-slate-900">选择偷取对象</h3>
+              <p className="text-[9px] opacity-40 uppercase tracking-widest mb-4 px-2 leading-relaxed">从相邻建筑的玩家手中抽取随机资源</p>
+              
+              <div className="grid grid-cols-1 gap-1.5 w-full">
                 {gameState.pendingStealFrom.map(pid => (
                   <button
                     key={pid}
-                    onClick={() => stealResource(pid)}
-                    className="flex items-center justify-between p-4 rounded-2xl border border-black/5 hover:bg-stone-50 transition-all group"
+                    onClick={() => {
+                      if (isMyHumanTurn && gameState.selectedStealTarget == null) {
+                        doSteal(pid);
+                      }
+                    }}
+                    disabled={!isMyHumanTurn || gameState.selectedStealTarget != null}
+                    className={`flex items-center justify-between px-4 py-3 rounded-2xl border transition-all relative overflow-hidden group ${
+                      gameState.selectedStealTarget === pid
+                        ? "bg-black text-white border-black scale-[1.02] shadow-xl"
+                        : gameState.selectedStealTarget != null
+                          ? "opacity-20 border-black/5"
+                          : isMyHumanTurn 
+                            ? "bg-stone-50 border-stone-100 hover:border-black/20 hover:bg-stone-100 active:scale-98" 
+                            : "opacity-40 bg-stone-50 border-stone-100 cursor-not-allowed"
+                    }`}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-8 h-8 rounded-full" style={{ backgroundColor: PLAYER_COLORS[pid] }} />
-                      <span className="font-black uppercase tracking-tight">{gameState.players[pid].name}</span>
+                    <div className="flex items-center gap-3 relative z-10 text-left">
+                      <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: gameState.players[pid].color }} />
+                      <span className="font-black tracking-tight text-[11px] uppercase truncate max-w-[120px]">{gameState.players[pid].name}</span>
                     </div>
-                    <ChevronRight size={18} className="opacity-20 group-hover:translate-x-1 transition-transform" />
+                    
+                    <div className="flex items-center gap-2 relative z-10">
+                      <span className="text-[9px] font-bold opacity-40">卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
+                      {isMyHumanTurn && gameState.selectedStealTarget === null && (
+                        <ChevronRight size={12} className="opacity-20 group-hover:translate-x-1 transition-transform" />
+                      )}
+                      {gameState.selectedStealTarget === pid && (
+                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                          <Check size={10} />
+                        </div>
+                      )}
+                    </div>
+
+                    {gameState.selectedStealTarget === pid && (
+                      <motion.div 
+                        layoutId="active-target-bg"
+                        className="absolute inset-0 bg-black z-0"
+                      />
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
+
+              {(!isMyHumanTurn || gameState.selectedStealTarget !== null) && (
+                <div 
+                  className={`mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full border border-black/5 transition-colors ${gameState.selectedStealTarget !== null && isMyHumanTurn ? 'cursor-pointer bg-stone-100 hover:bg-stone-200 active:bg-stone-300' : 'bg-stone-100'}`}
+                  onClick={() => {
+                    if (isMyHumanTurn && gameState.selectedStealTarget !== null) {
+                      stealResource(gameState.selectedStealTarget);
+                    }
+                  }}
+                  title={gameState.selectedStealTarget !== null && isMyHumanTurn ? "如果卡住可以点击此处强制继续" : ""}
+                >
+                  <div className="w-1 h-1 rounded-full bg-stone-400 animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-stone-400">
+                    {gameState.selectedStealTarget !== null ? '正在窃取... (卡住点此)' : '正在等待行动玩家...'}
+                  </span>
+                </div>
+              )}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Gold Selection Modal Removed */}
+
+      {/* Central Action Modals (Discard, Monopoly, Year of Plenty, Gold Selection) */}
+      <AnimatePresence>
+        {((gameState.phase === 'discard' && gameState.pendingDiscards[0]?.playerId === myPlayerIndex) ||
+          (gameState.phase === 'year_of_plenty' && amIActivePlayer) ||
+          (gameState.phase === 'monopoly' && amIActivePlayer) ||
+          (gameState.phase === 'gold_selection' && (gameState.pendingGoldRewards?.length || 0) > 0 && gameState.pendingGoldRewards[0].playerId === myPlayerIndex)) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            // Backdrop with zero opacity as requested to see resources behind
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-transparent pointer-events-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-[300px] lg:max-w-sm rounded-[1.8rem] lg:rounded-[2.5rem] shadow-2xl border border-black/10 p-4 lg:p-8 pointer-events-auto max-h-[95vh] overflow-y-auto no-scrollbar"
+            >
+              {gameState.phase === 'discard' && (
+                <div className="space-y-4">
+                  <div className="text-center space-y-1">
+                    <h3 className="text-lg lg:text-xl font-serif font-black italic text-red-600">强盗突袭！</h3>
+                    <p className="text-[10px] lg:text-xs font-bold text-slate-800">
+                      请弃掉 {gameState.pendingDiscards[0].amount} 张牌 (还需 {(gameState.pendingDiscards[0].amount - Object.values(discardSelection).reduce((a, b) => a + b, 0))} 张)
+                    </p>
+                  </div>
+                  <DiscardPanel 
+                    key={myPlayerIndex} 
+                    player={me} 
+                    amount={gameState.pendingDiscards[0].amount} 
+                    onDiscard={(res) => discardCards(myPlayerIndex, res)} 
+                    onChange={setDiscardSelection}
+                  />
+                </div>
+              )}
+
+              {gameState.phase === 'year_of_plenty' && (
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <h3 className="text-lg lg:text-xl font-serif font-black italic mb-1">丰收之年</h3>
+                    <p className="text-[9px] lg:text-[10px] opacity-40 uppercase tracking-widest">请从银行任选 2 张资源</p>
+                  </div>
+                  <div className="space-y-2">
+                    <ResourceSelector 
+                      title="第一张资源"
+                      selected={tradeGive}
+                      onSelect={setTradeGive}
+                    />
+                    <ResourceSelector 
+                      title="第二张资源"
+                      selected={tradeReceive}
+                      onSelect={setTradeReceive}
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      onClick={cancelDevCard}
+                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (tradeGive && tradeReceive) {
+                          resolveYearOfPlenty(tradeGive, tradeReceive);
+                          setTradeGive(null);
+                          setTradeReceive(null);
+                        }
+                      }}
+                      disabled={!tradeGive || !tradeReceive}
+                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
+                    >
+                      确认领取
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.phase === 'monopoly' && (
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <h3 className="text-xl font-serif font-black italic mb-1">垄断资源</h3>
+                    <p className="text-[10px] opacity-40 uppercase tracking-widest">所有玩家必须交出你选中的资源</p>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 lg:gap-2">
+                    {Object.values(ResourceType).map(res => (
+                      <button
+                        key={`mono-${res}`}
+                        onClick={() => setTradeGive(res)}
+                        className={`p-2 lg:p-3 rounded-xl border transition-all flex flex-col items-center gap-1 ${tradeGive === res ? 'border-black bg-stone-50 scale-105 shadow-md' : 'border-black/5 hover:border-black/20 hover:bg-stone-50'}`}
+                      >
+                        <ResourceIcon type={res as ResourceType} className="w-6 h-6 lg:w-7 lg:h-7" />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 pt-1 lg:pt-2">
+                    <button 
+                      onClick={cancelDevCard}
+                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (tradeGive) {
+                          resolveMonopoly(tradeGive);
+                          setTradeGive(null);
+                        }
+                      }}
+                      disabled={!tradeGive}
+                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
+                    >
+                      执行垄断
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.phase === 'gold_selection' && (
+                <div className="space-y-4">
+                  <GoldSelectionPanel 
+                    bankResources={gameState.bankResources}
+                    amount={gameState.pendingGoldRewards[0].amount}
+                    onSelect={selectGoldResource}
+                  />
+                  <button 
+                    onClick={() => {
+                      // Logic to skip if possible or handle cancellation if allowed
+                      // (Usually gold rush is mandatory, but we can add a cancel if needed)
+                    }}
+                    className="w-full py-2 text-[9px] font-black uppercase tracking-widest text-stone-300 pointer-events-none"
+                  >
+                    结算中...
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      
+</main>
+
+        {/* Right Panel */}
+        <AnimatePresence>
+          {showRightPanel && (
+            <motion.aside 
+              initial={{ width: rightWidth }}
+              animate={{ width: rightWidth }}
+              exit={{ width: 0 }}
+              className={`border-l border-black/5 ${isMobile ? 'p-1' : 'p-2 lg:p-2.5'} flex flex-col h-full bg-white overflow-hidden shrink-0 z-50 relative`}
+            >
+              <section className="flex-1 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-1 shrink-0">
+                  <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
+                </div>
+                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
+              <BuildItem 
+                id="build-road"
+                compact={isMobile}
+                icon={<Hammer size={16} />} 
+                label="道路" 
+                cost={COSTS.road} 
+                active={buildMode === 'road'}
+                activeColor={currentPlayer?.color}
+                disabled={!canBuild || (!canAfford(COSTS.road) && gameState?.phase !== 'setup' && gameState?.phase !== 'road_building') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
+              />
+              <BuildItem 
+                id="build-ship"
+                compact={isMobile}
+                icon={<ShipIcon size={16} />} 
+                label="船只" 
+                cost={COSTS.ship} 
+                active={buildMode === 'ship'}
+                activeColor={currentPlayer?.color}
+                disabled={!canBuild || ((!canAfford(COSTS.ship) && gameState?.phase !== 'road_building') || gameState?.mapType === 'standard') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
+              />
+              <BuildItem 
+                id="build-settlement"
+                compact={isMobile}
+                icon={<Home size={16} />} 
+                label="村庄" 
+                cost={COSTS.settlement} 
+                active={buildMode === 'settlement'}
+                activeColor={currentPlayer?.color}
+                disabled={!canBuild || (!canAfford(COSTS.settlement) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount > totalRoadsAndShips)}
+                onClick={() => handleSetBuildMode(buildMode === 'settlement' ? null : 'settlement')} 
+              />
+              <BuildItem 
+                id="build-city"
+                compact={isMobile}
+                icon={<Trophy size={16} />} 
+                label="城市" 
+                cost={COSTS.city} 
+                active={buildMode === 'city'}
+                activeColor={currentPlayer?.color}
+                disabled={!canBuild || !canAfford(COSTS.city) || gameState?.phase === 'setup'}
+                onClick={() => handleSetBuildMode(buildMode === 'city' ? null : 'city')} 
+              />
+              <BuildItem 
+                id="buy-dev-card"
+                compact={isMobile}
+                icon={<BookOpen size={16} />} 
+                label="发展卡" 
+                cost={COSTS.devCard} 
+                disabled={!canBuild || !canAfford(COSTS.devCard) || gameState?.phase === 'setup'}
+                onClick={buyDevCard} 
+              />
+            </div>
+          </section>
+
+          {/* Removed duplicate development cards section here */}
+
+          <section className="pt-1.5 mt-auto border-t border-black/5 space-y-1">
+            <div className={`flex ${isMobile ? 'flex-col gap-1' : 'gap-1.5'}`}>
+              <button 
+                id="trade-bank-button"
+                onClick={() => setShowTradeModal(true)}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Repeat size={isMobile ? 12 : 14} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>系统交易</span>
+              </button>
+              <button 
+                id="trade-player-button"
+                onClick={openPlayerTradeModal}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Users size={isMobile ? 12 : 14} className="opacity-40" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>玩家交易</span>
+              </button>
+            </div>
+            <div className="relative">
+               <div className="relative group">
+                <button 
+                  id="end-turn-button"
+                  onClick={nextTurn}
+                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination'}
+                  className={`w-full flex items-center justify-center gap-1 ${isMobile ? 'rounded-lg h-7' : 'rounded-lg h-10'} bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed`}
+                >
+                  <ChevronRight size={14} className="opacity-40" />
+                  <span className={`${isMobile ? 'text-[9px]' : 'text-xs'} font-bold uppercase tracking-widest`}>结束回合</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </motion.aside>
+      )}
+    </AnimatePresence>
+    </div>
 
       <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
       
@@ -2985,39 +4380,65 @@ export default function App() {
         {showGameOver && (
           <GameOverModal 
             gameState={gameState} 
-            onClose={() => setShowGameOver(false)} 
+            maxWidth={stageWidth}
+            onReturnToLobby={handleReturnToLobby}
+            onReturnToMap={handleReturnToMap}
           />
         )}
       </AnimatePresence>
     </div>
+  </div>
+  </>
   );
 }
 
-function MapPreview({ board, isTopologyOnly = false }: { board: any[], isTopologyOnly?: boolean }) {
+function MapPreview({ board, isTopologyOnly = false, isLogo = false }: { board: any[], isTopologyOnly?: boolean, isLogo?: boolean }) {
   const [scale, setScale] = useState(0.5);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isReady, setIsReady] = useState(false);
 
-  useEffect(() => {
-    if (containerRef.current) {
-      const { width, height } = containerRef.current.getBoundingClientRect();
-      if (!board || board.length === 0) return;
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      board.forEach(hex => {
-        if (hex.isOuterSea || hex.category === 'OuterSea' || hex._category === 'OuterSea') return;
-        const x = HEX_WIDTH * (hex.q + hex.r / 2);
-        const y = HEX_HEIGHT * 0.75 * hex.r;
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y);
-        maxY = Math.max(maxY, y);
-      });
-      const boardWidth = maxX - minX + HEX_WIDTH * 2;
-      const boardHeight = maxY - minY + HEX_HEIGHT * 2;
-      const scaleX = width / boardWidth;
-      const scaleY = height / boardHeight;
-      setScale(Math.min(scaleX, scaleY) * 0.9);
-    }
-  }, [board]);
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+    
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight
+        });
+      }
+    };
+    
+    updateDimensions();
+    
+    const resizeObserver = new ResizeObserver(() => updateDimensions());
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!board || board.length === 0 || dimensions.width === 0 || dimensions.height === 0) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    
+    const relevantHexes = board.filter(hex => !(hex.isOuterSea || hex.category === 'OuterSea' || hex._category === 'OuterSea'));
+    if (relevantHexes.length === 0) return;
+
+    relevantHexes.forEach(hex => {
+      const x = HEX_WIDTH * (hex.q + hex.r / 2);
+      const y = HEX_HEIGHT * 0.75 * hex.r;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+    const boardWidth = maxX - minX + HEX_WIDTH * 2;
+    const boardHeight = maxY - minY + HEX_HEIGHT * 2;
+    const scaleX = dimensions.width / boardWidth;
+    const scaleY = dimensions.height / boardHeight;
+    setScale(Math.min(scaleX, scaleY) * 0.9);
+    setIsReady(true);
+  }, [board, dimensions]);
 
   const hexCoords = useMemo(() => {
     if (!board) return [];
@@ -3031,16 +4452,20 @@ function MapPreview({ board, isTopologyOnly = false }: { board: any[], isTopolog
   }, [board]);
 
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center">
-      <Stage width={containerRef.current?.clientWidth || 400} height={containerRef.current?.clientHeight || 400}>
-        <Layer x={(containerRef.current?.clientWidth || 400) / 2} y={(containerRef.current?.clientHeight || 400) / 2} scale={{ x: scale, y: scale }}>
+    <div ref={containerRef} className={`w-full h-full flex items-center justify-center transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
+      <Stage width={dimensions.width} height={dimensions.height}>
+        <Layer x={dimensions.width / 2} y={dimensions.height / 2} scale={{ x: scale, y: scale }}>
           {hexCoords.map(hex => {
             let fill = '#fff';
             if (isTopologyOnly) {
-              if (hex.category === 'Mainland' || hex._category === 'Mainland') fill = '#8B5A2B';
-              else if (hex.category === 'Island' || hex._category === 'Island') fill = '#CD853F';
-              else if (hex.category === 'Desert' || hex._category === 'Desert') fill = '#F4A460';
-              else if (hex.category === 'InnerSea' || hex._category === 'InnerSea') fill = '#4682B4';
+              const isDesert = (hex.type === HexType.Desert || hex._category === 'Desert') && !isLogo;
+              const isMainland = hex._category === 'Mainland' || hex.isMainland || (hex._category === 'Desert' && isLogo) || (hex.type === HexType.Gold && hex.isMainland);
+              const isIsland = hex._category === 'Island' || hex.isIsland || (hex.type === HexType.Gold && hex.isIsland);
+              
+              if (isDesert) fill = '#dca467'; // 沙漠 (Desert)
+              else if (isMainland) fill = '#558b2f'; // 大陆 (Mainland)
+              else if (isIsland) fill = '#7cb342'; // 岛屿 (Island)
+              else fill = '#4eaadd'; // 内海 (InnerSea)
             } else {
               const resType = hex.type === HexType.Gold ? 'gold' : hex.type === HexType.Desert ? 'desert' : hex.type === HexType.Sea ? 'sea' : HEX_RESOURCES[hex.type as HexType];
               fill = RESOURCE_COLORS[resType as any] || '#ccc';
@@ -3092,7 +4517,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void 
             initial={{ scale: 0.9, y: 40 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, y: 40 }}
-            className="bg-white w-full max-w-4xl max-h-[85vh] rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col"
+            className="bg-white w-full max-w-4xl max-h-[80vh] rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col"
           >
             <div className="p-10 border-b border-black/5 flex items-center justify-between bg-stone-50/50">
               <div>
@@ -3104,7 +4529,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void 
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-12 space-y-12">
+            <div className="flex-1 overflow-y-auto no-scrollbar p-12 space-y-12">
               <section>
                 <h3 className="text-xl font-serif font-black italic mb-6 flex items-center gap-3">
                   <div className="w-2 h-6 bg-black rounded-full" />
@@ -3195,7 +4620,7 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void 
               <section className="bg-stone-900 text-white p-10 rounded-[2.5rem] shadow-2xl">
                 <h3 className="text-xl font-serif italic mb-6">胜利条件</h3>
                 <p className="text-sm opacity-70 leading-relaxed">
-                  第一个获得 10 分（VP）的玩家赢得比赛。
+                  第一个获得 14 分（VP）的玩家赢得比赛。
                   <br /><br />
                   村庄 = 1 分 | 城市 = 2 分 | 最长道路/最大军队等成就也会提供额外分数。
                 </p>
@@ -3209,51 +4634,57 @@ function RulesModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void 
   );
 }
 
-function ResourceRow({ type, count }: { type: ResourceType, count: number }) {
-  const icons: any = {
-    [ResourceType.Lumber]: '🌲',
-    [ResourceType.Brick]: '🧱',
-    [ResourceType.Wool]: '🐑',
-    [ResourceType.Grain]: '🌾',
-    [ResourceType.Ore]: '⛰️',
-  };
-
+function ResourceRow({ type, count, compact }: { type: ResourceType, count: number, compact?: boolean }) {
   return (
-    <div className="flex items-center justify-between p-3 rounded-2xl bg-white border border-black/5 hover:shadow-md transition-all group">
-      <div className="flex items-center gap-3">
+    <div className={`flex items-center justify-between ${compact ? 'py-1 px-1.5' : 'py-2 px-3'} rounded-md bg-white border border-black/10 hover:shadow-md transition-all group`}>
+      <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
         <div 
-          className="w-8 h-8 rounded-xl flex items-center justify-center text-base shadow-inner transition-transform group-hover:scale-110"
-          style={{ backgroundColor: RESOURCE_COLORS[type] + '20' }}
+          className={`${compact ? 'w-5 h-5' : 'w-8 h-8 md:w-9 md:h-9'} shrink-0 rounded-sm lg:rounded-md flex items-center justify-center shadow-inner transition-transform group-hover:scale-110`}
         >
-          {icons[type]}
+          <ResourceIcon type={type} className={compact ? 'w-3.5 h-3.5' : 'w-5 h-5 lg:w-6 lg:h-6'} />
         </div>
-        <span className="text-xs font-black uppercase tracking-tight opacity-70 group-hover:opacity-100 transition-opacity">{RESOURCE_NAMES[type]}</span>
+        <span className={`font-black uppercase tracking-tight opacity-70 group-hover:opacity-100 transition-opacity ${compact ? 'text-[8px]' : 'text-[11px]'}`}>{RESOURCE_NAMES[type]}</span>
       </div>
       <div className="flex flex-col items-end">
-        <span className="text-lg font-mono font-black">{count}</span>
+        <span className={`font-mono font-black ${compact ? 'text-[9px] pl-1' : 'text-base'}`}>{count}</span>
       </div>
     </div>
   );
 }
 
-function BuildItem({ id, icon, label, cost, onClick, active, disabled }: { id?: string, icon: React.ReactNode, label: string, cost: Record<string, number>, onClick?: () => void, active?: boolean, disabled?: boolean }) {
+function BuildItem({ id, icon, label, cost, onClick, active, disabled, compact, isDevCard, activeColor }: { id?: string, icon: React.ReactNode, label: string, cost: Record<string, number>, onClick?: () => void, active?: boolean, disabled?: boolean, compact?: boolean, isDevCard?: boolean, activeColor?: string }) {
   return (
     <button 
       id={id}
       onClick={onClick}
       disabled={disabled}
-      className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all group ${active ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-white border-black/5 hover:border-black/20 hover:shadow-xl'} ${disabled ? 'opacity-20 cursor-not-allowed grayscale' : ''}`}
+      className={`w-full flex items-center justify-between ${compact ? 'py-1 px-2' : 'py-3 px-4'} rounded-xl border transition-all ${disabled ? '' : 'group'} ${active ? 'scale-[1.01]' : `bg-white border-black/5 ${disabled ? '' : 'hover:border-black/20 hover:shadow-xl'}`} ${disabled ? 'cursor-not-allowed text-black' : ''} flex-1 min-h-0 min-w-0 lg:max-h-20`}
+      style={active ? { 
+        backgroundColor: (activeColor || '#10b981') + '08', 
+        borderColor: (activeColor || '#10b981') + '30',
+        boxShadow: `0 8px 24px -6px ${(activeColor || '#10b981')}20`
+      } : {}}
     >
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-xl bg-stone-100 flex items-center justify-center group-hover:bg-black group-hover:text-white transition-all duration-300">
-          {icon}
+      <div className={`flex items-center ${compact ? 'gap-1.5' : 'gap-3'} min-w-0`}>
+        <div 
+          className={`${compact ? 'w-6 h-6 sm:w-7 sm:h-7' : 'w-10 h-10'} shrink-0 rounded-lg flex items-center justify-center transition-all duration-300 ${active ? '' : (disabled ? 'bg-stone-100 text-stone-400' : 'bg-black text-white')}`}
+          style={active ? { backgroundColor: activeColor, color: 'white' } : {}}
+        >
+          {React.cloneElement(icon as React.ReactElement<any>, { size: compact ? 12 : 18 })}
         </div>
-        <span className="text-xs font-black uppercase tracking-tight">{label}</span>
+        <div className="flex flex-col items-start min-w-0">
+          <span className={`${compact ? 'text-[8px] sm:text-[9px]' : 'text-sm'} font-black uppercase tracking-widest truncate w-full ${active ? 'text-stone-900 opacity-90' : 'text-stone-800'}`}>{label}</span>
+        </div>
       </div>
-      <div className="flex gap-1">
-        {Object.entries(cost).map(([res, amt]) => (
-          <div key={res} className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: RESOURCE_COLORS[res as ResourceType] }} title={`${amt} ${RESOURCE_NAMES[res as ResourceType]}`} />
-        ))}
+      <div className="flex flex-col items-end gap-0.5 opacity-60 shrink-0">
+        <div className="flex gap-1.5">
+          {Object.entries(cost).map(([res, amt]) => (
+            <div key={res} className="flex flex-col items-center gap-0.5">
+              <ResourceIcon type={res as ResourceType} className={compact ? 'w-2.5 h-2.5' : 'w-5 h-5'} />
+              <span className={`${compact ? 'text-[7px]' : 'text-[10px]'} font-mono font-bold leading-none`}>{amt}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </button>
   );
@@ -3313,10 +4744,12 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
         shadowBlur={isRobber || isPirate ? 20 : 0}
         shadowOpacity={0.2}
         rotation={0}
+        perfectDrawEnabled={false}
+        shadowForStrokeEnabled={false}
       />
       
       {hex.number && (
-        <Group>
+        <Group listening={false}>
           <Circle 
             radius={12} 
             fill="rgba(255, 255, 255, 0.7)" 
@@ -3324,6 +4757,7 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
             strokeWidth={1}
             shadowBlur={5}
             shadowOpacity={0.1}
+            perfectDrawEnabled={false}
           />
           <Text
             text={hex.number.toString()}
@@ -3357,6 +4791,7 @@ function ProbabilityDots({ value }: { value: number }) {
           radius={1} 
           fill={value === 6 || value === 8 ? '#E74C3C' : '#000'} 
           opacity={0.8}
+          perfectDrawEnabled={false}
         />
       ))}
     </Group>
@@ -3365,9 +4800,9 @@ function ProbabilityDots({ value }: { value: number }) {
 
 function DiceFace({ value }: { value: number }) {
   return (
-    <div className="w-14 h-14 bg-white border-2 border-black/10 rounded-2xl flex items-center justify-center shadow-inner relative overflow-hidden">
+    <div className={`w-8 h-8 lg:w-14 lg:h-14 bg-white border border-black/10 rounded-lg lg:rounded-2xl flex items-center justify-center shadow-inner relative overflow-hidden`}>
       <div className="absolute inset-0 bg-gradient-to-br from-black/[0.02] to-transparent" />
-      <span className="text-3xl font-serif font-black italic">{value}</span>
+      <span className="text-xl lg:text-3xl font-serif font-black italic">{value}</span>
     </div>
   );
 }
@@ -3390,8 +4825,8 @@ function CostCard({ label, cost }: { label: string, cost: Record<string, number>
       <h4 className="font-black text-[10px] uppercase tracking-widest mb-3 opacity-40">{label}</h4>
       <div className="flex flex-wrap gap-2">
         {Object.entries(cost).map(([res, amt]) => (
-          <div key={res} className="flex items-center gap-1 bg-white px-2 py-1 rounded-full border border-black/5 shadow-sm">
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: RESOURCE_COLORS[res as ResourceType] }} />
+          <div key={res} className="flex flex-col items-center gap-0.5 bg-white px-2 py-1 rounded-lg border border-black/5 shadow-sm min-w-[32px]">
+            <ResourceIcon type={res as ResourceType} className="w-3 h-3" />
             <span className="text-[9px] font-bold">{amt}</span>
           </div>
         ))}
@@ -3400,7 +4835,7 @@ function CostCard({ label, cost }: { label: string, cost: Record<string, number>
   );
 }
 
-function DiscardPanel({ player, amount, onDiscard }: { player: any, amount: number, onDiscard: (res: any) => void }) {
+function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void }) {
   const [selected, setSelected] = useState<Record<ResourceType, number>>({
     [ResourceType.Lumber]: 0,
     [ResourceType.Brick]: 0,
@@ -3414,60 +4849,59 @@ function DiscardPanel({ player, amount, onDiscard }: { player: any, amount: numb
 
   const handleIncrement = (res: ResourceType) => {
     if (totalSelected < amount && player.resources[res] > selected[res]) {
-      setSelected(prev => ({ ...prev, [res]: prev[res] + 1 }));
+      const newVal = { ...selected, [res]: selected[res] + 1 };
+      setSelected(newVal);
+      onChange?.(newVal);
     }
   };
 
   const handleDecrement = (res: ResourceType) => {
     if (selected[res] > 0) {
-      setSelected(prev => ({ ...prev, [res]: prev[res] - 1 }));
+      const newVal = { ...selected, [res]: selected[res] - 1 };
+      setSelected(newVal);
+      onChange?.(newVal);
     }
   };
 
   return (
-    <div className="flex flex-col gap-2 bg-red-500/10 p-4 rounded-2xl border border-red-500/20">
-      <div className="text-center mb-2">
-        <h4 className="text-red-600 font-black text-[10px] uppercase tracking-widest mb-1">强盗突袭！</h4>
-        <p className="text-xs font-bold text-red-800">
-          请弃掉 {amount} 张牌 (还需 {remaining} 张)
-        </p>
+    <div className="flex flex-col gap-1 lg:gap-2 bg-red-50 p-2 lg:p-4 rounded-[1.2rem] lg:rounded-[1.5rem] border border-red-100 shadow-inner">
+      <div className="space-y-1 lg:space-y-1.5">
+        {Object.values(ResourceType).map(res => {
+          const count = player.resources[res];
+          if (count === 0) return null;
+          return (
+            <div key={res} className="flex items-center justify-between p-1.5 lg:p-2.5 bg-white rounded-lg lg:rounded-xl shadow-sm border border-black/[0.03]">
+              <div className="flex items-center gap-1.5 lg:gap-2">
+                <ResourceIcon type={res as ResourceType} className="w-4 h-4 lg:w-5 lg:h-5" />
+                <span className="font-bold text-[10px] lg:text-xs text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
+                <span className="text-[9px] lg:text-[10px] text-slate-400 font-medium">({count})</span>
+              </div>
+              <div className="flex items-center gap-2 lg:gap-3">
+                <button 
+                  onClick={() => handleDecrement(res)}
+                  disabled={selected[res] === 0}
+                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-[10px] lg:text-xs font-black"
+                >
+                  -
+                </button>
+                <span className="font-mono font-black w-3 lg:w-4 text-center text-[10px] lg:text-sm text-slate-800">{selected[res]}</span>
+                <button 
+                  onClick={() => handleIncrement(res)}
+                  disabled={totalSelected >= amount || selected[res] >= count}
+                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-[10px] lg:text-xs font-black shadow-md shadow-black/10"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      
-      {Object.values(ResourceType).map(res => {
-        const count = player.resources[res];
-        if (count === 0) return null;
-        return (
-          <div key={res} className="flex items-center justify-between p-2 bg-white rounded-xl border border-black/5">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full shadow-sm border border-black/10" style={{ backgroundColor: RESOURCE_COLORS[res] }} />
-              <span className="font-bold text-[10px]">{RESOURCE_NAMES[res]}</span>
-              <span className="text-[10px] opacity-40">({count})</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => handleDecrement(res)}
-                disabled={selected[res] === 0}
-                className="w-5 h-5 rounded-full bg-stone-100 border border-black/10 flex items-center justify-center hover:bg-stone-200 disabled:opacity-30 transition-colors text-xs"
-              >
-                -
-              </button>
-              <span className="font-mono font-bold w-3 text-center text-[10px]">{selected[res]}</span>
-              <button 
-                onClick={() => handleIncrement(res)}
-                disabled={totalSelected >= amount || selected[res] >= count}
-                className="w-5 h-5 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:opacity-30 transition-colors text-xs"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        );
-      })}
 
       <button 
         onClick={() => onDiscard(selected)}
         disabled={remaining !== 0}
-        className="w-full mt-2 py-2 bg-red-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-md hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+        className="w-full mt-1 lg:mt-2 py-3 lg:py-4 bg-red-400 text-white rounded-xl lg:rounded-2xl text-[11px] lg:text-[13px] font-black uppercase tracking-widest shadow-lg shadow-red-200 hover:bg-red-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-1.5 lg:gap-2"
       >
         确认弃牌
       </button>
