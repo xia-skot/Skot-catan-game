@@ -1,5 +1,6 @@
 {
-  "name": "卡坦岛APP",
-  "description": "A beautiful, interactive Catan board game with Seafarers expansion support for 4-6 players.",
-  "requestFramePermissions": []
+  "name": "Catan Online",
+  "description": "A web-based implementation of the classic board game Settlers of Catan, featuring hexagonal maps, resource management, and strategic gameplay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
