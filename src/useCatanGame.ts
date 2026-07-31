@@ -1299,10 +1299,19 @@ export function useCatanGame() {
       
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
-      const total = d1 + d2;
+      return { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
+    });
+  }, []);
 
-      const next = { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
-      
+  const resolveDiceRoll = useCallback(() => {
+    setGameState(prev => {
+      if (!prev || !prev.hasRolled) return prev;
+      if (prev.phase === 'initial_dice_roll' || prev.phase === 'setup') return prev;
+      if (prev.dice[0] === 0 || prev.dice[1] === 0) return prev;
+
+      const total = prev.dice[0] + prev.dice[1];
+      const next = { ...prev };
+
       if (total === 7) {
         next.activeBuildMode = null;
         // Check for players with > 7 cards
@@ -1314,12 +1323,8 @@ export function useCatanGame() {
           }
         });
 
-        if (pendingDiscards.length > 0) {
-          next.phase = 'rolling_7';
-          next.pendingDiscards = pendingDiscards;
-        } else {
-          next.phase = 'rolling_7';
-        }
+        next.phase = 'rolling_7';
+        next.pendingDiscards = pendingDiscards;
       } else {
         // Distribute resources
         const updatedPlayers = [...next.players];
@@ -2689,6 +2694,7 @@ export function useCatanGame() {
     initGame,
     toggleBot,
     rollDice,
+    resolveDiceRoll,
     resolveInitialRoll,
     nextTurn,
     buildRoad,

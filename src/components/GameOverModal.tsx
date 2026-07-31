@@ -162,7 +162,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
             className="flex-[1.5] flex items-center justify-center gap-1.5 bg-black text-white px-4 py-3 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[8px] lg:text-[10px] hover:bg-zinc-800 transition-all shadow-xl active:scale-95"
           >
             <Home size={14} />
-            游戏大厅
+            好友约战
           </button>
         </div>
       </motion.div>

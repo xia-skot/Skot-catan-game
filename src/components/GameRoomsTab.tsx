@@ -34,7 +34,7 @@ export const GameRoomsTab: React.FC<GameRoomsTabProps> = ({ currentUser, onJoinR
       <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
         <h2 className="text-xl font-serif font-black italic text-slate-800 flex items-center gap-2">
           <Swords size={24} className="text-indigo-600" />
-          游戏房间
+          游戏大厅
         </h2>
         <button 
           onClick={fetchRooms}

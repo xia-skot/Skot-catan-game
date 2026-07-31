@@ -63,7 +63,7 @@ class SocketService {
       reconnectionDelayMax: 5000,
       timeout: 20000,
       autoConnect: true,
-      transports: ['websocket']
+      transports: ['websocket', 'polling']
     });
 
     // Re-bind all sticky listeners whenever a new socket is created
@@ -226,6 +226,14 @@ class SocketService {
 
   onReturnedToLobby(callback: () => void) {
     this.registerCallback('returned_to_lobby', callback);
+  }
+
+  updateSoundSettings(soundSettings: any) {
+    this.emit('admin_update_sound_settings', soundSettings);
+  }
+
+  onSoundSettingsUpdated(callback: (soundSettings: any) => void) {
+    this.registerCallback('sound_settings_updated', callback);
   }
 
   private registerCallback(event: string, callback: any) {

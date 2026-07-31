@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings } from 'lucide-react';
+import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings, Loader2 } from 'lucide-react';
+import { UserProfileModal } from './UserProfileModal';
 
 export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, onClose: () => void }) {
   const [data, setData] = useState<any>(null);
@@ -13,6 +14,31 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteGameId, setConfirmDeleteGameId] = useState<string | null>(null);
   const [deletingGameId, setDeletingGameId] = useState<string | null>(null);
+
+  const [inspectingUser, setInspectingUser] = useState<any | null>(null);
+  const [inspectingLoading, setInspectingLoading] = useState(false);
+
+  const handleOpenUserProfile = async (username: string) => {
+    setInspectingLoading(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/admin/user/${encodeURIComponent(username)}/info`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('获取玩家信息失败');
+      const json = await res.json();
+      if (json.user) {
+        setInspectingUser({
+          ...json.user,
+          isViewingAsAdmin: true
+        });
+      }
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setInspectingLoading(false);
+    }
+  };
 
   const fetchStats = async () => {
     setLoading(true);
@@ -200,9 +226,9 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
               <div>
                 <p className="text-sm font-black text-slate-800 mb-1 flex items-center gap-2">
                   <Settings size={18} className="text-slate-400" />
-                  大厅游戏房间显示数量
+                  大厅游戏显示数量
                 </p>
-                <p className="text-xs text-slate-500 font-medium">普通玩家在“游戏房间”列表中最多能看到的活跃房间数量</p>
+                <p className="text-xs text-slate-500 font-medium">普通玩家在“游戏大厅”列表中最多能看到的活跃房间数量</p>
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -260,7 +286,12 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
                                 autoFocus
                               />
                             ) : (
-                              <>{u.username}</>
+                              <span 
+                                className="cursor-pointer hover:text-indigo-600 hover:underline"
+                                onClick={() => handleOpenUserProfile(u.username)}
+                              >
+                                {u.username}
+                              </span>
                             )}
                             {u.role === 'admin' && <span className="ml-2 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full relative -top-0.5">管理员</span>}
                           </td>
@@ -341,90 +372,135 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
                 <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-2">
                   <span className="w-2 h-6 bg-emerald-500 rounded-full" /> 最近游戏记录
                 </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">地图/房号</th>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">所有玩家得分</th>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">回合/完成时间</th>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-right">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.latestGames.map((g: any) => {
-                        const winner = g.players?.find((p: any) => p.id === g.winnerId);
-                        return (
-                          <tr key={g._id} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-4 px-4 text-sm font-bold text-slate-700 whitespace-nowrap">{g.mapType === 'standard' ? '标准大陆' : g.mapType === 'islands' ? '群岛' : '自定义'} <span className="text-[10px] font-mono text-slate-400 block mt-1">Room: {g.roomId}</span></td>
-                            <td className="py-2 px-4 text-xs">
-                              <div className="flex flex-col gap-1">
-                                {[...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p: any, idx: number) => (
-                                  <div key={idx} className={`flex flex-col p-1.5 rounded-lg border ${p.id === g.winnerId ? 'bg-yellow-50 border-yellow-200' : 'bg-slate-50 border-slate-100'}`}>
-                                    <div className="flex items-center justify-between">
-                                      <span className={`font-bold ${p.id === g.winnerId ? 'text-yellow-700' : 'text-slate-600'}`}>
-                                        {p.name} {p.id === g.winnerId && '👑'} {p.isBot && <span className="text-[8px] bg-white px-1 rounded ml-1 text-slate-400 border border-slate-200">BOT</span>}
-                                      </span>
-                                      <span className={`font-mono font-black ${p.id === g.winnerId ? 'text-yellow-700' : 'text-slate-600'}`}>
-                                        {p.score || 0}分
-                                      </span>
-                                    </div>
-                                    {p.breakdown && (
-                                      <div className="flex items-center gap-1.5 text-[8px] font-bold text-slate-400 mt-1 flex-wrap">
-                                        <span title="村庄">🏠 {p.breakdown.settlements || 0}</span>
-                                        <span title="城市">🏰 {p.breakdown.cities || 0}</span>
-                                        {p.breakdown.longestRoad && <span title="最长道路" className="text-orange-500">🛣️</span>}
-                                        {p.breakdown.largestArmy && <span title="最大军队" className="text-red-500">⚔️</span>}
-                                        {p.breakdown.vpCards > 0 && <span title="分数卡">📄 {p.breakdown.vpCards}</span>}
-                                        {p.breakdown.islandBonus > 0 && <span title="岛屿奖励">🏝️ {p.breakdown.islandBonus}</span>}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="py-4 px-4 text-xs font-mono text-slate-500">回合 {g.turnCount || '-'}<span className="block text-[10px] text-slate-400 mt-1">{new Date(g.completedAt).toLocaleString()}</span></td>
-                            <td className="py-4 px-4 text-right flex justify-end gap-1">
-                              {confirmDeleteGameId === g._id ? (
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    onClick={() => handleDeleteGame(g._id)}
-                                    className="text-[10px] px-2 py-1 bg-red-500 text-white rounded-lg hover:bg-red-600 font-bold"
-                                  >
-                                    确认删除
-                                  </button>
-                                  <button
-                                    onClick={() => setConfirmDeleteGameId(null)}
-                                    className="text-[10px] px-2 py-1 text-slate-500 bg-slate-100 rounded-lg hover:bg-slate-200"
-                                  >
-                                    取消
-                                  </button>
-                                </div>
-                              ) : (
+                <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
+                  {data.latestGames.map((g: any) => {
+                    const sortedPlayers = [...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+                    return (
+                      <div key={g._id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group">
+                        {/* Game entry header: Time + Room ID */}
+                        <div className="flex items-center justify-between text-xs font-medium text-slate-500 border-b border-slate-100/80 pb-2 flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-800 font-bold">房间: {g.roomId}</span>
+                            <span className="text-slate-300">|</span>
+                            <span>{new Date(g.completedAt).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {confirmDeleteGameId === g._id ? (
+                              <div className="flex items-center gap-1">
                                 <button
-                                  onClick={() => setConfirmDeleteGameId(g._id)}
-                                  disabled={deletingGameId === g._id}
-                                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                                  title="删除该记录"
+                                  onClick={() => handleDeleteGame(g._id)}
+                                  className="text-[10px] px-2 py-1 bg-red-500 text-white rounded-lg hover:bg-red-600 font-bold"
                                 >
-                                  {deletingGameId === g._id ? <RotateCw size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                  确认删除
                                 </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {data.latestGames.length === 0 && (
-                        <tr><td colSpan={4} className="py-8 text-center text-slate-400 text-sm font-medium">暂无数据</td></tr>
-                      )}
-                    </tbody>
-                  </table>
+                                <button
+                                  onClick={() => setConfirmDeleteGameId(null)}
+                                  className="text-[10px] px-2 py-1 text-slate-500 bg-slate-100 rounded-lg hover:bg-slate-200"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDeleteGameId(g._id)}
+                                disabled={deletingGameId === g._id}
+                                className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                                title="删除该记录"
+                              >
+                                {deletingGameId === g._id ? <RotateCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Scoreboard horizontal table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                                <th className="py-2 px-1 text-center w-8">排名</th>
+                                <th className="py-2 px-1">玩家</th>
+                                <th className="py-2 px-1 text-center w-12">总分</th>
+                                <th className="py-2 px-1 text-center w-8">村</th>
+                                <th className="py-2 px-1 text-center w-8">城</th>
+                                <th className="py-2 px-1 text-center w-8">路</th>
+                                <th className="py-2 px-1 text-center w-8">骑</th>
+                                <th className="py-2 px-1 text-center w-8">卡</th>
+                                <th className="py-2 px-1 text-center w-8">探</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100/50">
+                              {sortedPlayers.map((p, idx) => {
+                                const isWinner = p.id === g.winnerId;
+                                const isRealPlayer = !p.isBot;
+                                return (
+                                  <tr key={idx} className={`hover:bg-slate-100/50 transition-colors ${isWinner ? 'bg-yellow-50/20' : ''}`}>
+                                    <td className="py-2 px-1 text-center">
+                                      <span className={`inline-flex w-5 h-5 items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
+                                        {idx + 1}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-1 font-semibold text-slate-700">
+                                      <span 
+                                        className={`inline-flex items-center gap-1 ${isWinner ? 'text-yellow-700 font-bold' : ''} ${isRealPlayer ? 'cursor-pointer hover:text-indigo-600 hover:underline' : ''}`}
+                                        onClick={() => isRealPlayer && handleOpenUserProfile(p.name)}
+                                      >
+                                        {p.name} {isWinner && '👑'}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-1 text-center font-mono font-black text-indigo-600">{p.score || 0}</td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.settlements ? 'text-slate-700 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.settlements || "-"}
+                                    </td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.cities ? 'text-indigo-600 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.cities ? p.breakdown.cities * 2 : "-"}
+                                    </td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.longestRoad ? 'text-orange-600 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.longestRoad ? 2 : "-"}
+                                    </td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.largestArmy ? 'text-red-600 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.largestArmy ? 2 : "-"}
+                                    </td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.vpCards ? 'text-emerald-600 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.vpCards || "-"}
+                                    </td>
+                                    <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.islandBonus ? 'text-sky-600 font-bold' : 'text-slate-300'}`}>
+                                      {p.breakdown?.islandBonus || "-"}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {data.latestGames.length === 0 && (
+                    <div className="py-8 text-center text-slate-400 text-sm font-medium border-2 border-dashed border-slate-100 rounded-2xl">
+                      暂无数据
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {inspectingUser && (
+        <UserProfileModal
+          currentUser={inspectingUser}
+          onClose={() => setInspectingUser(null)}
+          onUpdateSuccess={() => {}}
+          onPlayerClick={(name) => handleOpenUserProfile(name)}
+        />
+      )}
+      {inspectingLoading && (
+        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-xs z-50 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+        </div>
+      )}
     </motion.div>
   );
 }

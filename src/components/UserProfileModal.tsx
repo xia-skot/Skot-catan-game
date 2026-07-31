@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail } from 'lucide-react';
+import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing } from 'lucide-react';
+import { SoundSettingsModal } from './SoundSettingsModal';
 
 interface UserProfileModalProps {
   currentUser: any;
@@ -9,11 +10,13 @@ interface UserProfileModalProps {
   onLogout?: () => void;
   onAdminDashboard?: () => void;
   inline?: boolean;
+  onPlayerClick?: (username: string) => void;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, onAdminDashboard, inline = false }: UserProfileModalProps) {
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, onAdminDashboard, inline = false, onPlayerClick }: UserProfileModalProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [username, setUsername] = useState(currentUser.username || '');
+  const [showSoundSettings, setShowSoundSettings] = useState(false);
+  const [username, setUsername] = useState(currentUser?.username || '');
   const [oldPassword, setOldPassword] = useState('');
   const [password, setPassword] = useState('');
   
@@ -25,20 +28,25 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   const [gamesLoading, setGamesLoading] = useState(false);
 
   useEffect(() => {
-    if (games.length === 0 && !currentUser.isGuest) {
-      setGamesLoading(true);
-      const token = localStorage.getItem('catan_auth_token');
-      fetch('/api/user/games', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.games) setGames(data.games);
-      })
-      .catch(console.error)
-      .finally(() => setGamesLoading(false));
-    }
-  }, [currentUser]);
+    setGames([]);
+    if (!currentUser?.username) return;
+    
+    setGamesLoading(true);
+    const token = localStorage.getItem('catan_auth_token');
+    const fetchUrl = currentUser.isViewingAsAdmin
+      ? `/api/admin/user/${encodeURIComponent(currentUser.username)}/games`
+      : '/api/user/games';
+      
+    fetch(fetchUrl, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    .then(res => res.ok && res.headers.get('content-type')?.includes('application/json') ? res.json() : null)
+    .then(data => {
+      if (data?.games) setGames(data.games);
+    })
+    .catch(console.error)
+    .finally(() => setGamesLoading(false));
+  }, [currentUser?.username]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,6 +74,10 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         },
         body: JSON.stringify({ username, oldPassword, password })
       });
+      const ct = res.headers.get('content-type');
+      if (!ct || !ct.includes('application/json')) {
+        throw new Error(`服务器响应异常 (${res.status})`);
+      }
       const data = await res.json();
       
       if (!res.ok) {
@@ -116,16 +128,21 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                <ArrowLeft size={16} className="mr-1" /> 返回
              </button>
           ) : (
-            <h2 className={`font-black text-slate-800 tracking-tight ${inline ? 'text-xl' : 'text-2xl'}`}>我的</h2>
+             <h2 className={`font-black text-slate-800 tracking-tight ${inline ? 'text-xl' : 'text-2xl'}`}>
+               {currentUser?.isViewingAsAdmin ? '玩家战绩' : '我的'}
+             </h2>
           )}
           
-          {!isEditing && (
+          {!isEditing && !currentUser?.isViewingAsAdmin && (
              <div className="flex items-center gap-2">
                {currentUser?.role === 'admin' && onAdminDashboard && (
                  <button onClick={onAdminDashboard} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="管理面板">
                    <Settings size={18} />
                  </button>
                )}
+               <button onClick={() => setShowSoundSettings(true)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="声音设置">
+                 <BellRing size={18} />
+               </button>
                <button onClick={() => setIsEditing(true)} disabled={currentUser.isGuest} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed" title="修改资料">
                  <Edit3 size={18} />
                </button>
@@ -295,6 +312,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     </div>
                   ) : (
                     games.map((g, i) => {
+                      const sortedPlayers = [...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
                       const isWin = g.winnerId && g.players?.find((p: any) => p.name === currentUser.username)?.id === g.winnerId;
                       return (
                         <div key={i} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group">
@@ -303,36 +321,68 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                               <Trophy size={16} className="text-yellow-500" />
                             </div>
                           )}
-                          <div className="flex items-center justify-between text-[11px] text-slate-400">
-                            <span className="flex items-center gap-1 font-mono"><Clock size={10} /> {new Date(g.completedAt).toLocaleString()}</span>
-                            <span className="font-bold flex items-center gap-1"><Swords size={10}/> {g.turnCount || 0} 回合</span>
+                          <div className="flex items-center justify-between text-xs font-medium text-slate-500 border-b border-slate-100/80 pb-2">
+                            <span className="text-slate-800 font-bold">房间: {g.roomId}</span>
+                            <span className="font-mono text-[10px]">{new Date(g.completedAt).toLocaleString()}</span>
                           </div>
-                          <div className="flex flex-col gap-2">
-                            {[...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p: any, idx: number) => (
-                               <div key={idx} className="flex flex-col bg-white px-3 py-2 rounded-lg text-sm border border-slate-100 shadow-sm relative overflow-hidden gap-1.5">
-                                 <div className="flex items-center justify-between">
-                                   <div className="flex items-center gap-2 relative z-10">
-                                     <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
-                                       {idx + 1}
-                                     </span>
-                                     <span className={`font-bold text-xs truncate max-w-[120px] ${p.id === g.winnerId ? 'text-yellow-600' : 'text-slate-600'}`}>
-                                       {p.name} {p.id === g.winnerId && '👑'} {p.isBot && <span className="opacity-50 text-[9px] bg-slate-100 px-1 rounded ml-1">BOT</span>}
-                                     </span>
-                                   </div>
-                                   <span className="font-mono font-black text-indigo-600 text-xs relative z-10">{p.score || 0} 分</span>
-                                 </div>
-                                 {p.breakdown && (
-                                   <div className="flex items-center gap-2 text-[9px] font-bold text-slate-400 border-t border-slate-50 pt-1.5 flex-wrap">
-                                     <span title="村庄">🏠 {p.breakdown.settlements || 0}</span>
-                                     <span title="城市">🏰 {p.breakdown.cities || 0}</span>
-                                     {p.breakdown.longestRoad && <span title="最长道路" className="text-orange-500">🛣️</span>}
-                                     {p.breakdown.largestArmy && <span title="最大军队" className="text-red-500">⚔️</span>}
-                                     {p.breakdown.vpCards > 0 && <span title="分数卡">📄 {p.breakdown.vpCards}</span>}
-                                     {p.breakdown.islandBonus > 0 && <span title="岛屿奖励">🏝️ {p.breakdown.islandBonus}</span>}
-                                   </div>
-                                 )}
-                               </div>
-                            ))}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                                  <th className="py-2 px-1 text-center w-8">排名</th>
+                                  <th className="py-2 px-1">玩家</th>
+                                  <th className="py-2 px-1 text-center w-12">总分</th>
+                                  <th className="py-2 px-1 text-center w-8">村</th>
+                                  <th className="py-2 px-1 text-center w-8">城</th>
+                                  <th className="py-2 px-1 text-center w-8">路</th>
+                                  <th className="py-2 px-1 text-center w-8">骑</th>
+                                  <th className="py-2 px-1 text-center w-8">卡</th>
+                                  <th className="py-2 px-1 text-center w-8">探</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100/50">
+                                {sortedPlayers.map((p, idx) => {
+                                  const isWinner = p.id === g.winnerId;
+                                  const isRealPlayer = !p.isBot;
+                                  return (
+                                    <tr key={idx} className={`hover:bg-slate-100/50 transition-colors ${isWinner ? 'bg-yellow-50/20' : ''}`}>
+                                      <td className="py-2 px-1 text-center">
+                                        <span className={`inline-flex w-5 h-5 items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
+                                          {idx + 1}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-1 font-semibold text-slate-700">
+                                        <span 
+                                          className={`inline-flex items-center gap-1 ${isWinner ? 'text-yellow-700 font-bold' : ''} ${isRealPlayer && onPlayerClick ? 'cursor-pointer hover:text-indigo-600 hover:underline' : ''}`}
+                                          onClick={() => isRealPlayer && onPlayerClick && onPlayerClick(p.name)}
+                                        >
+                                          {p.name} {isWinner && '👑'}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-1 text-center font-mono font-black text-indigo-600">{p.score || 0}</td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.settlements ? 'text-slate-700 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.settlements || "-"}
+                                      </td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.cities ? 'text-indigo-600 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.cities ? p.breakdown.cities * 2 : "-"}
+                                      </td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.longestRoad ? 'text-orange-600 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.longestRoad ? 2 : "-"}
+                                      </td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.largestArmy ? 'text-red-600 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.largestArmy ? 2 : "-"}
+                                      </td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.vpCards ? 'text-emerald-600 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.vpCards || "-"}
+                                      </td>
+                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.islandBonus ? 'text-sky-600 font-bold' : 'text-slate-300'}`}>
+                                        {p.breakdown?.islandBonus || "-"}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       );
@@ -345,7 +395,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         )}
         
         {/* Logout Button */}
-        {!isEditing && onLogout && (
+        {!isEditing && onLogout && !currentUser?.isViewingAsAdmin && (
            <div className="pt-2 pb-6">
              <button
                onClick={onLogout}
@@ -360,7 +410,16 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   );
 
   if (inline) {
-    return content;
+    return (
+      <>
+        {content}
+        <SoundSettingsModal 
+          isOpen={showSoundSettings} 
+          onClose={() => setShowSoundSettings(false)} 
+          isAdmin={currentUser?.role === 'admin'}
+        />
+      </>
+    );
   }
 
   return (
@@ -371,6 +430,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         onClick={onClose}
       />
       {content}
+      <SoundSettingsModal 
+        isOpen={showSoundSettings} 
+        onClose={() => setShowSoundSettings(false)} 
+        isAdmin={currentUser?.role === 'admin'}
+      />
     </div>
   );
 }

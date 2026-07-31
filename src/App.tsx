@@ -5,6 +5,7 @@ import { HexType, ResourceType, DevCardType, MapType, GameState } from './types'
 import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence } from 'motion/react';
+import { audioService } from './audioService';
 import { 
   Dices, 
   User, 
@@ -20,6 +21,7 @@ import {
   Settings,
   X,
   BookOpen,
+  Bell,
   Users,
   Play,
   Eye,
@@ -48,6 +50,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { UserProfileModal } from './components/UserProfileModal';
 import { RulesModal } from './components/RulesModal';
+import { SoundSettingsModal } from './components/SoundSettingsModal';
 import { GameRoomsTab } from './components/GameRoomsTab';
 import { socketService, RoomState } from './socketService';
 import { FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, RESOURCE_ICONS } from './images';
@@ -447,6 +450,64 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......" }:
 }
 
 export default function App() {
+  const [showSoundModal, setShowSoundModal] = useState(false);
+
+  useEffect(() => {
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.no-click-sound')) return;
+      // Check if it's a button or inside a button
+      if (target.closest('button') || target.closest('[role="button"]') || target.closest('.cursor-pointer')) {
+        audioService.play('click');
+      }
+    };
+    document.addEventListener('click', handleGlobalClick);
+    return () => {
+      document.removeEventListener('click', handleGlobalClick);
+    };
+  }, []);
+
+  useEffect(() => {
+    const fetchSoundSettings = async () => {
+      try {
+        const res = await fetch('/api/sound-settings');
+        if (res.ok) {
+          const ct = res.headers.get('content-type');
+          if (ct && ct.includes('application/json')) {
+            const data = await res.json();
+            if (data?.soundSettings) {
+              audioService.setEqualizer(data.soundSettings);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Failed to fetch sound settings:', err);
+      }
+    };
+
+    fetchSoundSettings();
+
+    socketService.onSoundSettingsUpdated((settings) => {
+      if (settings && typeof settings === 'object') {
+        audioService.setEqualizer(settings);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const startBgmOnGesture = () => {
+      audioService.playBgm();
+      document.removeEventListener('click', startBgmOnGesture);
+      document.removeEventListener('keydown', startBgmOnGesture);
+    };
+    document.addEventListener('click', startBgmOnGesture);
+    document.addEventListener('keydown', startBgmOnGesture);
+    return () => {
+      document.removeEventListener('click', startBgmOnGesture);
+      document.removeEventListener('keydown', startBgmOnGesture);
+    };
+  }, []);
+
   const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
   const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
   
@@ -476,6 +537,7 @@ export default function App() {
     initGame, 
     toggleBot,
     rollDice, 
+    resolveDiceRoll,
     resolveInitialRoll,
     nextTurn, 
     buildRoad, 
@@ -510,9 +572,147 @@ export default function App() {
 
   const [hasResolvedGameOver, setHasResolvedGameOver] = useState(false);
 
+  const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const isSpectator = useMemo(() => {
+    if (!roomState) return false;
+    return roomState.spectators?.some(s => s.id === socketService.playerId);
+  }, [roomState, socketService.playerId]);
+
+  // Dice rolling animation states
+  const [isDiceRolling, setIsDiceRolling] = useState(false);
+  const [rollingDiceValues, setRollingDiceValues] = useState<[number, number]>([1, 1]);
+  const [diceAnimId, setDiceAnimId] = useState<number>(0);
+
+  const prevDiceRef = useRef<[number, number] | null>(null);
+  const prevHasRolledRef = useRef<boolean>(false);
+
+  // Freeze resource card updates during dice roll animation
+  const [displayedResourcesMap, setDisplayedResourcesMap] = useState<Record<number, Record<ResourceType, number>>>({});
+  const prevPlayerResourcesRef = useRef<Record<number, Record<ResourceType, number>>>({});
+
+  const prevPhaseRef = useRef<string>("");
+  const prevBuildCountRef = useRef<number>(-1);
+  
+  useEffect(() => {
+    if (!gameState) return;
+    
+    // Pirate sound logic
+    if (gameState.phase !== prevPhaseRef.current) {
+      const enteredPirateMode = (gameState.phase === 'robber' || gameState.phase === 'discard') && prevPhaseRef.current !== 'discard' && prevPhaseRef.current !== 'robber';
+      const leftPirateMode = (prevPhaseRef.current === 'robber' || prevPhaseRef.current === 'discard') && gameState.phase !== 'discard' && gameState.phase !== 'robber';
+
+      if (enteredPirateMode) {
+        audioService.play('pirate', true); // loop
+      } else if (leftPirateMode) {
+        audioService.stop('pirate');
+      }
+      prevPhaseRef.current = gameState.phase;
+    }
+
+    // Build sound logic
+    const currentBuildCount = (gameState.settlements?.length || 0) + (gameState.cities?.length || 0) + (gameState.roads?.length || 0) + (gameState.ships?.length || 0);
+    if (prevBuildCountRef.current !== -1 && currentBuildCount > prevBuildCountRef.current) {
+      audioService.play('build');
+    }
+    prevBuildCountRef.current = currentBuildCount;
+    
+  }, [gameState]);
+
+  const [diceSum, setDiceSum] = useState<string>("?");
+  useEffect(() => {
+    // If we are currently rolling, always show "?"
+    if (isDiceRolling) {
+      setDiceSum("?");
+      return;
+    }
+
+    // Otherwise, show the sum if we have dice values and hasRolled is true
+    if (gameState?.dice && gameState.hasRolled && gameState.dice[0] > 0) {
+      setDiceSum(String(gameState.dice[0] + gameState.dice[1]));
+    } else {
+      setDiceSum("?");
+    }
+  }, [isDiceRolling, gameState?.dice?.[0], gameState?.dice?.[1], gameState?.hasRolled]);
+
+  useEffect(() => {
+    if (!gameState) return;
+    
+    // Always keep the ref updated with the latest state when NOT rolling
+    if (!isDiceRolling) {
+      const map: Record<number, Record<ResourceType, number>> = {};
+      gameState.players.forEach(p => {
+        map[p.id] = { ...p.resources };
+      });
+      prevPlayerResourcesRef.current = map;
+      setDisplayedResourcesMap(map);
+    } else if (Object.keys(prevPlayerResourcesRef.current).length === 0) {
+      // If we just joined and it's already rolling, initialize with current state as fallback
+      const map: Record<number, Record<ResourceType, number>> = {};
+      gameState.players.forEach(p => {
+        map[p.id] = { ...p.resources };
+      });
+      prevPlayerResourcesRef.current = map;
+      setDisplayedResourcesMap(map);
+    }
+  }, [gameState, isDiceRolling]);
+
+  const rollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!gameState) return;
+
+    const hasRolled = gameState.hasRolled;
+    const currentDice = gameState.dice;
+
+    const wasFalseNowTrue = !prevHasRolledRef.current && hasRolled;
+    const diceChanged = prevDiceRef.current && 
+      (prevDiceRef.current[0] !== currentDice[0] || prevDiceRef.current[1] !== currentDice[1]) && 
+      (currentDice[0] > 0 && currentDice[1] > 0);
+
+    // Update refs immediately so subsequent re-renders don't keep triggered state
+    prevHasRolledRef.current = hasRolled;
+    prevDiceRef.current = currentDice ? [...currentDice] : null;
+
+    console.log('Dice useEffect triggered', { wasFalseNowTrue, diceChanged, phase: gameState.phase, hasRolled, currentDice: currentDice });
+    if (wasFalseNowTrue || diceChanged) {
+      // Freeze resources to pre-roll snapshot immediately
+      if (Object.keys(prevPlayerResourcesRef.current).length > 0) {
+        setDisplayedResourcesMap(prevPlayerResourcesRef.current);
+      }
+      setIsDiceRolling(true);
+      audioService.play('dice');
+      const newAnimId = Date.now();
+      setDiceAnimId(newAnimId);
+      
+      if (rollingTimerRef.current) {
+        clearTimeout(rollingTimerRef.current);
+      }
+
+      rollingTimerRef.current = setTimeout(() => {
+        setIsDiceRolling(false);
+        audioService.stop('dice');
+        rollingTimerRef.current = null;
+        // Only active player (who is not a bot in their own client, or the host handling bots) 
+        // should resolve the dice roll to push to others. 
+        // Spectators should just wait for the sync.
+        if (!isSpectator) {
+          resolveDiceRoll();
+        }
+      }, 2500); // 2.5 seconds animation duration
+    }
+  }, [gameState?.hasRolled, gameState?.dice?.[0], gameState?.dice?.[1], gameState?.phase, isSpectator, isDiceRolling, resolveDiceRoll]);
+
+  useEffect(() => {
+    return () => {
+      if (rollingTimerRef.current) clearTimeout(rollingTimerRef.current);
+    };
+  }, []);
+
   const handleReturnToLobby = (e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
+    
+    setShowSailingScreen(false);
     
     const roomId = roomState?.roomId || inputRoomId;
     let shouldClearRoom = true;
@@ -554,6 +754,7 @@ export default function App() {
     setShowGameOver(false);
     setHasResolvedGameOver(false);
     setIsJoinedLobby(false);
+    setShowSailingScreen(false);
     syncGameState(null as any);
     resetGame();
     setIsStartingGame(false);
@@ -567,13 +768,8 @@ export default function App() {
   const isRemoteUpdateRef = useRef(false);
   const playerBarRef = useRef<HTMLDivElement>(null);
   
-  const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
-  const isSpectator = useMemo(() => {
-    if (!roomState) return false;
-    return roomState.spectators?.some(s => s.id === socketService.playerId);
-  }, [roomState, socketService.playerId]);
   
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
@@ -585,14 +781,27 @@ export default function App() {
         try {
           const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }});
           if (res.ok) {
-            const data = await res.json();
-            setCurrentUser(data.user);
-            socketService.playerId = data.user.id;
-            localStorage.setItem('catan_player_name', data.user.username);
+            const ct = res.headers.get('content-type');
+            if (ct && ct.includes('application/json')) {
+              const data = await res.json();
+              if (data && data.user) {
+                setCurrentUser(data.user);
+                socketService.playerId = data.user.id;
+                localStorage.setItem('catan_player_name', data.user.username);
+              } else {
+                localStorage.removeItem('catan_auth_token');
+              }
+            } else {
+              localStorage.removeItem('catan_auth_token');
+            }
           } else {
+            console.warn('[App] Auth check failed:', res.status);
             localStorage.removeItem('catan_auth_token');
           }
-        } catch (err) {}
+        } catch (err) {
+          console.error('[App] Auth check error:', err);
+          localStorage.removeItem('catan_auth_token');
+        }
       }
       setIsAuthLoading(false);
     };
@@ -718,6 +927,7 @@ export default function App() {
       setHasResolvedGameOver(false);
       setIsJoinedLobby(false); // Force back to room search screen
       setIsStartingGame(false);
+      setShowSailingScreen(false);
       
       // 4. Remove room param from URL
       window.history.replaceState({}, '', window.location.pathname);
@@ -882,28 +1092,30 @@ export default function App() {
     : gameState?.currentPlayerIndex ?? 0;
 
   const botProcessorId = useMemo(() => {
-    if (!roomState) return null;
+    if (!roomState) return socketService.playerId;
+    // 1. Host (if not disconnected)
     const hostPlayer = roomState.players.find(p => p.id === roomState.hostId);
-    if (hostPlayer && !hostPlayer.disconnected) return roomState.hostId;
-    const fallback = roomState.players.find(p => !p.disconnected && !p.isBot);
-    return fallback ? fallback.id : null;
+    if (hostPlayer && !hostPlayer.disconnected) return hostPlayer.id;
+    
+    // 2. Any other non-bot non-disconnected player
+    const fallbackPlayer = roomState.players.find(p => !p.disconnected && !p.isBot);
+    if (fallbackPlayer) return fallbackPlayer.id;
+    
+    // 3. Any non-disconnected spectator (important for bot-only games)
+    const fallbackSpectator = roomState.spectators?.find(s => !s.disconnected);
+    if (fallbackSpectator) return fallbackSpectator.id;
+    
+    return roomState.players[0]?.id || 0;
   }, [roomState]);
 
   const amIActivePlayer = useMemo(() => {
     if (!gameState || isSpectator) return false;
     const player = gameState.players[activePlayerId];
     if (!player) return false;
-    
-    // If it's a bot's turn, only the host "is" the active player for processing purposes
-    if (player.isBot) {
-      if (!botProcessorId && !roomState) {
-        return !gameState.players[0].sessionId || gameState.players[0].sessionId === socketService.playerId;
-      }
-      return botProcessorId === socketService.playerId;
-    }
-    
-    return player.sessionId === socketService.playerId;
-  }, [gameState, activePlayerId, botProcessorId, roomState, isSpectator]);
+    if (player.isBot) return false; // Bot is never a human active player
+    if (!roomState) return true; // Single player mode
+    return player.sessionId === socketService.playerId || player.id === myPlayerIndex;
+  }, [gameState, activePlayerId, isSpectator, roomState, myPlayerIndex]);
 
   const me = useMemo(() => {
     if (!gameState || myPlayerIndex === -1) return gameState?.players[0]; 
@@ -932,10 +1144,10 @@ export default function App() {
   }, [gameState?.lastDevCardEvent?.timestamp]);
 
   const isMyHumanTurn = useMemo(() => {
-    if (!gameState || isSpectator) return false;
+    if (!gameState || isSpectator || isDiceRolling) return false;
     const player = gameState.players[activePlayerId];
     return player?.sessionId === socketService.playerId;
-  }, [gameState, activePlayerId, isSpectator]);
+  }, [gameState, activePlayerId, isSpectator, isDiceRolling]);
 
   const canBuild = ((gameState?.phase === 'main' && gameState.hasRolled) || 
     gameState?.phase === 'setup' || 
@@ -943,9 +1155,10 @@ export default function App() {
 
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const isPortrait = windowSize.width < windowSize.height;
+  const shouldApplyPortraitRotation = isPortrait && !isSpectator;
   const logicalWindowSize = {
-    width: isPortrait ? windowSize.height : windowSize.width,
-    height: isPortrait ? windowSize.width : windowSize.height
+    width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
+    height: shouldApplyPortraitRotation ? windowSize.width : windowSize.height
   };
   const isMobile = logicalWindowSize.width < 1024;
 
@@ -1512,9 +1725,14 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/maps')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        if (ct && ct.includes('application/json')) return res.json();
+        return null;
+      })
       .then(data => {
-         if (data.maps) setDbMaps(data.maps);
+         if (data?.maps) setDbMaps(data.maps);
       })
       .catch(console.error);
   }, []);
@@ -1602,7 +1820,9 @@ export default function App() {
           body: JSON.stringify({ name, mapData: newMap })
         });
         if (res.ok) {
-          fetch('/api/maps').then(r => r.json()).then(d => setDbMaps(d.maps || []));
+          fetch('/api/maps')
+            .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
+            .then(d => d && setDbMaps(d.maps || []));
           alert('地图已保存到官方云图册！');
           setMapSaveDialog(null);
           return;
@@ -1702,7 +1922,9 @@ export default function App() {
         body: JSON.stringify({ name: map.name, mapData: map })
       });
       if (res.ok) {
-        fetch('/api/maps').then(r => r.json()).then(d => setDbMaps(d.maps || []));
+        fetch('/api/maps')
+          .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
+          .then(d => d && setDbMaps(d.maps || []));
         alert('地图已成功上传到官方云图册！');
       }
     } catch (e) {
@@ -2058,76 +2280,137 @@ export default function App() {
     return () => clearInterval(interval);
   }, [gameState, botProcessorId, nextTurn]);
 
-  // --- BOT LOGIC ---
-  const isProcessingBotRef = useRef(false);
-  const botTurnStartRef = useRef<number>(0);
-  const lastBotStateKeyRef = useRef<string>('');
+  // --- PARALLEL BOT ACTIONS (e.g. Discarding, Trade Responses) ---
+  const processedDiscardsRef = useRef<Record<number, boolean>>({});
 
   useEffect(() => {
-    if (!gameState || isProcessingBotRef.current) return;
-    const activePlayer = gameState.players[activePlayerId];
-    if (!activePlayer?.isBot) {
-        lastBotStateKeyRef.current = '';
-        return;
+    if (!gameState || !roomState || isDiceRolling || gameState.phase !== 'discard') {
+      processedDiscardsRef.current = {};
+      return;
     }
     
     // Use roomState host check to ensure only one client processes bots
     const isBotProcessor = botProcessorId === socketService.playerId;
     if (!isBotProcessor) return;
 
-    const currentStateKey = `${activePlayerId}-${gameState.phase}-${gameState.hasRolled}-${gameState.roads.length}-${gameState.settlements.length}-${gameState.ships.length}-${Object.values(activePlayer.resources).join(',')}`;
-    if (lastBotStateKeyRef.current !== currentStateKey) {
+    const botPendingDiscards = gameState.pendingDiscards.filter(pd => gameState.players[pd.playerId]?.isBot);
+    
+    botPendingDiscards.forEach(pd => {
+      if (!processedDiscardsRef.current[pd.playerId]) {
+        processedDiscardsRef.current[pd.playerId] = true;
+        
+        // We use a small timeout to avoid hammering the state and simulate thinking
+        setTimeout(() => {
+          const player = gameState.players[pd.playerId];
+          const resPool = Object.entries(player.resources).flatMap(([res, count]) => Array(count).fill(res as ResourceType));
+          const toDiscard: Record<ResourceType, number> = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
+          
+          let amountToDiscard = pd.amount;
+          for (let i = 0; i < amountToDiscard; i++) {
+            if (resPool.length > 0) {
+              const idx = Math.floor(Math.random() * resPool.length);
+              toDiscard[resPool[idx]]++;
+              resPool.splice(idx, 1);
+            }
+          }
+          discardCards(pd.playerId, toDiscard);
+        }, 1500 + (Math.random() * 1000));
+      }
+    });
+  }, [gameState?.phase, gameState?.pendingDiscards, botProcessorId, isDiceRolling, discardCards, gameState?.players, roomState]);
+
+  // --- BOT LOGIC ---
+  const isProcessingBotRef = useRef(false);
+  const botTurnStartRef = useRef<number>(Date.now());
+  const lastBotStateKeyRef = useRef<string>('');
+  const discardedThisTurnRef = useRef<boolean>(false);
+  const prevPlayerIndexRef = useRef<number>(-1);
+  const botPrevHasRolledRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!gameState) return;
+    const isNewPlayer = gameState.currentPlayerIndex !== prevPlayerIndexRef.current;
+    const justRolled = gameState.hasRolled && !botPrevHasRolledRef.current;
+    if (isNewPlayer || justRolled) {
       botTurnStartRef.current = Date.now();
-      lastBotStateKeyRef.current = currentStateKey;
     }
+    prevPlayerIndexRef.current = gameState.currentPlayerIndex;
+    botPrevHasRolledRef.current = gameState.hasRolled;
+  }, [gameState?.currentPlayerIndex, gameState?.hasRolled]);
+
+  useEffect(() => {
+    if (!gameState || isProcessingBotRef.current || isDiceRolling) return;
+    const activePlayer = gameState.players[activePlayerId];
+    if (!activePlayer?.isBot) {
+        lastBotStateKeyRef.current = '';
+        discardedThisTurnRef.current = false;
+        return;
+    }
+    
+    // Reset discard tracker if phase changes to something not discard
+    if (gameState.phase !== 'discard') {
+      discardedThisTurnRef.current = false;
+    }
+    
+    // Use roomState host check to ensure only one client processes bots
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    if (isDiceRolling) return; // Wait for dice rolling animation to finish!
 
     isProcessingBotRef.current = true;
     const timer = setTimeout(() => {
       isProcessingBotRef.current = false;
-      const { phase } = gameState;
+      if (!gameState || isDiceRolling) return;
+      const activePlayer = gameState.players[activePlayerId];
+      if (!activePlayer?.isBot) return;
 
-      if (phase === 'initial_dice_roll') {
-        rollDice();
-        return;
-      }
+      const { phase, hasRolled } = gameState;
 
-      if (phase === 'setup') {
-        const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
-        const setupRoadsThisTurn = gameState.roads.filter(r => r.playerId === activePlayerId).length;
-        const setupShipsThisTurn = gameState.ships.filter(s => s.playerId === activePlayerId).length;
-        const totalPaths = setupRoadsThisTurn + setupShipsThisTurn;
+      if (isDiceRolling) return; // Still rolling!
 
-        if (setupSettlementsThisTurn === totalPaths) {
-          // Build settlement
-          const validVertices = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
-          if (validVertices.length > 0) {
-            const scoredVertices = validVertices.map(v => {
-              const adjacentHexes = v.hexIds.map(id => gameState.board.find(h => h.id === id)).filter(Boolean);
-              const probSum = adjacentHexes.reduce((sum, hex) => {
-                const dots = (hex!.type === HexType.Sea || hex!.type === HexType.Desert) ? 0 : 6 - Math.abs(7 - hex!.number);
-                return sum + dots;
-              }, 0);
-              return { vertex: v, score: probSum + Math.random() * 2 };
-            });
-            scoredVertices.sort((a, b) => b.score - a.score);
-            const bestV = scoredVertices[0].vertex;
-            buildSettlement(bestV.id, bestV.hexIds);
-          }
-        } else {
-          // Build road or ship
-          const lastSettlement = gameState.settlements.filter(s => s.playerId === activePlayerId).pop();
-          if (lastSettlement) {
-            const validRoadEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'road'));
-            const validShipEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'ship'));
-            
-            if (validRoadEdges.length > 0) {
-              buildRoad(validRoadEdges[Math.floor(Math.random() * validRoadEdges.length)].id);
-            } else if (validShipEdges.length > 0) {
-              buildShip(validShipEdges[Math.floor(Math.random() * validShipEdges.length)].id);
-            }
+    if (phase === 'initial_dice_roll') {
+      rollDice();
+      return;
+    }
+
+    if (phase === 'setup') {
+      const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+      const setupRoadsThisTurn = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+      const setupShipsThisTurn = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+      const totalPaths = setupRoadsThisTurn + setupShipsThisTurn;
+
+      if (setupSettlementsThisTurn === totalPaths) {
+        // Build settlement
+        const validVertices = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
+        if (validVertices.length > 0) {
+          const scoredVertices = validVertices.map(v => {
+            const adjacentHexes = v.hexIds.map(id => gameState.board.find(h => h.id === id)).filter(Boolean);
+            const probSum = adjacentHexes.reduce((sum, hex) => {
+              const dots = (hex!.type === HexType.Sea || hex!.type === HexType.Desert) ? 0 : 6 - Math.abs(7 - hex!.number);
+              return sum + dots;
+            }, 0);
+            return { vertex: v, score: probSum + Math.random() * 2 };
+          });
+          scoredVertices.sort((a, b) => b.score - a.score);
+          const bestV = scoredVertices[0].vertex;
+          buildSettlement(bestV.id, bestV.hexIds);
+        }
+      } else {
+        // Build road or ship
+        const lastSettlement = gameState.settlements.filter(s => s.playerId === activePlayerId).pop();
+        if (lastSettlement) {
+          const validRoadEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'road'));
+          const validShipEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'ship'));
+          
+          if (validRoadEdges.length > 0) {
+            buildRoad(validRoadEdges[Math.floor(Math.random() * validRoadEdges.length)].id);
+          } else if (validShipEdges.length > 0) {
+            buildShip(validShipEdges[Math.floor(Math.random() * validShipEdges.length)].id);
           }
         }
-      } else if (phase === 'main' || phase === 'road_building') {
+      }
+    } else if (phase === 'main' || phase === 'road_building') {
         if (Date.now() - botTurnStartRef.current > 10000) {
            nextTurn();
            return;
@@ -2218,20 +2501,6 @@ export default function App() {
         }
 
         nextTurn();
-      } else if (phase === 'discard') {
-        const pendingDiscard = gameState.pendingDiscards.find(p => p.playerId === activePlayerId);
-        if (pendingDiscard) {
-          const resPool = Object.entries(activePlayer.resources).flatMap(([res, count]) => Array(count).fill(res as ResourceType));
-          const toDiscard: Record<ResourceType, number> = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
-          for (let i = 0; i < pendingDiscard.amount; i++) {
-            if (resPool.length > 0) {
-              const idx = Math.floor(Math.random() * resPool.length);
-              toDiscard[resPool[idx]]++;
-              resPool.splice(idx, 1);
-            }
-          }
-          discardCards(activePlayerId, toDiscard);
-        }
       } else if (phase === 'robber' || phase === 'robber_move') {
         // Find a hex where opponent has buildings and move robber there
         const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.id !== gameState.robberHexId);
@@ -2239,12 +2508,33 @@ export default function App() {
         const validSeaH = gameState.board.filter(h => h.type === HexType.Sea && h.id !== gameState.pirateHexId);
 
         if (phase === 'robber_move' || phase === 'robber') {
-           // Decide between robber and pirate move if applicable, here we just pick one
+           // Decide between robber and pirate move if applicable
            const activePlayer = gameState.players[activePlayerId];
-           // Simple logic: if we have coastal settlements, maybe move pirate? 
-           // For now, let's just move the robber to a productive opponent hex.
+           const preferPirate = gameState.mapType !== 'standard' && validSeaH.length > 0 && (Math.random() < 0.5 || validH.length === 0);
            
-           if (validH.length > 0) {
+           if (preferPirate) {
+              const scoredSea = validSeaH.map(h => {
+                 let score = 0;
+                 const px = Math.sqrt(3) * 40 * (h.q + h.r / 2);
+                 const py = 80 * 0.75 * h.r;
+                 const hexEdges = [];
+                 for (let i = 0; i < 6; i++) {
+                   const a1 = (Math.PI / 180) * (60 * i + 30);
+                   const a2 = (Math.PI / 180) * (60 * ((i + 1) % 6) + 30);
+                   const x1 = px + 40 * Math.cos(a1);
+                   const y1 = py + 40 * Math.sin(a1);
+                   const x2 = px + 40 * Math.cos(a2);
+                   const y2 = py + 40 * Math.sin(a2);
+                   hexEdges.push([`${Math.round(x1)},${Math.round(y1)}`, `${Math.round(x2)},${Math.round(y2)}`].sort().join('|'));
+                 }
+                 const adjShips = gameState.ships.filter(s => hexEdges.includes(s.edgeId) && s.playerId !== activePlayerId);
+                 score += adjShips.length * 5;
+                 return { id: h.id, score: score + Math.random() };
+              });
+              scoredSea.sort((a,b) => b.score - a.score);
+              movePirate(scoredSea[0].id);
+              return;
+           } else if (validH.length > 0) {
               const scoredH = validH.map(h => {
                  let score = 0;
                  const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
@@ -2257,6 +2547,10 @@ export default function App() {
               });
               scoredH.sort((a,b) => b.score - a.score);
               moveRobber(scoredH[0].id);
+              return;
+           } else if (validSeaH.length > 0) {
+              movePirate(validSeaH[0].id);
+              return;
            }
         }
       } else if (phase === 'stealing') {
@@ -2279,13 +2573,13 @@ export default function App() {
         // Fallback for other subphases
         nextTurn();
       }
-    }, 1000);
+    }, 1200);
 
     return () => {
       clearTimeout(timer);
       isProcessingBotRef.current = false;
     };
-  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, botProcessorId]);
+  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, botProcessorId, isDiceRolling]);
 
   // --- INITIAL DICE ROLL DELAY LOGIC ---
   useEffect(() => {
@@ -2293,7 +2587,7 @@ export default function App() {
       if (botProcessorId === socketService.playerId) {
         const timer = setTimeout(() => {
           resolveInitialRoll();
-        }, 1200);
+        }, 3600); // 2500ms roll animation + 1100ms viewing time
         return () => clearTimeout(timer);
       }
     }
@@ -2516,11 +2810,8 @@ export default function App() {
       )}
       <div style={flexibleContainerStyle}>
         <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative selection:bg-indigo-600 selection:text-white overflow-hidden">
-          {/* Decorative elements */}
-        <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none opacity-20 z-0">
-          <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-indigo-200 rounded-full blur-[120px]" />
-          <div className="absolute top-[60%] -right-[10%] w-[50%] h-[50%] bg-emerald-100 rounded-full blur-[100px]" />
-        </div>
+          {/* Decorative elements without CSS blurs to prevent hardware-accelerated color banding/uneven blocks */}
+          <div className="absolute inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_0%_0%,rgba(199,210,254,0.25),rgba(199,210,254,0)_45%),radial-gradient(circle_at_100%_70%,rgba(209,250,229,0.3),rgba(209,250,229,0)_50%)] bg-slate-50" />
 
         <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
         </div>
@@ -2597,12 +2888,18 @@ export default function App() {
                  }}
                  onSpectateRoom={(roomId) => {
                    setInputRoomId(roomId);
-                   setActiveLobbyTab('lobby');
-                   setTimeout(() => {
-                     // Need to trigger a spectate. For now, they join, if game started, it auto-spectates them if we set their name.
-                     // The join logic handles auto-spectating if room is 'playing'.
-                     document.getElementById('join-room-button')?.click();
-                   }, 100);
+                   localStorage.setItem('catan_player_name', playerName);
+                   localStorage.setItem('catan_active_room', roomId);
+                   try {
+                     const newUrl = new URL(window.location.href);
+                     newUrl.searchParams.set('room', roomId);
+                     window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                   } catch (e) {}
+
+                   setSailingText("正在驶入海域......");
+                   setShowSailingScreen(true);
+                   socketService.joinRoom(roomId, playerName);
+                   setIsJoinedLobby(true);
                  }}
                />
              </div>
@@ -2640,7 +2937,7 @@ export default function App() {
              <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'lobby' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
                <Swords size={22} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">游戏大厅</span>
+             <span className="text-[10px] font-black tracking-widest">好友约战</span>
            </button>
 
            <button
@@ -2650,7 +2947,7 @@ export default function App() {
              <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'rooms' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
                <Home size={22} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">游戏房间</span>
+             <span className="text-[10px] font-black tracking-widest">游戏大厅</span>
            </button>
 
            <button
@@ -2687,6 +2984,11 @@ export default function App() {
         </button>
       )}
       <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+      <SoundSettingsModal 
+        isOpen={showSoundModal} 
+        onClose={() => setShowSoundModal(false)} 
+        isAdmin={currentUser?.role === 'admin'}
+      />
     </div>
     </>
     );
@@ -2767,7 +3069,7 @@ export default function App() {
       <div style={flexibleContainerStyle}>
         <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-hidden relative selection:bg-indigo-600 selection:text-white">
         {/* Decorative Background Gradient */}
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_transparent_60%)] pointer-events-none z-0" />
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_rgba(79,70,229,0)_60%)] pointer-events-none z-0" />
         
         {/* Left Side: Branding & Controls */}
         <motion.div 
@@ -3328,9 +3630,9 @@ export default function App() {
       </button>
     )} */}
     <div style={lockedLandscapeStyle}>
-      {isPortrait && <PortraitOverlay />}
+      {shouldApplyPortraitRotation && <PortraitOverlay />}
       <div 
-        style={isPortrait ? {
+        style={shouldApplyPortraitRotation ? {
           width: windowSize.height,
           height: windowSize.width,
           transform: 'rotate(90deg)',
@@ -3377,6 +3679,15 @@ export default function App() {
                   <span className="absolute left-full ml-1 text-[9px] font-mono font-black leading-none">{roomState?.spectators?.length || 0}</span>
                 </div>
               </div>
+              <div className="relative z-10 flex flex-col items-center justify-center gap-1 ml-1.5 h-full">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowSoundModal(true); }}
+                  className="text-stone-400 hover:text-stone-600 transition-colors flex items-center justify-center"
+                  title="声音设置"
+                >
+                  <Bell size={14} strokeWidth={2} />
+                </button>
+              </div>
               {isSpectator && (
                 <button 
                   onClick={handleReturnToLobby}
@@ -3398,7 +3709,8 @@ export default function App() {
           <div className="flex items-center gap-2 lg:gap-4 px-4 lg:px-0">
             {gameState.players.map((p, i) => {
               const isCurrent = i === activePlayerId;
-              const resourceCount = Object.values(p.resources).reduce((a, b) => a + b, 0);
+              const displayResources = (isDiceRolling && !isSpectator && displayedResourcesMap[p.id]) ? displayedResourcesMap[p.id] : p.resources;
+              const resourceCount = Object.values(displayResources).reduce((a, b) => a + b, 0);
               const publicScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints;
               const isFocused = isSpectator && i === spectatorFocusId;
 
@@ -3454,7 +3766,7 @@ export default function App() {
                       {((gameState.phase === 'initial_dice_roll' || gameState.phase === 'order_determination' || (gameState.phase === 'setup' && gameState.settlements.length < gameState.players.length)) && gameState.initialDiceRolls[i]) ? (
                         <div className="flex items-center gap-0.5 px-1 rounded-sm bg-orange-500/10 border border-orange-500/20">
                           <span className="text-[8px] font-black text-orange-600">
-                            {String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
+                            {isDiceRolling ? "?" : String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
                           </span>
                         </div>
                       ) : null}
@@ -3467,7 +3779,7 @@ export default function App() {
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
                         <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png" alt="dev" className="w-2.5 h-2.5 object-contain" />
-                        {p.devCards.length + p.playedDevCards.length}
+                        {p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
                         <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png" alt="road" className="w-2.5 h-2.5 object-contain" />
@@ -3528,8 +3840,8 @@ export default function App() {
             </div>
             {/* Action panels removed from here, now in Central overlay */}
             <div className="grid grid-cols-1 gap-1">
-              {Object.entries(visiblePlayer?.resources || {}).map(([res, count]) => (
-                  <ResourceRow key={res} type={res as ResourceType} count={count} compact={isMobile} />
+              {Object.entries((isDiceRolling && !isSpectator && visiblePlayer && displayedResourcesMap[visiblePlayer.id]) ? displayedResourcesMap[visiblePlayer.id] : (visiblePlayer?.resources || {})).map(([res, count]) => (
+                  <ResourceRow key={res} type={res as ResourceType} count={count} compact={isMobile} playerId={visiblePlayer?.id} />
                 ))}
               </div>
           </section>
@@ -4099,7 +4411,7 @@ export default function App() {
                   whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
                   onClick={() => isMyHumanTurn && rollDice()}
                   disabled={!isMyHumanTurn}
-                  className={`${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
+                  className={`no-click-sound ${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
                     isMyHumanTurn 
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
                       : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
@@ -4122,17 +4434,24 @@ export default function App() {
                 transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
                 className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
-                <div className={`bg-white ${isMobile ? 'p-2' : 'p-4'} rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-3`}>
-                  <div className="flex gap-1.5">
-                    <DiceFace value={gameState.dice[0]} />
-                    <DiceFace value={gameState.dice[1]} />
+                <div className={`bg-white ${isMobile ? 'p-2' : 'p-3'} rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-3 overflow-visible`}>
+                  <div className="flex gap-1.5 overflow-visible">
+                    <DiceFace 
+                      key={`dice1-${diceAnimId}`} 
+                      value={gameState.dice?.[0] || 1} 
+                      isRolling={isDiceRolling}
+                      diceIndex={1}
+                    />
+                    <DiceFace 
+                      key={`dice2-${diceAnimId}`} 
+                      value={gameState.dice?.[1] || 1} 
+                      isRolling={isDiceRolling}
+                      diceIndex={2}
+                    />
                   </div>
-                  <div className="pr-1 text-left">
-                    <p className="text-[8px] uppercase tracking-[0.2em] font-black opacity-40">
-                      点数
-                    </p>
-                    <p className={`${isMobile ? 'text-lg' : 'text-3xl'} font-serif font-black italic leading-none text-orange-500`}>
-                      {gameState.dice[0] + gameState.dice[1]}
+                  <div className="flex items-center justify-center min-w-[2.5rem] h-full text-center">
+                    <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}>
+                      {diceSum}
                     </p>
                   </div>
                 </div>
@@ -5314,7 +5633,7 @@ export default function App() {
                 <button 
                   id="end-turn-button"
                   onClick={nextTurn}
-                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination'}
+                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination' || isDiceRolling}
                   className={`w-full flex items-center justify-center gap-1 ${isMobile ? 'rounded-lg h-7' : 'rounded-lg h-10'} bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed`}
                 >
                   <ChevronRight size={14} className="opacity-40" />
@@ -5329,6 +5648,11 @@ export default function App() {
     </div>
 
       <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+      <SoundSettingsModal 
+        isOpen={showSoundModal} 
+        onClose={() => setShowSoundModal(false)} 
+        isAdmin={currentUser?.role === 'admin'}
+      />
       
       {/* Game Over Modal */}
       <AnimatePresence>
@@ -5458,9 +5782,80 @@ function MapPreview({ board, isTopologyOnly = false, isLogo = false }: { board: 
   );
 }
 
-function ResourceRow({ type, count, compact }: { type: ResourceType, count: number, compact?: boolean }) {
+function ResourceRow({ type, count, compact, playerId }: { type: ResourceType, count: number, compact?: boolean, playerId?: string | number }) {
+  const prevCount = useRef<number>(count);
+  const prevPlayerId = useRef<string | number | undefined>(playerId);
+  const [anim, setAnim] = useState<{ id: number; text: string } | null>(null);
+
+  useEffect(() => {
+    if (prevPlayerId.current !== playerId) {
+      // Player switched or first load, just update refs without animation
+      prevCount.current = count;
+      prevPlayerId.current = playerId;
+      setAnim(null);
+      return;
+    }
+
+    if (count > prevCount.current) {
+      const diff = count - prevCount.current;
+      audioService.play('resource');
+      setAnim({
+        id: Date.now(),
+        text: `+${diff}`
+      });
+    }
+    prevCount.current = count;
+  }, [count, playerId]);
+
+  useEffect(() => {
+    if (anim) {
+      const timer = setTimeout(() => {
+        setAnim(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [anim]);
+
   return (
     <div className={`flex items-center justify-between ${compact ? 'py-1 px-1.5' : 'py-2 px-3'} rounded-md bg-white border border-black/10 hover:shadow-md transition-all group`}>
+      <style>{`
+        @keyframes resourceBounceFade {
+          0% {
+            transform: scale(0.3) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 0;
+          }
+          10% {
+            transform: scale(1.4) translateY(-4px);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          20% {
+            transform: scale(0.9) translateY(1px);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          30% {
+            transform: scale(1) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          33.3% {
+            transform: scale(1) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1) translateY(0);
+            color: rgb(156, 163, 175);
+            opacity: 0;
+          }
+        }
+        .resource-diff-anim {
+          animation: resourceBounceFade 3s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+          display: inline-block;
+        }
+      `}</style>
       <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
         <div 
           className={`${compact ? 'w-5 h-5' : 'w-8 h-8 md:w-9 md:h-9'} shrink-0 rounded-sm lg:rounded-md flex items-center justify-center shadow-inner transition-transform group-hover:scale-110`}
@@ -5469,7 +5864,15 @@ function ResourceRow({ type, count, compact }: { type: ResourceType, count: numb
         </div>
         <span className={`font-black uppercase tracking-tight opacity-70 group-hover:opacity-100 transition-opacity ${compact ? 'text-[8px]' : 'text-[11px]'}`}>{RESOURCE_NAMES[type]}</span>
       </div>
-      <div className="flex flex-col items-end">
+      <div className="flex items-center gap-1.5 shrink-0">
+        {anim && (
+          <span 
+            key={anim.id} 
+            className={`resource-diff-anim font-mono font-black ${compact ? 'text-[10px] mr-0.5' : 'text-sm mr-1'}`}
+          >
+            {anim.text}
+          </span>
+        )}
         <span className={`font-mono font-black ${compact ? 'text-[9px] pl-1' : 'text-base'}`}>{count}</span>
       </div>
     </div>
@@ -5622,11 +6025,158 @@ function ProbabilityDots({ value }: { value: number }) {
   );
 }
 
-function DiceFace({ value }: { value: number }) {
+function DiceFacePips({ value }: { value: number }) {
+  // Indices for active dots in a 3x3 grid:
+  // 0 1 2
+  // 3 4 5
+  // 6 7 8
+  const getPipIndices = (val: number) => {
+    switch (val) {
+      case 1: return [4];
+      case 2: return [0, 8];
+      case 3: return [0, 4, 8];
+      case 4: return [0, 2, 6, 8];
+      case 5: return [0, 2, 4, 6, 8];
+      case 6: return [0, 2, 3, 5, 6, 8];
+      default: return [];
+    }
+  };
+
+  const activeIndices = getPipIndices(value);
+
   return (
-    <div className={`w-8 h-8 lg:w-14 lg:h-14 bg-white border border-black/10 rounded-lg lg:rounded-2xl flex items-center justify-center shadow-inner relative overflow-hidden`}>
-      <div className="absolute inset-0 bg-gradient-to-br from-black/[0.02] to-transparent" />
-      <span className="text-xl lg:text-3xl font-serif font-black italic">{value}</span>
+    <div className="w-full h-full p-[14%] grid grid-cols-3 grid-rows-3 gap-[6%]">
+      {Array.from({ length: 9 }).map((_, idx) => {
+        const isActive = activeIndices.includes(idx);
+        if (!isActive) return <div key={idx} />;
+        
+        // Special red center pip for face 1
+        const isRedCenter = value === 1 && idx === 4;
+        return (
+          <div 
+            key={idx} 
+            className={`rounded-full shadow-[inset_0_1.5px_2px_rgba(0,0,0,0.65)] ${
+              isRedCenter 
+                ? 'bg-red-500 scale-110 shadow-[inset_0_1.5px_2px_rgba(150,0,0,0.8)]' 
+                : 'bg-neutral-800'
+            }`} 
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function DiceFace({ value, isRolling, diceIndex }: { value: number, isRolling?: boolean, diceIndex: 1 | 2 }) {
+  const getTargetAngles = (val: number) => {
+    switch (val) {
+      case 1: return { x: 0, y: 0 };
+      case 6: return { x: 0, y: 180 };
+      case 3: return { x: 0, y: 90 };
+      case 4: return { x: 0, y: -90 };
+      case 2: return { x: -90, y: 0 };
+      case 5: return { x: 90, y: 0 };
+      default: return { x: 0, y: 0 };
+    }
+  };
+
+  const [angles, setAngles] = useState(() => {
+    const base = getTargetAngles(value);
+    return { x: base.x, y: base.y, z: 0 };
+  });
+  const [isAnimating, setIsAnimating] = useState(false);
+  const wasRollingRef = useRef(false);
+  const size = 44; // Slightly smaller size
+  const halfSize = size / 2;
+
+  useEffect(() => {
+    const base = getTargetAngles(value);
+    if (isRolling) {
+      setIsAnimating(true);
+      wasRollingRef.current = true;
+      // Immediately reset to a starting offset (no transition) to prepare for a big spin
+      const initX = Math.floor(Math.random() * 90) - 45;
+      const initY = Math.floor(Math.random() * 90) - 45;
+      const initZ = Math.floor(Math.random() * 90) - 45;
+      
+      setAngles({ x: initX, y: initY, z: initZ });
+
+      // Apply the massive 3D spins in next frame
+      const frame = requestAnimationFrame(() => {
+        const spinsX = diceIndex === 1 ? 6 : 5;
+        const spinsY = diceIndex === 1 ? 5 : 6;
+        const spinsZ = diceIndex === 1 ? 4 : 3;
+        
+        setAngles({
+          x: spinsX * 360 + base.x,
+          y: spinsY * 360 + base.y,
+          z: spinsZ * 360 // Perfectly flat frontal face, no organic lean/tilt
+        });
+      });
+
+      return () => cancelAnimationFrame(frame);
+    } else {
+      setIsAnimating(false);
+      wasRollingRef.current = false;
+      setAngles({ x: base.x, y: base.y, z: 0 });
+    }
+  }, [value, isRolling, diceIndex]);
+
+  return (
+    <div className="relative select-none overflow-visible md:scale-100 scale-[0.75] origin-center" style={{ width: size, height: size, perspective: '300px' }}>
+      <style>{`
+        @keyframes diceBounce {
+          0% { transform: translateY(0) scale(0.8); }
+          15% { transform: translateY(-38px) scale(1.15) rotate(12deg); }
+          30% { transform: translateY(10px) scale(0.85) rotate(-8deg); }
+          45% { transform: translateY(-18px) scale(1.08) rotate(5deg); }
+          60% { transform: translateY(5px) scale(0.95) rotate(-3deg); }
+          75% { transform: translateY(-6px) scale(1.02) rotate(1deg); }
+          90% { transform: translateY(1px) scale(0.99); }
+          100% { transform: translateY(0) scale(1); }
+        }
+        .dice-bounce-active {
+          animation: diceBounce 2.5s cubic-bezier(0.15, 0.85, 0.3, 1) forwards;
+        }
+      `}</style>
+      <div 
+        className={`w-full h-full relative ${isAnimating ? 'dice-bounce-active' : ''}`}
+        style={{ transformStyle: 'preserve-3d' }}
+      >
+        <div 
+          className="w-full h-full relative"
+          style={{
+            transformStyle: 'preserve-3d',
+            transform: `rotateX(${angles.x}deg) rotateY(${angles.y}deg) rotateZ(${angles.z}deg)`,
+            transition: isAnimating ? 'transform 2.5s cubic-bezier(0.15, 0.85, 0.3, 1)' : 'none'
+          }}
+        >
+          {/* Front Face: 1 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(0deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={1} />
+          </div>
+          {/* Back Face: 6 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(180deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={6} />
+          </div>
+          {/* Left Face: 3 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(-90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={3} />
+          </div>
+          {/* Right Face: 4 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={4} />
+          </div>
+          {/* Top Face: 2 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateX(90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={2} />
+          </div>
+          {/* Bottom Face: 5 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateX(-90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={5} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -32,10 +32,23 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   useEffect(() => {
     fetch('/api/db-status')
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) throw new Error('Network error');
+        const ct = res.headers.get('content-type');
+        if (ct && ct.includes('application/json')) return res.json();
+        throw new Error('Invalid JSON response');
+      })
       .then(data => setDbStatus(data.connected ? 'connected' : 'disconnected'))
       .catch(() => setDbStatus('disconnected'));
   }, []);
+
+  const safeJson = async (res: Response) => {
+    const ct = res.headers.get('content-type');
+    if (ct && ct.includes('application/json')) {
+      return res.json();
+    }
+    throw new Error(`服务器响应异常 (${res.status})`);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +63,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, code, newPassword: password })
         });
-        const data = await res.json();
+        const data = await safeJson(res);
         if (!res.ok) throw new Error(data.error || '重置失败');
         
         setSuccessText(data.message);
@@ -69,7 +82,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         body: JSON.stringify(body)
       });
 
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         throw new Error(data.error || '请求失败');
       }
@@ -100,7 +113,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || '发送失败');
       
       setSuccessText(data.message);
@@ -124,7 +137,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: gUsername, guestId: existingGuestId })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || '游客登录失败');
       
       localStorage.setItem('catan_guest_id', data.user.id);
@@ -161,11 +174,8 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         )}
       </div>
 
-      {/* Decorative background */}
-      <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none opacity-20 z-0">
-        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-indigo-200 rounded-full blur-[120px]" />
-        <div className="absolute top-[60%] -right-[10%] w-[50%] h-[50%] bg-emerald-100 rounded-full blur-[100px]" />
-      </div>
+      {/* Decorative background without CSS blurs to prevent hardware-accelerated color banding/uneven blocks */}
+      <div className="absolute inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_0%_0%,rgba(199,210,254,0.25),rgba(199,210,254,0)_45%),radial-gradient(circle_at_100%_70%,rgba(209,250,229,0.3),rgba(209,250,229,0)_50%)] bg-slate-50" />
 
       <motion.div 
         initial={{ opacity: 0, y: 20, scale: 0.95 }} 
