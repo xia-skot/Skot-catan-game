@@ -1,0 +1,6285 @@
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, startTransition } from 'react';
+import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
+import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame';
+import { HexType, ResourceType, DevCardType, MapType, GameState } from './types';
+import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
+import { GameOverModal } from './components/GameOverModal';
+import { motion, AnimatePresence } from 'motion/react';
+import { audioService } from './audioService';
+import { 
+  Dices, 
+  User, 
+  Ship as ShipIcon, 
+  Home, 
+  Map as MapIcon, 
+  ChevronRight,
+  ChevronDown,
+  Trophy,
+  Hammer,
+  Repeat,
+  Info,
+  Settings,
+  X,
+  BookOpen,
+  Bell,
+  Users,
+  Play,
+  Eye,
+  AlertTriangle,
+  Bot,
+  Check,
+  Copy,
+  LogOut,
+  Trash2,
+  Maximize,
+  Minimize,
+  RotateCw,
+  RefreshCw,
+  Lock,
+  Loader2,
+  Swords,
+  Clock,
+  LogOut as LogOutIcon
+} from 'lucide-react';
+import { ResourceSelector } from './components/ResourceSelector';
+import { GoldSelectionPanel } from './components/GoldSelectionPanel';
+import { MapAlbumModal } from './components/MapAlbumModal';
+import { MapGeneratorModal } from './components/MapGeneratorModal';
+import { SaveMapConfirmModal } from './components/SaveMapConfirmModal';
+import { LoginScreen } from './components/LoginScreen';
+import { AdminDashboard } from './components/AdminDashboard';
+import { UserProfileModal } from './components/UserProfileModal';
+import { RulesModal } from './components/RulesModal';
+import { SoundSettingsModal } from './components/SoundSettingsModal';
+import { GameRoomsTab } from './components/GameRoomsTab';
+import { socketService, RoomState } from './socketService';
+import { FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, RESOURCE_ICONS } from './images';
+
+const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
+  <img 
+    src={RESOURCE_ICONS[type]} 
+    className={`${className} object-contain inline-block align-middle`} 
+    alt={RESOURCE_NAMES[type]} 
+    referrerPolicy="no-referrer" 
+  />
+);
+
+const HEX_RADIUS = 40;
+const HEX_WIDTH = Math.sqrt(3) * HEX_RADIUS;
+const HEX_HEIGHT = 2 * HEX_RADIUS;
+
+
+const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, flip: boolean }) => {
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (type === '3:1') return;
+    const resourceType = type as ResourceType;
+    const img = new window.Image();
+    img.src = RESOURCE_ICONS[resourceType];
+    img.referrerPolicy = 'no-referrer';
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => setImage(img);
+  }, [type]);
+
+  if (type === '3:1') {
+    return (
+      <Path
+        x={x}
+        y={y}
+        data="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"
+        fill="#FFA500"
+        scale={{ x: 0.55, y: 0.55 }}
+        offsetX={12}
+        offsetY={12}
+        rotation={flip ? 180 : 0}
+      />
+    );
+  }
+
+  if (!image) return null;
+
+  return (
+    <Image
+      image={image}
+      x={x}
+      y={y}
+      width={18}
+      height={18}
+      offsetX={9}
+      offsetY={9}
+      rotation={flip ? 180 : 0}
+    />
+  );
+};
+
+const PortraitOverlay = () => (
+  <div className="fixed inset-0 z-[9999] bg-stone-900/80 flex flex-col items-center justify-center text-white px-8 text-center animate-in fade-in duration-500 pointer-events-auto">
+    <motion.div
+      animate={{ rotate: [0, 90, 90, 0] }}
+      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", times: [0, 0.4, 0.6, 1] }}
+      className="mb-8 p-6 bg-indigo-500/20 rounded-full border border-indigo-500/30 shadow-2xl shadow-indigo-500/20"
+    >
+      <RotateCw size={64} className="text-indigo-400" />
+    </motion.div>
+    <h2 className="text-2xl sm:text-3xl font-serif font-black italic mb-4 tracking-tight leading-none">请旋转手机屏幕</h2>
+    <p className="text-[11px] sm:text-sm opacity-100 max-w-[320px] sm:max-w-none whitespace-nowrap leading-relaxed font-black text-white drop-shadow-md">
+      为了获得最佳游戏体验，推荐使用横屏模式进行游戏。
+    </p>
+    <p className="text-[10px] sm:text-xs opacity-70 font-bold text-white mt-1">
+      (确保手机的“自动旋转”设置已打开)
+    </p>
+    <div className="mt-12 flex flex-col items-center gap-2 opacity-30">
+      <div className="w-1 h-12 bg-white/20 rounded-full overflow-hidden">
+        <motion.div 
+          animate={{ y: [0, 48, 0] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
+          className="w-full h-1/2 bg-indigo-400" 
+        />
+      </div>
+      <span className="text-[10px] uppercase font-black tracking-widest leading-none">LANDSCAPE ONLY</span>
+    </div>
+  </div>
+);
+
+const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx: number, ny: number }) => {
+  const distance = 18; // Distance from edge to pill center
+  const angleRad = Math.atan2(ny, nx);
+  let rotation = angleRad * 180 / Math.PI + 90;
+  rotation = (rotation + 360) % 360;
+  
+  // Flip the content if it would be upside down
+  const flip = rotation > 90 && rotation < 270;
+
+  return (
+    <Group x={cx} y={cy} rotation={rotation} listening={false}>
+      {/* Pier / Dock lines */}
+      <Line
+        points={[-4, 0, -4, -distance]}
+        stroke="#8B5A2B"
+        strokeWidth={3}
+        perfectDrawEnabled={false}
+      />
+      <Line
+        points={[4, 0, 4, -distance]}
+        stroke="#8B5A2B"
+        strokeWidth={3}
+        perfectDrawEnabled={false}
+      />
+
+      {/* Pill Group */}
+      <Group y={-distance} rotation={0}>
+        {/* Pill Background */}
+        <Rect
+          x={-22}
+          y={-11}
+          width={44}
+          height={22}
+          cornerRadius={11}
+          fill="#FFFDF7"
+          stroke="#C8A97E"
+          strokeWidth={2}
+          shadowColor="rgba(0,0,0,0.15)"
+          shadowBlur={4}
+          shadowOffsetY={2}
+        />
+
+        {/* Icon */}
+        <PortIcon type={port.type} x={flip ? 11 : -11} y={0} flip={flip} />
+
+        {/* Text */}
+        <Text
+          text={port.type === '3:1' ? '3:1' : '2:1'}
+          fontSize={12}
+          fontStyle="bold"
+          fill="#5C4033"
+          x={flip ? -9 : 9}
+          y={0}
+          width={24}
+          height={12}
+          offsetX={12}
+          offsetY={6}
+          align="center"
+          verticalAlign="middle"
+          fontFamily="Inter"
+          rotation={flip ? 180 : 0}
+        />
+      </Group>
+    </Group>
+  );
+};
+
+
+
+
+const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [pulse, setPulse] = useState(0);
+
+  useEffect(() => {
+    const image = new window.Image();
+    image.src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%BC%BA%E7%9B%972.png';
+    image.referrerPolicy = 'no-referrer';
+    image.crossOrigin = 'Anonymous';
+    image.onload = () => setImg(image);
+  }, []);
+
+  useEffect(() => {
+    if (!isPhaseRobber) return;
+    let animationFrame: number;
+    const animate = () => {
+      setPulse((Date.now() % 1200) / 1200);
+      animationFrame = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isPhaseRobber]);
+
+  return (
+    <Group x={x} y={y}>
+      {isPhaseRobber && (
+        <Circle 
+          radius={18 + pulse * 12} 
+          stroke="#EF4444" 
+          strokeWidth={4 * (1 - pulse)} 
+          opacity={1 - pulse} 
+          listening={false} 
+          perfectDrawEnabled={false}
+        />
+      )}
+      {img ? (
+        <Image 
+          image={img} 
+          width={36} 
+          height={36} 
+          x={-18} 
+          y={-18} 
+          shadowColor="black"
+          shadowBlur={8}
+          shadowOpacity={0.6}
+          shadowOffsetX={2}
+          shadowOffsetY={4}
+          perfectDrawEnabled={false}
+        />
+      ) : (
+        <Text text="👤" fontSize={24} offsetX={12} offsetY={12} />
+      )}
+    </Group>
+  );
+};
+
+const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [pulse, setPulse] = useState(0);
+
+  useEffect(() => {
+    const image = new window.Image();
+    image.src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E7%9B%97%E8%88%B9.png';
+    image.referrerPolicy = 'no-referrer';
+    image.crossOrigin = 'Anonymous';
+    image.onload = () => setImg(image);
+  }, []);
+
+  useEffect(() => {
+    if (!isPhaseRobber) return;
+    let animationFrame: number;
+    const animate = () => {
+      setPulse((Date.now() % 1200) / 1200);
+      animationFrame = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isPhaseRobber]);
+
+  return (
+    <Group x={x} y={y}>
+      {isPhaseRobber && (
+        <Circle 
+          radius={18 + pulse * 12} 
+          stroke="#EF4444" 
+          strokeWidth={4 * (1 - pulse)} 
+          opacity={1 - pulse} 
+          listening={false} 
+          perfectDrawEnabled={false}
+        />
+      )}
+      {img ? (
+        <Image 
+          image={img} 
+          width={36} 
+          height={36} 
+          x={-18} 
+          y={-18} 
+          shadowColor="black"
+          shadowBlur={8}
+          shadowOpacity={0.6}
+          shadowOffsetX={2}
+          shadowOffsetY={4}
+          perfectDrawEnabled={false}
+        />
+      ) : (
+        <Text text="🏴‍☠️" fontSize={24} offsetX={12} offsetY={12} />
+      )}
+    </Group>
+  );
+};
+
+const seededRandom = (seed: number) => {
+  return () => {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+};
+
+function SailingLoadingScreen({ onComplete, text = "正在驶入海域......" }: { onComplete: () => void, text?: string }) {
+  const [wavePaths, setWavePaths] = useState({ line: '', fill: '', framesCss: '' });
+  const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [boatSize, setBoatSize] = useState(window.innerHeight / 6);
+
+  useEffect(() => {
+     let isMounted = true;
+     const upds = () => {
+         const w = window.innerWidth;
+         const h = window.innerHeight;
+         setWinSize({ w, h });
+
+         const isPortrait = w < h;
+         const baseY = h / 2 - h * 0.05;
+         
+         // Proportional wavelength and amplitude
+         const wavelength = isPortrait ? w / 2.0 : w / 3.5;
+         const amplitude = isPortrait ? wavelength * 0.05 : wavelength * 0.03;
+         const finalAmplitude = Math.min(amplitude, isPortrait ? h * 0.02 : h * 0.03); // Cap amplitude for portrait/landscape
+         
+         const currentBoatSize = isPortrait ? w / 8 : h / 6;
+         if (isMounted) setBoatSize(currentBoatSize);
+
+         let pts = [];
+         const startX = -300;
+         const endX = w + currentBoatSize * 0.6;
+
+         for(let x = startX; x <= w + currentBoatSize + 100; x += 10) {
+            const y = Math.sin((x / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
+            pts.push(x + "," + y);
+         }
+
+         let framesArr = [];
+         const steps = 100;
+         for (let i = 0; i <= steps; i++) {
+             const progress = i / steps;
+             const currentX = startX + (endX - startX) * progress;
+             const currentY = Math.sin((currentX / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
+             const dy = Math.cos((currentX / wavelength) * Math.PI * 2) * finalAmplitude * (Math.PI * 2 / wavelength);
+             
+             let angleRad = Math.atan(dy) * (isPortrait ? 0.2 : 0.12); 
+             let angleDeg = angleRad * (180 / Math.PI); 
+             framesArr.push(`${i}% { transform: translate3d(${currentX}px, ${currentY}px, 0) rotate(${angleDeg}deg); }`);
+         }
+         const framesCss = `@keyframes sailBoatAnim {\n${framesArr.join('\n')}\n}`;
+
+         if (isMounted) {
+            setWavePaths({
+                line: "M " + pts.join(" L "),
+                fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + h + " L " + startX + "," + h + " Z",
+                framesCss
+            });
+         }
+     };
+     upds();
+     window.addEventListener('resize', upds);
+
+     const timer = setTimeout(() => {
+        if (isMounted) onComplete();
+     }, 2600);
+
+     return () => {
+         isMounted = false;
+         window.removeEventListener('resize', upds);
+         clearTimeout(timer);
+     };
+  }, []);
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="fixed inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto"
+    >
+        <div className="w-full h-full relative">
+            <style>{`
+              ${wavePaths.framesCss}
+            `}</style>
+            
+            {wavePaths.line && (
+                <>
+                <div 
+                    onAnimationEnd={() => onComplete()}
+                    style={{
+                    animation: 'sailBoatAnim 2.0s linear forwards',
+                    position: 'absolute', left: 0, top: 0, zIndex: 10
+                }} className="will-change-transform pointer-events-none">
+                    <div style={{ transform: 'translate(-50%, -95%)', width: boatSize, height: boatSize }} className="drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
+                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png" alt="Sailing Boat" className="w-full h-full object-contain" />
+                    </div>
+                </div>
+
+                <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
+                    <defs>
+                        <linearGradient id="sailingWaveGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#38bdf8" stopOpacity="1" />
+                            <stop offset="100%" stopColor="#0369a1" stopOpacity="1" />
+                        </linearGradient>
+                    </defs>
+                    <path d={wavePaths.fill} fill="url(#sailingWaveGradient)" />
+                    <path d={wavePaths.line} stroke="#bae6fd" strokeWidth="4" fill="none" />
+                    <path d={wavePaths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
+                </svg>
+                </>
+            )}
+
+            <div className="absolute top-[80%] w-full text-center z-[10000]">
+                <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)] px-4">
+                    {text}
+                </span>
+            </div>
+        </div>
+    </motion.div>
+  )
+}
+
+export default function App() {
+  const [showSoundModal, setShowSoundModal] = useState(false);
+
+  useEffect(() => {
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.no-click-sound')) return;
+      // Check if it's a button or inside a button
+      if (target.closest('button') || target.closest('[role="button"]') || target.closest('.cursor-pointer')) {
+        audioService.play('click');
+      }
+    };
+    document.addEventListener('click', handleGlobalClick);
+    return () => {
+      document.removeEventListener('click', handleGlobalClick);
+    };
+  }, []);
+
+  useEffect(() => {
+    const fetchSoundSettings = async () => {
+      try {
+        const res = await fetch('/api/sound-settings');
+        if (res.ok) {
+          const ct = res.headers.get('content-type');
+          if (ct && ct.includes('application/json')) {
+            const data = await res.json();
+            if (data?.soundSettings) {
+              audioService.setEqualizer(data.soundSettings);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[App] Failed to fetch sound settings:', err);
+      }
+    };
+
+    fetchSoundSettings();
+
+    socketService.onSoundSettingsUpdated((settings) => {
+      if (settings && typeof settings === 'object') {
+        audioService.setEqualizer(settings);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const startBgmOnGesture = () => {
+      audioService.playBgm();
+      document.removeEventListener('click', startBgmOnGesture);
+      document.removeEventListener('keydown', startBgmOnGesture);
+    };
+    document.addEventListener('click', startBgmOnGesture);
+    document.addEventListener('keydown', startBgmOnGesture);
+    return () => {
+      document.removeEventListener('click', startBgmOnGesture);
+      document.removeEventListener('keydown', startBgmOnGesture);
+    };
+  }, []);
+
+  const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
+  const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
+  
+  useEffect(() => {
+    // Preload images
+    const imagesToPreload = [
+      FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
+      ...Object.values(RESOURCE_ICONS),
+      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png",
+      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catanships.jpg",
+      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/sea_bg.jpg",
+    ];
+    imagesToPreload.forEach(src => {
+      const img = new window.Image();
+      img.src = src;
+    });
+
+    const timer = setTimeout(() => {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+  
+  const { 
+    gameState, 
+    syncGameState,
+    initGame, 
+    toggleBot,
+    rollDice, 
+    resolveDiceRoll,
+    resolveInitialRoll,
+    nextTurn, 
+    buildRoad, 
+    buildShip,
+    buildSettlement, 
+    upgradeToCity, 
+    tradeWithBank,
+    buyDevCard,
+    playDevCard,
+    cancelDevCard,
+    resolveYearOfPlenty,
+    resolveMonopoly,
+    moveRobber,
+    movePirate,
+    selectStealTarget,
+    stealResource,
+    doSteal,
+    selectGoldResource,
+    addResources,
+    generateMapTopology,
+    distributeResources,
+    discardCards,
+    setPlayerResource,
+    setDice,
+    setBuildModeSync,
+    proposeTrade,
+    reactToTrade,
+    cancelTrade,
+    finalizeTrade,
+    resetGame
+  } = useCatanGame();
+
+  const [hasResolvedGameOver, setHasResolvedGameOver] = useState(false);
+
+  const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const isSpectator = useMemo(() => {
+    if (!roomState) return false;
+    return roomState.spectators?.some(s => s.id === socketService.playerId);
+  }, [roomState, socketService.playerId]);
+
+  // Dice rolling animation states
+  const [isDiceRolling, setIsDiceRolling] = useState(false);
+  const [rollingDiceValues, setRollingDiceValues] = useState<[number, number]>([1, 1]);
+  const [diceAnimId, setDiceAnimId] = useState<number>(0);
+
+  const prevDiceRef = useRef<[number, number] | null>(null);
+  const prevHasRolledRef = useRef<boolean>(false);
+
+  // Freeze resource card updates during dice roll animation
+  const [displayedResourcesMap, setDisplayedResourcesMap] = useState<Record<number, Record<ResourceType, number>>>({});
+  const prevPlayerResourcesRef = useRef<Record<number, Record<ResourceType, number>>>({});
+
+  const prevPhaseRef = useRef<string>("");
+  const prevBuildCountRef = useRef<number>(-1);
+  
+  useEffect(() => {
+    if (!gameState) return;
+    
+    // Pirate sound logic
+    if (gameState.phase !== prevPhaseRef.current) {
+      const enteredPirateMode = (gameState.phase === 'robber' || gameState.phase === 'discard') && prevPhaseRef.current !== 'discard' && prevPhaseRef.current !== 'robber';
+      const leftPirateMode = (prevPhaseRef.current === 'robber' || prevPhaseRef.current === 'discard') && gameState.phase !== 'discard' && gameState.phase !== 'robber';
+
+      if (enteredPirateMode) {
+        audioService.play('pirate', true); // loop
+      } else if (leftPirateMode) {
+        audioService.stop('pirate');
+      }
+      prevPhaseRef.current = gameState.phase;
+    }
+
+    // Build sound logic
+    const currentBuildCount = (gameState.settlements?.length || 0) + (gameState.cities?.length || 0) + (gameState.roads?.length || 0) + (gameState.ships?.length || 0);
+    if (prevBuildCountRef.current !== -1 && currentBuildCount > prevBuildCountRef.current) {
+      audioService.play('build');
+    }
+    prevBuildCountRef.current = currentBuildCount;
+    
+  }, [gameState]);
+
+  const [diceSum, setDiceSum] = useState<string>("?");
+  useEffect(() => {
+    // If we are currently rolling, always show "?"
+    if (isDiceRolling) {
+      setDiceSum("?");
+      return;
+    }
+
+    // Otherwise, show the sum if we have dice values and hasRolled is true
+    if (gameState?.dice && gameState.hasRolled && gameState.dice[0] > 0) {
+      setDiceSum(String(gameState.dice[0] + gameState.dice[1]));
+    } else {
+      setDiceSum("?");
+    }
+  }, [isDiceRolling, gameState?.dice?.[0], gameState?.dice?.[1], gameState?.hasRolled]);
+
+  useEffect(() => {
+    if (!gameState) return;
+    
+    // Always keep the ref updated with the latest state when NOT rolling
+    if (!isDiceRolling) {
+      const map: Record<number, Record<ResourceType, number>> = {};
+      gameState.players.forEach(p => {
+        map[p.id] = { ...p.resources };
+      });
+      prevPlayerResourcesRef.current = map;
+      setDisplayedResourcesMap(map);
+    } else if (Object.keys(prevPlayerResourcesRef.current).length === 0) {
+      // If we just joined and it's already rolling, initialize with current state as fallback
+      const map: Record<number, Record<ResourceType, number>> = {};
+      gameState.players.forEach(p => {
+        map[p.id] = { ...p.resources };
+      });
+      prevPlayerResourcesRef.current = map;
+      setDisplayedResourcesMap(map);
+    }
+  }, [gameState, isDiceRolling]);
+
+  const rollingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!gameState) return;
+
+    const hasRolled = gameState.hasRolled;
+    const currentDice = gameState.dice;
+
+    const wasFalseNowTrue = !prevHasRolledRef.current && hasRolled;
+    const diceChanged = prevDiceRef.current && 
+      (prevDiceRef.current[0] !== currentDice[0] || prevDiceRef.current[1] !== currentDice[1]) && 
+      (currentDice[0] > 0 && currentDice[1] > 0);
+
+    // Update refs immediately so subsequent re-renders don't keep triggered state
+    prevHasRolledRef.current = hasRolled;
+    prevDiceRef.current = currentDice ? [...currentDice] : null;
+
+    console.log('Dice useEffect triggered', { wasFalseNowTrue, diceChanged, phase: gameState.phase, hasRolled, currentDice: currentDice });
+    if (wasFalseNowTrue || diceChanged) {
+      // Freeze resources to pre-roll snapshot immediately
+      if (Object.keys(prevPlayerResourcesRef.current).length > 0) {
+        setDisplayedResourcesMap(prevPlayerResourcesRef.current);
+      }
+      setIsDiceRolling(true);
+      audioService.play('dice');
+      const newAnimId = Date.now();
+      setDiceAnimId(newAnimId);
+      
+      if (rollingTimerRef.current) {
+        clearTimeout(rollingTimerRef.current);
+      }
+
+      rollingTimerRef.current = setTimeout(() => {
+        setIsDiceRolling(false);
+        audioService.stop('dice');
+        rollingTimerRef.current = null;
+        // Only active player (who is not a bot in their own client, or the host handling bots) 
+        // should resolve the dice roll to push to others. 
+        // Spectators should just wait for the sync.
+        if (!isSpectator) {
+          resolveDiceRoll();
+        }
+      }, 2500); // 2.5 seconds animation duration
+    }
+  }, [gameState?.hasRolled, gameState?.dice?.[0], gameState?.dice?.[1], gameState?.phase, isSpectator, isDiceRolling, resolveDiceRoll]);
+
+  useEffect(() => {
+    return () => {
+      if (rollingTimerRef.current) clearTimeout(rollingTimerRef.current);
+    };
+  }, []);
+
+  const handleReturnToLobby = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    
+    setShowSailingScreen(false);
+    
+    const roomId = roomState?.roomId || inputRoomId;
+    let shouldClearRoom = true;
+    
+    if (gameState?.winnerId !== null && gameState?.winnerId !== undefined) {
+      shouldClearRoom = true;
+      socketService.resetGame(roomId);
+    } else {
+      if (!isSpectator) {
+        shouldClearRoom = false; // Keep the active room locked so they can reconnect
+      }
+      socketService.leaveRoom(roomId);
+    }
+    
+    if (shouldClearRoom) {
+      localStorage.removeItem('catan_active_room');
+      localStorage.removeItem('catan_game_active');
+      try {
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.delete('room');
+        window.history.replaceState({}, '', newUrl.pathname);
+      } catch (err) {
+        console.warn('history.replaceState failed:', err);
+      }
+      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+    } else {
+      setInputRoomId(roomId);
+      localStorage.setItem('catan_active_room', roomId);
+      try {
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.set('room', roomId);
+        window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+      } catch (err) {}
+    }
+    
+    // Completely wipe React states to drop to Lobby locally and perfectly
+    setRoomState(null);
+    setGameStarted(false);
+    setShowGameOver(false);
+    setHasResolvedGameOver(false);
+    setIsJoinedLobby(false);
+    setShowSailingScreen(false);
+    syncGameState(null as any);
+    resetGame();
+    setIsStartingGame(false);
+  };
+
+  const handleReturnToMap = () => {
+    setShowGameOver(false);
+    setHasResolvedGameOver(true);
+  };
+
+  const isRemoteUpdateRef = useRef(false);
+  const playerBarRef = useRef<HTMLDivElement>(null);
+  
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
+  
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const token = localStorage.getItem('catan_auth_token');
+      if (token) {
+        try {
+          const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }});
+          if (res.ok) {
+            const ct = res.headers.get('content-type');
+            if (ct && ct.includes('application/json')) {
+              const data = await res.json();
+              if (data && data.user) {
+                setCurrentUser(data.user);
+                socketService.playerId = data.user.id;
+                localStorage.setItem('catan_player_name', data.user.username);
+              } else {
+                localStorage.removeItem('catan_auth_token');
+              }
+            } else {
+              localStorage.removeItem('catan_auth_token');
+            }
+          } else {
+            console.warn('[App] Auth check failed:', res.status);
+            localStorage.removeItem('catan_auth_token');
+          }
+        } catch (err) {
+          console.error('[App] Auth check error:', err);
+          localStorage.removeItem('catan_auth_token');
+        }
+      }
+      setIsAuthLoading(false);
+    };
+    checkAuth();
+  }, []);
+
+  const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
+  
+  const [showCopyToast, setShowCopyToast] = useState(false);
+  const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
+  const [inputRoomId, setInputRoomId] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('room') || localStorage.getItem('catan_active_room') || Math.random().toString().slice(2, 8);
+  });
+  const [isJoinedLobby, setIsJoinedLobby] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const activeRoom = localStorage.getItem('catan_active_room');
+    return !!params.get('room') || !!activeRoom;
+  });
+  const [gameStarted, setGameStarted] = useState(() => {
+    return localStorage.getItem('catan_game_active') === 'true';
+  });
+  const isAutoReconnectingRef = useRef(!!localStorage.getItem('catan_active_room'));
+  const [spectatorFocusId, setSpectatorFocusId] = useState<number | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
+
+  const myPlayerIndex = useMemo(() => {
+    if (!gameState) return -1;
+    if (isSpectator) return -1;
+    return gameState.players.findIndex(p => p.sessionId === socketService.playerId);
+  }, [gameState, isSpectator]);
+
+  const visiblePlayerIndex = useMemo(() => {
+    if (isSpectator) {
+      if (spectatorFocusId !== null && gameState?.players[spectatorFocusId]) {
+        return spectatorFocusId;
+      }
+      if (gameState && gameState.currentPlayerIndex !== undefined && gameState.currentPlayerIndex !== -1) {
+        return gameState.currentPlayerIndex;
+      }
+    }
+    return myPlayerIndex !== -1 ? myPlayerIndex : 0;
+  }, [isSpectator, spectatorFocusId, gameState?.players, myPlayerIndex, gameState?.currentPlayerIndex]);
+
+  const visiblePlayer = useMemo(() => {
+    if (!gameState) return null;
+    return gameState.players[visiblePlayerIndex];
+  }, [gameState, visiblePlayerIndex]);
+
+  useEffect(() => {
+    socketService.connect();
+    
+    // Auto-fill room ID from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = urlParams.get('room');
+    if (roomParam) {
+      setInputRoomId(roomParam);
+    }
+    
+    socketService.onRoomState((state: any) => {
+      if (!state) {
+        // If we are currently in an auto-reconnect attempt, don't clear the UI immediately
+        // as the join request may still be in flight.
+        if (isAutoReconnectingRef.current) {
+          return;
+        }
+        setIsJoinedLobby(false);
+        localStorage.removeItem('catan_active_room');
+        localStorage.removeItem('catan_game_active');
+        return;
+      }
+      isAutoReconnectingRef.current = false; // Successfully connected/reconnected
+      setRoomState(state);
+      setPlayerCount(state.settings.playerCount);
+      setMapType(state.settings.mapType as MapType);
+      setBotConfig(state.settings.botConfig);
+      
+      if (!state.gameState) {
+        // If we were auto-reconnecting but the game isn't there, reveal lobby
+        localStorage.removeItem('catan_game_active');
+      } else {
+        localStorage.setItem('catan_game_active', 'true');
+      }
+    });
+
+    socketService.onGameInit((newState) => {
+      isRemoteUpdateRef.current = true;
+      syncGameState(newState);
+      setGameStarted(true);
+      setHasManuallyInteracted(false);
+      setIsStartingGame(false);
+      localStorage.setItem('catan_game_active', 'true');
+    });
+
+    socketService.onGameUpdate((newState) => {
+      isRemoteUpdateRef.current = true;
+      syncGameState(newState);
+      setGameStarted(true); // Always ensure UI switches to game
+      setIsStartingGame(false);
+      localStorage.setItem('catan_game_active', 'true');
+    });
+
+    socketService.onGameReset(() => {
+      console.log('Game reset received from server - Cleaning up...');
+      
+      localStorage.removeItem('catan_active_room');
+      localStorage.removeItem('catan_game_active');
+      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+      setRoomState(prevRoom => {
+        const isSelfReset = prevRoom?.hostId === socketService.playerId;
+        if (!isSelfReset && prevRoom) {
+          setTimeout(() => alert('房间已被房主解散。'), 100);
+        }
+        return null; // implicitly clears the room state
+      });
+
+      // 1. Clear local game state first to prevent re-sync
+      syncGameState(null as any);
+      
+      // 3. Reset UI flags
+      setGameStarted(false);
+      setShowGameOver(false);
+      setHasResolvedGameOver(false);
+      setIsJoinedLobby(false); // Force back to room search screen
+      setIsStartingGame(false);
+      setShowSailingScreen(false);
+      
+      // 4. Remove room param from URL
+      window.history.replaceState({}, '', window.location.pathname);
+    });
+
+    socketService.onReturnedToLobby(() => {
+      console.log('Returned to lobby...');
+      syncGameState(null as any);
+      setGameStarted(false);
+      setShowGameOver(false);
+      setHasResolvedGameOver(false);
+      setIsStartingGame(false);
+    });
+
+    socketService.onPlayerKicked((kickedPlayerId: string) => {
+       if (kickedPlayerId === socketService.playerId) {
+         // Silently return to menu to avoid exiting full screen with alert
+         setIsJoinedLobby(false);
+         setRoomState(null);
+         syncGameState(null as any);
+         setGameStarted(false);
+         setShowSailingScreen(false);
+         localStorage.removeItem('catan_active_room');
+         localStorage.removeItem('catan_game_active');
+       }
+    });
+
+    return () => {
+      socketService.disconnect();
+    };
+  }, [syncGameState]);
+
+  const currentRoomIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentRoomIdRef.current = roomState?.roomId || inputRoomId;
+  }, [roomState?.roomId, inputRoomId]);
+
+  useEffect(() => {
+    if (gameState) {
+      if (isRemoteUpdateRef.current) {
+        isRemoteUpdateRef.current = false;
+      } else {
+        if (currentRoomIdRef.current) {
+          socketService.sendGameState(currentRoomIdRef.current, gameState);
+        }
+      }
+    }
+  }, [gameState]);
+
+  useEffect(() => {
+    if (isAuthLoading || !currentUser) return;
+
+    // Only run once after auth is resolved
+    if (isAutoReconnectingRef.current === false) return; // already processed
+
+    const activeRoom = localStorage.getItem('catan_active_room');
+    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    
+    // Priority: URL > LocalStorage
+    const roomIdToJoin = roomFromUrl || activeRoom;
+
+    if (roomIdToJoin) {
+      if (wasInGame || roomFromUrl) {
+        // Reconnect directly to game with loading screen
+        setSailingText("重新驶入海域......");
+        setShowSailingScreen(true);
+      }
+      // Wait a tiny bit for UI state to settle before joining, so socket uses correct ID
+      setTimeout(() => {
+        socketService.joinRoom(roomIdToJoin, playerName);
+        setIsJoinedLobby(true);
+        isAutoReconnectingRef.current = false;
+      }, 50);
+    } else {
+      isAutoReconnectingRef.current = false;
+    }
+  }, [isAuthLoading, currentUser, playerName]);
+
+  const handleJoinRoom = () => {
+    let finalRoomId = inputRoomId.trim();
+    if (!finalRoomId || finalRoomId.length < 1) {
+      finalRoomId = Math.floor(100000 + Math.random() * 900000).toString();
+      setInputRoomId(finalRoomId);
+    }
+    
+    localStorage.setItem('catan_player_name', playerName);
+    localStorage.setItem('catan_active_room', finalRoomId);
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('room', finalRoomId);
+    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+
+    socketService.joinRoom(finalRoomId, playerName);
+    setIsJoinedLobby(true);
+  };
+
+  const handleCopyRoomCode = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', roomState?.roomId || inputRoomId);
+    const text = url.toString();
+    
+    const showToast = () => {
+      setShowCopyToast(true);
+      setTimeout(() => setShowCopyToast(false), 2000);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(showToast).catch((err) => {
+        console.error('Clipboard copy failed, using fallback', err);
+        fallbackCopyTextToClipboard(text);
+      });
+    } else {
+      fallbackCopyTextToClipboard(text);
+    }
+
+    function fallbackCopyTextToClipboard(textToCopy: string) {
+      const textArea = document.createElement("textarea");
+      textArea.value = textToCopy;
+      // Avoid scrolling to bottom
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      textArea.style.position = "fixed";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        showToast();
+      } catch (err) {
+        console.error('Fallback: Oops, unable to copy', err);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+
+  const handleToggleReady = () => {
+    // Optimistically update the UI before the server response
+    setRoomState(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        players: prev.players.map(p => 
+          p.id === socketService.playerId ? { ...p, isReady: !p.isReady } : p
+        )
+      };
+    });
+    if (roomState?.roomId) {
+      socketService.toggleReady(roomState.roomId);
+    }
+  };
+
+  const syncSettings = (newSettings: Partial<RoomState['settings']>) => {
+    if (!roomState?.roomId) return;
+    socketService.updateSettings(roomState.roomId, { ...roomState.settings, ...newSettings });
+  };
+
+  const activePlayerId = (gameState?.phase === 'discard' && (gameState?.pendingDiscards?.length || 0) > 0)
+    ? gameState!.pendingDiscards[0].playerId 
+    : (gameState?.phase === 'gold_selection' && (gameState?.pendingGoldRewards?.length || 0) > 0)
+    ? gameState!.pendingGoldRewards[0].playerId
+    : gameState?.currentPlayerIndex ?? 0;
+
+  const botProcessorId = useMemo(() => {
+    if (!roomState) return socketService.playerId;
+    // 1. Host (if not disconnected)
+    const hostPlayer = roomState.players.find(p => p.id === roomState.hostId);
+    if (hostPlayer && !hostPlayer.disconnected) return hostPlayer.id;
+    
+    // 2. Any other non-bot non-disconnected player
+    const fallbackPlayer = roomState.players.find(p => !p.disconnected && !p.isBot);
+    if (fallbackPlayer) return fallbackPlayer.id;
+    
+    // 3. Any non-disconnected spectator (important for bot-only games)
+    const fallbackSpectator = roomState.spectators?.find(s => !s.disconnected);
+    if (fallbackSpectator) return fallbackSpectator.id;
+    
+    return roomState.players[0]?.id || 0;
+  }, [roomState]);
+
+  const amIActivePlayer = useMemo(() => {
+    if (!gameState || isSpectator) return false;
+    const player = gameState.players[activePlayerId];
+    if (!player) return false;
+    if (player.isBot) return false; // Bot is never a human active player
+    if (!roomState) return true; // Single player mode
+    return player.sessionId === socketService.playerId || player.id === myPlayerIndex;
+  }, [gameState, activePlayerId, isSpectator, roomState, myPlayerIndex]);
+
+  const me = useMemo(() => {
+    if (!gameState || myPlayerIndex === -1) return gameState?.players[0]; 
+    return gameState.players[myPlayerIndex];
+  }, [gameState, myPlayerIndex]);
+
+  const currentPlayer = useMemo(() => {
+    if (!gameState) return null;
+    return gameState.players[gameState.currentPlayerIndex];
+  }, [gameState]);
+
+  useEffect(() => {
+    if (gameState?.lastDevCardEvent) {
+      // Show overlay if event is recent
+      if (Date.now() - gameState.lastDevCardEvent.timestamp < 1500) {
+        setDevCardOverlay({ 
+          playerName: gameState.lastDevCardEvent.playerName, 
+          actionStr: gameState.lastDevCardEvent.cardType 
+        });
+        const timer = setTimeout(() => {
+          setDevCardOverlay(null);
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [gameState?.lastDevCardEvent?.timestamp]);
+
+  const isMyHumanTurn = useMemo(() => {
+    if (!gameState || isSpectator || isDiceRolling) return false;
+    const player = gameState.players[activePlayerId];
+    return player?.sessionId === socketService.playerId;
+  }, [gameState, activePlayerId, isSpectator, isDiceRolling]);
+
+  const canBuild = ((gameState?.phase === 'main' && gameState.hasRolled) || 
+    gameState?.phase === 'setup' || 
+    gameState?.phase === 'road_building') && isMyHumanTurn;
+
+  const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const isPortrait = windowSize.width < windowSize.height;
+  const shouldApplyPortraitRotation = isPortrait && !isSpectator;
+  const logicalWindowSize = {
+    width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
+    height: shouldApplyPortraitRotation ? windowSize.width : windowSize.height
+  };
+  const isMobile = logicalWindowSize.width < 1024;
+
+  // Auto-scroll to active player on mobile
+  useEffect(() => {
+    if (isMobile && playerBarRef.current && activePlayerId !== undefined && gameState) {
+      const timer = setTimeout(() => {
+        const container = playerBarRef.current;
+        const activeCard = container?.querySelector(`[data-player-index="${activePlayerId}"]`) as HTMLElement;
+        
+        if (activeCard && container) {
+          // Calculate the target scroll position to center the active card
+          const targetX = activeCard.offsetLeft - (container.clientWidth / 2) + (activeCard.clientWidth / 2);
+          
+          container.scrollTo({
+            left: targetX,
+            behavior: 'smooth'
+          });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [activePlayerId, isMobile, gameState?.phase]);
+
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [showRightPanel, setShowRightPanel] = useState(true);
+
+  const lastCenter = useRef<{x: number, y: number} | null>(null);
+  const lastDist = useRef<number>(0);
+
+  const getDistance = (p1: {x: number, y: number}, p2: {x: number, y: number}) => {
+    return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+  };
+
+  const getCenter = (p1: {x: number, y: number}, p2: {x: number, y: number}) => {
+    return {
+      x: (p1.x + p2.x) / 2,
+      y: (p1.y + p2.y) / 2,
+    };
+  };
+
+  const handleTouchMove = (e: any) => {
+    // IMPORTANT: Always prevent default to stop native browser behavior (scrolling/zoom)
+    e.evt.preventDefault();
+
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const touches = e.evt.touches;
+    const numTouches = touches.length;
+
+    if (numTouches === 1) {
+      if (!stage.draggable()) {
+        stage.draggable(true);
+      }
+    } else if (numTouches >= 2) {
+      setHasManuallyInteracted(true);
+      
+      // PERFORMANCE: Cache layer during multi-touch zoom
+    if (boardLayerRef.current && !boardLayerRef.current.isCached()) {
+        // Use standard device pixel ratio for performance
+        boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+      }
+
+      // Stop any pending drag operation to allow smooth zoom
+      if (stage.isDragging()) {
+        stage.stopDrag();
+      }
+      if (stage.draggable()) {
+        stage.draggable(false);
+      }
+
+      const touch1 = touches[0];
+      const touch2 = touches[1];
+      const p1x = touch1.clientX;
+      const p1y = touch1.clientY;
+      const p2x = touch2.clientX;
+      const p2y = touch2.clientY;
+      
+      const dist = Math.sqrt((p2x - p1x)**2 + (p2y - p1y)**2);
+      const centerX = (p1x + p2x) / 2;
+      const centerY = (p1y + p2y) / 2;
+
+      if (!lastDist.current) {
+        lastDist.current = dist;
+        lastCenter.current = { x: centerX, y: centerY };
+        return;
+      }
+      
+      const stageScale = stage.scaleX();
+      const stageX = stage.x();
+      const stageY = stage.y();
+
+      // Point relative to the stage coordinate system
+      const pointToX = (lastCenter.current!.x - stageX) / stageScale;
+      const pointToY = (lastCenter.current!.y - stageY) / stageScale;
+
+      const newScale = stageScale * (dist / lastDist.current);
+      // Reasonable scale limits for mobile
+      const clampedScale = Math.max(0.15, Math.min(4, newScale));
+
+      stage.scale({ x: clampedScale, y: clampedScale });
+
+      stage.position({
+        x: centerX - pointToX * clampedScale,
+        y: centerY - pointToY * clampedScale,
+      });
+      
+      lastDist.current = dist;
+      lastCenter.current = { x: centerX, y: centerY };
+      lastGestureTime.current = Date.now();
+    } else {
+      if (lastDist.current !== 0) {
+        lastDist.current = 0;
+        lastCenter.current = null;
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    lastDist.current = 0;
+    lastCenter.current = null;
+
+    // PERFORMANCE: Clear cache after interaction
+    if (boardLayerRef.current?.isCached()) {
+      boardLayerRef.current.clearCache();
+      boardLayerRef.current.batchDraw();
+    }
+
+    // Restore draggable state after a short delay to prevent sudden jumps
+    setTimeout(() => {
+      const stage = stageRef.current;
+      if (stage && !stage.draggable()) stage.draggable(true);
+    }, 50);
+  };
+
+  const handleTouchStart = () => {
+    lastDist.current = 0;
+    lastCenter.current = null;
+  };
+
+  const [showPlayerTradeModal, setShowPlayerTradeModal] = useState(false);
+  const [playerTradeOffer, setPlayerTradeOffer] = useState<Record<ResourceType, number>>({} as any);
+  const [playerTradeRequest, setPlayerTradeRequest] = useState<Record<ResourceType, number>>({} as any);
+  const [playerTradeTarget, setPlayerTradeTarget] = useState<number | null>(null);
+
+  const [selectedHex, setSelectedHex] = useState<string | null>(null);
+  const [showTradeModal, setShowTradeModal] = useState(false);
+  const [closedTradeIds, setClosedTradeIds] = useState<Set<string>>(new Set());
+  const [finalizingTradeIds, setFinalizingTradeIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!gameState?.tradeOffers) return;
+    gameState.tradeOffers.forEach(offer => {
+      if (offer.status !== 'pending' && !closedTradeIds.has(offer.id)) {
+        setTimeout(() => {
+          setClosedTradeIds(prev => {
+            const next = new Set(prev);
+            next.add(offer.id);
+            return next;
+          });
+        }, 500);
+      }
+    });
+  }, [gameState?.tradeOffers, closedTradeIds]);
+  const [showRulesModal, setShowRulesModal] = useState(false);
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
+  const [isStartingGame, setIsStartingGame] = useState(false);
+  const [showSailingScreen, setShowSailingScreen] = useState(() => {
+    // Check if we should show the sailing screen immediately on initial mount
+    const params = new URLSearchParams(window.location.search);
+    const activeRoom = localStorage.getItem('catan_active_room');
+    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
+    return !!params.get('room') || !!activeRoom;
+  });
+  const [sailingText, setSailingText] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const activeRoom = localStorage.getItem('catan_active_room');
+    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
+    if (wasInGame || params.get('room') || activeRoom) return "重新驶入海域......";
+    return "正在驶入海域......";
+  });
+  const sailingStartTimeRef = useRef(0);
+  const [showDebugConsole, setShowDebugConsole] = useState(false);
+  const [showDebugButton, setShowDebugButton] = useState(false);
+  const [debugModeEnabled, setDebugModeEnabled] = useState(false);
+  const logoClickCountRef = useRef(0);
+  const logoStartTimeRef = useRef<number>(0);
+
+  const prevGameStarted = useRef(gameStarted);
+  
+  useEffect(() => {
+    if (gameStarted && !prevGameStarted.current && isJoinedLobby) {
+        if (!showSailingScreen && !isAutoReconnectingRef.current) {
+           sailingStartTimeRef.current = performance.now();
+           setSailingText("正在驶入海域......");
+           setShowSailingScreen(true);
+        }
+        // After game starts once, we no longer consider it an "auto-reconnect" trigger
+        if (isAutoReconnectingRef.current) {
+          isAutoReconnectingRef.current = false;
+        }
+    }
+    prevGameStarted.current = gameStarted;
+  }, [gameStarted, isJoinedLobby, showSailingScreen]);
+
+  const [showGameOver, setShowGameOver] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showDissolveRoomConfirm, setShowDissolveRoomConfirm] = useState(false);
+  const [showExitOptions, setShowExitOptions] = useState(false);
+  const [showReserveRoomModal, setShowReserveRoomModal] = useState(false);
+  const [reserveCustomMinutes, setReserveCustomMinutes] = useState('60');
+  const [isConnected, setIsConnected] = useState(true);
+
+  const handleLogoClick = useCallback(() => {
+    const now = Date.now();
+    if (now - logoStartTimeRef.current > 3000) {
+      logoClickCountRef.current = 1;
+      logoStartTimeRef.current = now;
+    } else {
+      logoClickCountRef.current += 1;
+    }
+    
+    console.log(`Logo clicked ${logoClickCountRef.current} times`);
+
+    if (logoClickCountRef.current === 3) {
+      if (!isJoinedLobby && !gameStarted) {
+        console.log('Triggering seed modification prompt (3 clicks)');
+        const res = prompt('请输入你要设置的随机种子序号(数字):', mapPreviewSeed.toString());
+        if (res && !isNaN(Number(res))) {
+          setMapPreviewSeed(Number(res));
+          localStorage.setItem('catan_map_preview_seed', res);
+        }
+        logoClickCountRef.current = 0;
+        logoStartTimeRef.current = 0;
+      }
+    }
+
+    if (logoClickCountRef.current === 5) {
+      if (gameStarted) {
+        console.log('Toggling debug button visibility (5 clicks)');
+        setShowDebugButton(prev => {
+          const newState = !prev;
+          if (!newState) {
+            setDebugModeEnabled(false);
+            setShowDebugConsole(false);
+          }
+          return newState;
+        });
+        logoClickCountRef.current = 0;
+        logoStartTimeRef.current = 0;
+      }
+    }
+  }, [mapPreviewSeed, isJoinedLobby, gameStarted]);
+
+  useEffect(() => {
+    if (!gameStarted) {
+      setIsBoardReady(false);
+    }
+  }, [gameStarted]);
+
+  // Keep-alive ping (every 5 mins)
+  useEffect(() => {
+    const keepAliveInterval = setInterval(() => {
+      // Use silent failure for keep-alive
+      fetch('/api/health').catch(() => {
+        // Silently ignore ping failures as they are expected during server restarts or network hiccups
+      });
+    }, 5 * 60 * 1000);
+    return () => clearInterval(keepAliveInterval);
+  }, []);
+
+  useEffect(() => {
+    return socketService.onConnectionChange((connected) => {
+      setIsConnected(connected);
+      if (connected && isJoinedLobby && !isAuthLoading && currentUser) {
+        const roomId = roomState?.roomId || inputRoomId;
+        if (roomId) {
+          console.log('[App] Reconnected, rejoining room:', roomId);
+          socketService.joinRoom(roomId, playerName);
+        }
+      }
+    });
+  }, [isJoinedLobby, roomState?.roomId, inputRoomId, playerName, isAuthLoading, currentUser]);
+
+  // Auto-request fullscreen on first interaction and handle orientation
+  useEffect(() => {
+    const handleOrientation = () => {
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+    window.addEventListener('resize', handleOrientation);
+    window.addEventListener('orientationchange', handleOrientation);
+    return () => {
+      window.removeEventListener('resize', handleOrientation);
+      window.removeEventListener('orientationchange', handleOrientation);
+    };
+  }, []);
+
+  // Set meta tags for "Desktop" scaling feel on mobile
+  useEffect(() => {
+    if (isMobile) {
+      let meta = document.querySelector('meta[name="viewport"]');
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', 'viewport');
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover');
+    }
+  }, [isMobile]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      const elem = document.documentElement as any;
+      const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+      if (request) {
+        request.call(elem).catch(() => {});
+      }
+      setIsFullscreen(true);
+    } else {
+      const exit = document.exitFullscreen || (document as any).webkitExitFullscreen || (document as any).mozCancelFullScreen || (document as any).msExitFullscreen;
+      if (exit) {
+        exit.call(document);
+      }
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  // Force fullscreen on immediate load (might be blocked by browser) and listener as fallback
+  useEffect(() => {
+    const triggerFullscreen = () => {
+      if (!document.fullscreenElement) {
+        toggleFullscreen();
+      }
+    };
+    
+    // Attempt immediate
+    triggerFullscreen();
+
+    // Fallback listeners
+    window.addEventListener('click', triggerFullscreen);
+    window.addEventListener('touchstart', triggerFullscreen);
+    return () => {
+      window.removeEventListener('click', triggerFullscreen);
+      window.removeEventListener('touchstart', triggerFullscreen);
+    };
+  }, [toggleFullscreen]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const [isInitializingGame, setIsInitializingGame] = useState(false);
+  const [assetsLoaded, setAssetsLoaded] = useState(false);
+  const [playerCount, setPlayerCount] = useState(4);
+  const [botConfig, setBotConfig] = useState<boolean[]>(Array(6).fill(false));
+  const [mapType, setMapType] = useState<MapType>('archipelago');
+  const [tradeGive, setTradeGive] = useState<ResourceType | null>(null);
+  const [tradeReceive, setTradeReceive] = useState<ResourceType | null>(null);
+  const [tradeQuantity, setTradeQuantity] = useState(1);
+  const buildMode = gameState?.activeBuildMode ?? null;
+  const isHost = roomState?.hostId === socketService.playerId;
+
+  const handleSetBuildMode = useCallback((mode: typeof buildMode) => {
+    if (isMyHumanTurn) {
+      setBuildModeSync(mode);
+    }
+  }, [isMyHumanTurn, setBuildModeSync]);
+  const stageRef = useRef<any>(null);
+  const boardLayerRef = useRef<any>(null);
+  const lastGestureTime = useRef(0);
+  const [imageElements, setImageElements] = useState<Record<string, HTMLImageElement>>({});
+
+  const [connectedPlayers, setConnectedPlayers] = useState<string[]>([]);
+
+
+  const [discardSelection, setDiscardSelection] = useState<Record<ResourceType, number>>({
+    [ResourceType.Lumber]: 0,
+    [ResourceType.Brick]: 0,
+    [ResourceType.Wool]: 0,
+    [ResourceType.Grain]: 0,
+    [ResourceType.Ore]: 0,
+  });
+
+  useEffect(() => {
+    // Reset discard selection when the discarding player changes
+    setDiscardSelection({
+      [ResourceType.Lumber]: 0,
+      [ResourceType.Brick]: 0,
+      [ResourceType.Wool]: 0,
+      [ResourceType.Grain]: 0,
+      [ResourceType.Ore]: 0,
+    });
+  }, [gameState?.pendingDiscards[0]?.playerId]);
+
+  useEffect(() => {
+    if (!gameState) {
+      setHasResolvedGameOver(false);
+      return;
+    }
+    
+    if (gameState.phase === 'finished' && !hasResolvedGameOver && !showGameOver) {
+      setShowGameOver(true);
+    }
+
+    if (gameState.phase !== 'finished') {
+      setHasResolvedGameOver(false);
+    }
+  }, [gameState?.phase, hasResolvedGameOver, showGameOver]);
+
+  const hexCoords = useMemo(() => {
+    if (!gameState) return [];
+    return gameState.board.map(hex => {
+      const x = HEX_WIDTH * (hex.q + hex.r / 2);
+      const y = HEX_HEIGHT * 0.75 * hex.r;
+      return { ...hex, x, y, radius: HEX_RADIUS };
+    });
+  }, [gameState?.board]);
+
+  const hasManuallyInteractedRef = useRef(false);
+
+  const setHasManuallyInteracted = useCallback((val: boolean) => {
+    hasManuallyInteractedRef.current = val;
+  }, []);
+
+  const [isBoardReady, setIsBoardReady] = useState(false);
+
+  const centerMap = useCallback((force = false) => {
+    if (!stageRef.current || hexCoords.length === 0) return;
+    if (hasManuallyInteractedRef.current && !force) return;
+
+    const stage = stageRef.current;
+    const bounds = {
+      minX: Infinity, minY: Infinity,
+      maxX: -Infinity, maxY: -Infinity
+    };
+
+    // Find the bounding box of the actual land/sea hexes, ignoring the outer sea buffer
+    hexCoords.forEach(hex => {
+      if (hex.isOuterSea) return;
+      bounds.minX = Math.min(bounds.minX, hex.x - hex.radius);
+      bounds.minY = Math.min(bounds.minY, hex.y - hex.radius);
+      bounds.maxX = Math.max(bounds.maxX, hex.x + hex.radius);
+      bounds.maxY = Math.max(bounds.maxY, hex.y + hex.radius);
+    });
+
+    const mapWidth = bounds.maxX - bounds.minX;
+    const mapHeight = bounds.maxY - bounds.minY;
+    const sWidth = stage.width();
+    const sHeight = stage.height();
+
+    if (mapWidth === 0 || mapHeight === 0 || sWidth === 0 || sHeight === 0) return;
+
+    const scaleX = sWidth / mapWidth;
+    const scaleY = sHeight / mapHeight;
+    const scale = Math.min(scaleX, scaleY) * 0.9; // Use 90% of the space for a bit more padding
+
+    stage.scale({ x: scale, y: scale });
+
+    // Center the map within the stage
+    const newX = (sWidth - mapWidth * scale) / 2 - bounds.minX * scale;
+    const newY = (sHeight - mapHeight * scale) / 2 - bounds.minY * scale;
+    
+    stage.position({ x: newX, y: newY });
+    stage.scale({ x: scale, y: scale });
+    stage.batchDraw();
+    
+    // Ensure the transformation is committed before revealing to avoid "jumps"
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        setIsBoardReady(true);
+      }, 100);
+    });
+  }, [hexCoords]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      setWindowSize({ width, height });
+      
+      // Force panels to always show
+      setShowLeftPanel(true);
+      setShowRightPanel(true);
+      
+      setTimeout(() => centerMap(true), 50);
+      setTimeout(() => centerMap(true), 150);
+      setTimeout(() => centerMap(true), 400);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    
+    // Recenter when the window is resized or the map data changes.
+    // Use multiple timeouts to ensure layout has settled
+    const t1 = setTimeout(() => centerMap(), 100);
+    const t2 = setTimeout(() => centerMap(), 300);
+    const t3 = setTimeout(() => centerMap(), 800);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [centerMap, gameStarted, isInitializingGame, assetsLoaded]);
+
+  const zoomEndTimeoutRef = useRef<any>(null);
+
+  const handleWheel = (e: any) => {
+    setHasManuallyInteracted(true);
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // PERFORMANCE: Cache layer during wheel zoom
+    if (boardLayerRef.current) {
+      if (zoomEndTimeoutRef.current) clearTimeout(zoomEndTimeoutRef.current);
+      if (!boardLayerRef.current.isCached()) {
+        boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+      }
+      zoomEndTimeoutRef.current = setTimeout(() => {
+        boardLayerRef.current?.clearCache();
+        boardLayerRef.current?.batchDraw();
+      }, 400);
+    }
+
+    const scaleBy = 1.1;
+    const oldScale = stage.scaleX();
+    const pointer = stage.getPointerPosition();
+
+    if (!pointer) return;
+
+    const mousePointTo = {
+      x: (pointer.x - stage.x()) / oldScale,
+      y: (pointer.y - stage.y()) / oldScale,
+    };
+
+    const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+
+    // Limit scale
+    if (newScale < 0.1 || newScale > 5) return;
+
+    stage.scale({ x: newScale, y: newScale });
+
+    const newPos = {
+      x: pointer.x - mousePointTo.x * newScale,
+      y: pointer.y - mousePointTo.y * newScale,
+    };
+    stage.position(newPos);
+    stage.batchDraw();
+  };
+  const [localSavedMaps, setLocalSavedMaps] = useState<any[]>(() => {
+    const saved = localStorage.getItem('catan_saved_maps');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [dbMaps, setDbMaps] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch('/api/maps')
+      .then(res => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type');
+        if (ct && ct.includes('application/json')) return res.json();
+        return null;
+      })
+      .then(data => {
+         if (data?.maps) setDbMaps(data.maps);
+      })
+      .catch(console.error);
+  }, []);
+
+  const savedMaps = useMemo(() => {
+    return [
+      ...dbMaps.map(m => ({ ...m.mapData, id: m._id, name: m.name, isDb: true })),
+      ...localSavedMaps.map(m => ({ ...m, isLocal: true }))
+    ];
+  }, [dbMaps, localSavedMaps]);
+
+  const [mapSaveDialog, setMapSaveDialog] = useState<{ show: boolean, name: string, topology: any, board: any } | null>(null);
+  const [showMapGenerator, setShowMapGenerator] = useState(false);
+  const [showMapAlbum, setShowMapAlbum] = useState(false);
+  const [atlasLogoError, setAtlasLogoError] = useState(false);
+  const [albumFilter, setAlbumFilter] = useState<'2-4' | '5' | '6'>('2-4');
+  const [previewTopology, setPreviewTopology] = useState<any>(null);
+
+  const filteredMaps = useMemo(() => {
+    return savedMaps.filter(map => {
+      if (albumFilter === '2-4') return map.playerCount >= 2 && map.playerCount <= 4;
+      if (albumFilter === '5') return map.playerCount === 5;
+      if (albumFilter === '6') return map.playerCount === 6;
+      return true;
+    });
+  }, [savedMaps, albumFilter]);
+  const [previewBoard, setPreviewBoard] = useState<any[]>([]);
+
+  const canAfford = useCallback((cost: Record<string, number>) => {
+    if (!gameState || !me) return false;
+    return Object.entries(cost).every(([res, amt]) => me.resources[res as ResourceType] >= amt);
+  }, [gameState, me]);
+
+  // Auto-exit build mode if resources are insufficient (unless it's setup or road building card)
+  useEffect(() => {
+    if (buildMode && gameState?.phase === 'main') {
+      const freeRoads = gameState.freeRoads || 0;
+      if (buildMode === 'road' && freeRoads > 0) return;
+      
+      const costs = {
+        road: COSTS.road,
+        settlement: COSTS.settlement,
+        city: COSTS.city,
+        ship: COSTS.ship
+      };
+      if (!canAfford(costs[buildMode])) {
+        handleSetBuildMode(null);
+      }
+    }
+  }, [gameState?.players, gameState?.currentPlayerIndex, buildMode, canAfford, handleSetBuildMode, gameState?.freeRoads, gameState?.phase]);
+
+  const generatePreview = useCallback(() => {
+    const topology = generateMapTopology(mapType, playerCount);
+    setPreviewTopology(topology);
+    const board = distributeResources(topology, mapType, playerCount);
+    setPreviewBoard(board);
+  }, [mapType, playerCount, generateMapTopology, distributeResources]);
+
+  const saveMapToAlbum = () => {
+    if (!previewTopology) return;
+    const dateStr = new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '');
+    const defaultName = `${mapType === 'standard' ? '标准大陆' : '群岛世界'}-${playerCount}人-${dateStr}`;
+    setMapSaveDialog({ show: true, name: defaultName, topology: previewTopology, board: previewBoard });
+  };
+
+  const handleConfirmSaveMap = async (name: string, isOfficial: boolean) => {
+    if (!mapSaveDialog) return;
+    
+    const newMap = {
+      id: Date.now().toString(),
+      name,
+      playerCount,
+      mapType,
+      topology: mapSaveDialog.topology,
+      board: mapSaveDialog.board,
+      date: new Date().toLocaleString()
+    };
+
+    if (isOfficial && currentUser?.role === 'admin') {
+      const token = localStorage.getItem('catan_auth_token');
+      try {
+        const res = await fetch('/api/maps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name, mapData: newMap })
+        });
+        if (res.ok) {
+          fetch('/api/maps')
+            .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
+            .then(d => d && setDbMaps(d.maps || []));
+          alert('地图已保存到官方云图册！');
+          setMapSaveDialog(null);
+          return;
+        }
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    const updated = [...localSavedMaps, newMap];
+    setLocalSavedMaps(updated);
+    localStorage.setItem('catan_saved_maps', JSON.stringify(updated));
+    alert('地图已保存到本地图册！');
+    setMapSaveDialog(null);
+  };
+
+  const usePreviewMap = () => {
+    syncSettings({ 
+      customBoard: previewBoard,
+      customMapName: '随机生成地图',
+      customMapId: 'temp_preview'
+    });
+    setShowMapGenerator(false);
+  };
+
+  const useSavedMap = (savedMap: any) => {
+    const board = savedMap.board || distributeResources(savedMap.topology, savedMap.mapType, savedMap.playerCount);
+    syncSettings({
+      customBoard: board,
+      customMapName: savedMap.name,
+      customMapId: savedMap.id
+    });
+    setShowMapAlbum(false);
+  };
+
+  const deleteSavedMap = async (map: any) => {
+    if (map.isDb) {
+       if (currentUser?.role !== 'admin') {
+         // silently return to avoid exiting fullscreen with alert
+         return;
+       }
+       // removed window.confirm to prevent exiting fullscreen mode
+       const token = localStorage.getItem('catan_auth_token');
+       try {
+         await fetch(`/api/maps/${map.id}`, {
+           method: 'DELETE',
+           headers: { Authorization: `Bearer ${token}` }
+         });
+         setDbMaps(dbMaps.filter(m => m._id !== map.id));
+       } catch (e) {
+         console.error(e);
+       }
+       return;
+    }
+
+    const updated = localSavedMaps.filter((m: any) => m.id !== map.id);
+    setLocalSavedMaps(updated);
+    localStorage.setItem('catan_saved_maps', JSON.stringify(updated));
+  };
+
+  const renameSavedMap = async (map: any, newName: string) => {
+    if (map.isDb) {
+      if (currentUser?.role !== 'admin') {
+        // silently return to avoid exiting fullscreen
+        return;
+      }
+      const token = localStorage.getItem('catan_auth_token');
+      try {
+        const res = await fetch(`/api/maps/${map.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name: newName })
+        });
+        if (res.ok) {
+          setDbMaps(dbMaps.map(m => m._id === map.id ? { ...m, name: newName } : m));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      return;
+    }
+
+    const updated = localSavedMaps.map((m: any) => m.id === map.id ? { ...m, name: newName } : m);
+    setLocalSavedMaps(updated);
+    localStorage.setItem('catan_saved_maps', JSON.stringify(updated));
+  };
+
+  const uploadMapToCloud = async (map: any) => {
+    if (currentUser?.role !== 'admin') return;
+    if (!window.confirm(`确定要将本地地图 "${map.name}" 上传到官方云图册吗？`)) return;
+
+    const token = localStorage.getItem('catan_auth_token');
+    try {
+      const res = await fetch('/api/maps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: map.name, mapData: map })
+      });
+      if (res.ok) {
+        fetch('/api/maps')
+          .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
+          .then(d => d && setDbMaps(d.maps || []));
+        alert('地图已成功上传到官方云图册！');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Auto-select build mode during setup phase
+  useEffect(() => {
+    if (gameState?.phase === 'setup') {
+      const pIdx = gameState.currentPlayerIndex;
+      const settlementsCount = gameState.settlements.filter(s => s.playerId === pIdx).length;
+      const roadsCount = gameState.roads.filter(r => r.playerId === pIdx).length;
+      const shipsCount = gameState.ships.filter(s => s.playerId === pIdx).length;
+      
+      if (settlementsCount > (roadsCount + shipsCount)) {
+        if (buildMode !== 'road' && buildMode !== 'ship') handleSetBuildMode('road');
+      } else {
+        if (buildMode !== 'settlement') handleSetBuildMode('settlement');
+      }
+    } else if (gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'discard') {
+      if (buildMode !== null) handleSetBuildMode(null);
+    }
+  }, [gameState?.phase, gameState?.currentPlayerIndex, gameState?.settlements.length, gameState?.roads.length, gameState?.ships.length, handleSetBuildMode, buildMode]);
+
+  const checkIsValidEdge = useCallback((edgeId: string, mode: 'road' | 'ship') => {
+    if (!gameState) return false;
+    const player = gameState.players[gameState.currentPlayerIndex];
+    
+    // Check limits
+    const numRoads = gameState.roads.filter(r => r.playerId === player.id).length;
+    const numShips = gameState.ships.filter(s => s.playerId === player.id).length;
+    if (mode === 'road' && numRoads >= 15) return false;
+    if (mode === 'ship' && numShips >= 15) return false;
+
+    // Check if occupied
+    if (gameState.roads.some(r => r.edgeId === edgeId) || gameState.ships.some(s => s.edgeId === edgeId)) return false;
+
+
+    const hexes = getHexesForEdge(gameState.board, edgeId);
+    
+    // Pirate check - only blocks SHIPS
+    if (mode === 'ship' && hexes.some(h => h.id === gameState.pirateHexId)) return false;
+
+    // Robber check - usually doesn't block roads, but let's keep consistency if needed. 
+    // In standard Catan, robber doesn't block building, but let's assume it doesn't here.
+
+    if (mode === 'road') {
+      // Road: Must have at least one land hex adjacent
+      if (hexes.length > 0 && hexes.every(h => h.type === HexType.Sea || h.isOuterSea)) return false;
+      if (hexes.length === 0) return false;
+    } else {
+      // Ship: Must have at least one sea hex adjacent
+      if (!hexes.some(h => h.type === HexType.Sea || h.isOuterSea)) return false;
+    }
+
+    // Connectivity
+    const [v1Id, v2Id] = edgeId.split('|');
+    
+    // Setup phase logic
+    if (gameState.phase === 'setup') {
+        if (mode === 'ship') return false; // No ships in setup
+        // In setup, road must connect to the last placed settlement
+        const lastSettlement = gameState.settlements.filter(s => s.playerId === player.id).pop();
+        if (!lastSettlement) return false;
+        return lastSettlement.vertexId === v1Id || lastSettlement.vertexId === v2Id;
+    }
+
+    // Main phase connectivity
+    const hasSettlementAtV1 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v1Id);
+    const hasSettlementAtV2 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v2Id);
+    
+    const oppSettlementAtV1 = gameState.settlements.some(s => s.playerId !== player.id && s.vertexId === v1Id);
+    const oppSettlementAtV2 = gameState.settlements.some(s => s.playerId !== player.id && s.vertexId === v2Id);
+
+    const hasRoadAtV1 = gameState.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v1Id));
+    const hasRoadAtV2 = gameState.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v2Id));
+    
+    const hasShipAtV1 = gameState.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v1Id));
+    const hasShipAtV2 = gameState.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v2Id));
+
+    if (mode === 'road') {
+      // Roads can connect to other roads OR ships (at coastal vertices)
+      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1) || (hasShipAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2) || (hasShipAtV2 && !oppSettlementAtV2);
+      return canConnectV1 || canConnectV2;
+    } else {
+      // Ships can connect to other ships OR roads (at coastal vertices)
+      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1) || (hasRoadAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2) || (hasRoadAtV2 && !oppSettlementAtV2);
+      return canConnectV1 || canConnectV2;
+    }
+  }, [gameState]);
+
+  const checkIsValidVertex = useCallback((vertexId: string, mode: 'settlement' | 'city') => {
+    if (!gameState) return false;
+    const player = gameState.players[gameState.currentPlayerIndex];
+
+    const hexes = getHexesForVertex(gameState.board, vertexId);
+    
+    // Pirate check - only blocks settlements if they are on a pure sea hex (which shouldn't happen for land settlements)
+    // In standard Seafarers, the Pirate moved to a sea hex blocks that hex's production and ships.
+    // It usually doesn't block building settlements on islands.
+
+    if (mode === 'city') {
+      // Must be own settlement and not city
+      const settlement = gameState.settlements.find(s => s.vertexId === vertexId);
+      return settlement && settlement.playerId === player.id && !settlement.isCity;
+    }
+
+    // Settlement mode
+    // Must be empty
+    if (gameState.settlements.some(s => s.vertexId === vertexId)) return false;
+
+    // Must not be all sea
+    if (hexes.every(h => h.type === HexType.Sea)) return false;
+
+    // Distance rule
+    const [vx, vy] = vertexId.split(',').map(Number);
+    const isTooClose = gameState.settlements.some(s => {
+      const [sx, sy] = s.vertexId.split(',').map(Number);
+      const dist = Math.sqrt(Math.pow(vx - sx, 2) + Math.pow(vy - sy, 2));
+      return dist < 50;
+    });
+    if (isTooClose) return false;
+
+    // Setup phase
+    if (gameState.phase === 'setup') {
+        // Check if Gold (forbidden in setup)
+        if (hexes.some(h => h.type === HexType.Gold)) return false;
+        // Must be starting land
+        if (!hexes.some(h => h.isStartingLand)) return false;
+        return true;
+    }
+
+    // Main phase connectivity
+    const hasRoadConnection = 
+      gameState.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(vertexId)) ||
+      gameState.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(vertexId));
+      
+    return hasRoadConnection;
+  }, [gameState]);
+
+  const handleVertexClick = useCallback((vertexId: string, hexIds: string[]) => {
+    if (!canBuild) return;
+    
+    if (buildMode === 'settlement') {
+        if (checkIsValidVertex(vertexId, 'settlement')) {
+            buildSettlement(vertexId, hexIds);
+        }
+    } else if (buildMode === 'city') {
+        if (checkIsValidVertex(vertexId, 'city')) {
+            upgradeToCity(vertexId);
+        }
+    }
+  }, [canBuild, buildMode, checkIsValidVertex, buildSettlement, upgradeToCity, gameState?.phase, handleSetBuildMode]);
+
+  const handleEdgeClick = useCallback((edgeId: string) => {
+    if (!canBuild) return;
+
+    if (buildMode === 'road') {
+        if (checkIsValidEdge(edgeId, 'road')) {
+            buildRoad(edgeId);
+        }
+    } else if (buildMode === 'ship') {
+        if (checkIsValidEdge(edgeId, 'ship')) {
+            buildShip(edgeId);
+        }
+    }
+  }, [canBuild, buildMode, checkIsValidEdge, buildRoad, buildShip, gameState?.phase, handleSetBuildMode]);
+
+  const [pendingRobberHex, setPendingRobberHex] = useState<{ id: string, type: HexType } | null>(null);
+
+  const handleHexClick = useCallback((hexId: string, type: HexType) => {
+      // Only allow phase-related hex clicks (robber/pirate movement) if it's the active player's turn
+      if (gameState?.phase === 'robber' && amIActivePlayer) {
+          if (type === HexType.Sea) {
+              if (hexId === gameState.pirateHexId) return;
+          } else {
+              if (hexId === gameState.robberHexId) return;
+          }
+          setPendingRobberHex({ id: hexId, type });
+      } else {
+          setSelectedHex(hexId);
+      }
+  }, [gameState?.phase, gameState?.robberHexId, gameState?.pirateHexId, amIActivePlayer]);
+
+  const vertices = useMemo(() => {
+    const vMap = new Map<string, { x: number, y: number, hexIds: string[], id: string }>();
+    hexCoords.forEach(hex => {
+      for (let i = 0; i < 6; i++) {
+        const angle_rad = (Math.PI / 180) * (60 * i + 30);
+        const vx = hex.x + HEX_RADIUS * Math.cos(angle_rad);
+        const vy = hex.y + HEX_RADIUS * Math.sin(angle_rad);
+        const key = `${Math.round(vx)},${Math.round(vy)}`;
+        
+        if (!vMap.has(key)) {
+          vMap.set(key, { x: vx, y: vy, hexIds: [hex.id], id: key });
+        } else {
+          const v = vMap.get(key)!;
+          if (!v.hexIds.includes(hex.id)) v.hexIds.push(hex.id);
+        }
+      }
+    });
+    // Filter out vertices that only touch OuterSea
+    return Array.from(vMap.values()).filter(v => {
+      return v.hexIds.some(id => {
+        const hex = hexCoords.find(h => h.id === id);
+        return hex && !hex.isOuterSea;
+      });
+    });
+  }, [hexCoords]);
+
+  const edges = useMemo(() => {
+    const eMap = new Map<string, { x1: number, y1: number, x2: number, y2: number, id: string, hexIds: string[] }>();
+    hexCoords.forEach(hex => {
+      for (let i = 0; i < 6; i++) {
+        const a1 = (Math.PI / 180) * (60 * i + 30);
+        const a2 = (Math.PI / 180) * (60 * ((i + 1) % 6) + 30);
+        const x1 = hex.x + HEX_RADIUS * Math.cos(a1);
+        const y1 = hex.y + HEX_RADIUS * Math.sin(a1);
+        const x2 = hex.x + HEX_RADIUS * Math.cos(a2);
+        const y2 = hex.y + HEX_RADIUS * Math.sin(a2);
+        
+        const v1 = `${Math.round(x1)},${Math.round(y1)}`;
+        const v2 = `${Math.round(x2)},${Math.round(y2)}`;
+        const key = [v1, v2].sort().join('|');
+        if (!eMap.has(key)) {
+          eMap.set(key, { x1, y1, x2, y2, id: key, hexIds: [hex.id] });
+        } else {
+          const e = eMap.get(key)!;
+          if (!e.hexIds.includes(hex.id)) e.hexIds.push(hex.id);
+        }
+      }
+    });
+    
+    // Filter out edges that only touch OuterSea
+    return Array.from(eMap.values()).filter(e => {
+      return e.hexIds.some(id => {
+        const hex = hexCoords.find(h => h.id === id);
+        return hex && !hex.isOuterSea;
+      });
+    });
+  }, [hexCoords]);
+
+  const openPlayerTradeModal = () => {
+    setPlayerTradeOffer({
+        [ResourceType.Lumber]: 0,
+        [ResourceType.Brick]: 0,
+        [ResourceType.Wool]: 0,
+        [ResourceType.Grain]: 0,
+        [ResourceType.Ore]: 0
+    });
+    setPlayerTradeRequest({
+        [ResourceType.Lumber]: 0,
+        [ResourceType.Brick]: 0,
+        [ResourceType.Wool]: 0,
+        [ResourceType.Grain]: 0,
+        [ResourceType.Ore]: 0
+    });
+    setPlayerTradeTarget(null);
+    setShowPlayerTradeModal(true);
+  };
+
+  const handleTrade = () => {
+    if (tradeGive && tradeReceive) {
+      for (let i = 0; i < tradeQuantity; i++) {
+        tradeWithBank(tradeGive, tradeReceive);
+      }
+      setTradeGive(null);
+      setTradeReceive(null);
+      setTradeQuantity(1);
+      setShowTradeModal(false);
+    }
+  };
+
+  const getTradeRatio = useCallback((resource: ResourceType) => {
+    if (!gameState) return 4;
+    const player = gameState.players[gameState.currentPlayerIndex];
+    
+    // Find player's settlements
+    const playerSettlements = gameState.settlements.filter(s => s.playerId === player.id);
+    const playerVertexIds = new Set(playerSettlements.map(s => s.vertexId));
+    
+    // Check ports
+    const playerPorts = gameState.ports.filter(p => 
+        p.vertexIds.some(v => playerVertexIds.has(v))
+    );
+    
+    const specificPort = playerPorts.find(p => p.type === resource);
+    if (specificPort) return 2;
+    
+    const genericPort = playerPorts.find(p => p.type === '3:1');
+    if (genericPort) return 3;
+    
+    return 4;
+  }, [gameState]);
+
+  const maxTradeQuantity = useMemo(() => {
+    if (!tradeGive || !gameState) return 0;
+    const player = gameState.players[gameState.currentPlayerIndex];
+    const ratio = getTradeRatio(tradeGive);
+    return Math.floor(player.resources[tradeGive] / ratio);
+  }, [tradeGive, gameState, getTradeRatio]);
+
+  const currentTradeRatio = tradeGive ? getTradeRatio(tradeGive) : 4;
+
+  useEffect(() => {
+    if (tradeQuantity > maxTradeQuantity && maxTradeQuantity > 0) {
+      setTradeQuantity(maxTradeQuantity);
+    } else if (maxTradeQuantity === 0) {
+      setTradeQuantity(1);
+    }
+  }, [maxTradeQuantity, tradeQuantity]);
+
+  // --- HUMAN STUCK STATE RECOVERY ---
+  useEffect(() => {
+    if (!gameState) return;
+    const activePlayer = gameState.players[activePlayerId];
+    if (activePlayer?.isBot || !isMyHumanTurn) return;
+
+    // If a human player is stuck in 'stealing' phase with a target selected but the action didn't complete
+    if (gameState.phase === 'stealing' && gameState.selectedStealTarget !== null) {
+      const timer = setTimeout(() => {
+        stealResource(gameState.selectedStealTarget!);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [gameState?.phase, gameState?.selectedStealTarget, isMyHumanTurn, stealResource]);
+
+  // Auto-sync state periodically to prevent desync
+  useEffect(() => {
+    // Deliberately removed periodic sync to prevent optimistic state rollbacks.
+    // Instead we rely on WebSocket TCP delivery and manual sync on reconnect.
+  }, [roomState?.roomId, gameStarted]);
+
+  // --- BOT WATCHDOG LOGIC ---
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    const interval = setInterval(() => {
+      const activePlayer = gameState.players[gameState.currentPlayerIndex];
+      // Only forcibly end turn if it's main phase, bot is active, and they exceeded 10s.
+      if (activePlayer?.isBot && gameState.phase === 'main' && botTurnStartRef.current > 0) {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+          nextTurn();
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, botProcessorId, nextTurn]);
+
+  // --- PARALLEL BOT ACTIONS (e.g. Discarding, Trade Responses) ---
+  const processedDiscardsRef = useRef<Record<number, boolean>>({});
+
+  useEffect(() => {
+    if (!gameState || !roomState || isDiceRolling || gameState.phase !== 'discard') {
+      processedDiscardsRef.current = {};
+      return;
+    }
+    
+    // Use roomState host check to ensure only one client processes bots
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    const botPendingDiscards = gameState.pendingDiscards.filter(pd => gameState.players[pd.playerId]?.isBot);
+    
+    botPendingDiscards.forEach(pd => {
+      if (!processedDiscardsRef.current[pd.playerId]) {
+        processedDiscardsRef.current[pd.playerId] = true;
+        
+        // We use a small timeout to avoid hammering the state and simulate thinking
+        setTimeout(() => {
+          const player = gameState.players[pd.playerId];
+          const resPool = Object.entries(player.resources).flatMap(([res, count]) => Array(count).fill(res as ResourceType));
+          const toDiscard: Record<ResourceType, number> = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
+          
+          let amountToDiscard = pd.amount;
+          for (let i = 0; i < amountToDiscard; i++) {
+            if (resPool.length > 0) {
+              const idx = Math.floor(Math.random() * resPool.length);
+              toDiscard[resPool[idx]]++;
+              resPool.splice(idx, 1);
+            }
+          }
+          discardCards(pd.playerId, toDiscard);
+        }, 1500 + (Math.random() * 1000));
+      }
+    });
+  }, [gameState?.phase, gameState?.pendingDiscards, botProcessorId, isDiceRolling, discardCards, gameState?.players, roomState]);
+
+  // --- BOT LOGIC ---
+  const isProcessingBotRef = useRef(false);
+  const botTurnStartRef = useRef<number>(Date.now());
+  const lastBotStateKeyRef = useRef<string>('');
+  const discardedThisTurnRef = useRef<boolean>(false);
+  const prevPlayerIndexRef = useRef<number>(-1);
+  const botPrevHasRolledRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (!gameState) return;
+    const isNewPlayer = gameState.currentPlayerIndex !== prevPlayerIndexRef.current;
+    const justRolled = gameState.hasRolled && !botPrevHasRolledRef.current;
+    if (isNewPlayer || justRolled) {
+      botTurnStartRef.current = Date.now();
+    }
+    prevPlayerIndexRef.current = gameState.currentPlayerIndex;
+    botPrevHasRolledRef.current = gameState.hasRolled;
+  }, [gameState?.currentPlayerIndex, gameState?.hasRolled]);
+
+  useEffect(() => {
+    if (!gameState || isProcessingBotRef.current || isDiceRolling) return;
+    const activePlayer = gameState.players[activePlayerId];
+    if (!activePlayer?.isBot) {
+        lastBotStateKeyRef.current = '';
+        discardedThisTurnRef.current = false;
+        return;
+    }
+    
+    // Reset discard tracker if phase changes to something not discard
+    if (gameState.phase !== 'discard') {
+      discardedThisTurnRef.current = false;
+    }
+    
+    // Use roomState host check to ensure only one client processes bots
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    if (isDiceRolling) return; // Wait for dice rolling animation to finish!
+
+    isProcessingBotRef.current = true;
+    const timer = setTimeout(() => {
+      isProcessingBotRef.current = false;
+      if (!gameState || isDiceRolling) return;
+      const activePlayer = gameState.players[activePlayerId];
+      if (!activePlayer?.isBot) return;
+
+      const { phase, hasRolled } = gameState;
+
+      if (isDiceRolling) return; // Still rolling!
+
+    if (phase === 'initial_dice_roll') {
+      rollDice();
+      return;
+    }
+
+    if (phase === 'setup') {
+      const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+      const setupRoadsThisTurn = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+      const setupShipsThisTurn = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+      const totalPaths = setupRoadsThisTurn + setupShipsThisTurn;
+
+      if (setupSettlementsThisTurn === totalPaths) {
+        // Build settlement
+        const validVertices = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
+        if (validVertices.length > 0) {
+          const scoredVertices = validVertices.map(v => {
+            const adjacentHexes = v.hexIds.map(id => gameState.board.find(h => h.id === id)).filter(Boolean);
+            const probSum = adjacentHexes.reduce((sum, hex) => {
+              const dots = (hex!.type === HexType.Sea || hex!.type === HexType.Desert) ? 0 : 6 - Math.abs(7 - hex!.number);
+              return sum + dots;
+            }, 0);
+            return { vertex: v, score: probSum + Math.random() * 2 };
+          });
+          scoredVertices.sort((a, b) => b.score - a.score);
+          const bestV = scoredVertices[0].vertex;
+          buildSettlement(bestV.id, bestV.hexIds);
+        }
+      } else {
+        // Build road or ship
+        const lastSettlement = gameState.settlements.filter(s => s.playerId === activePlayerId).pop();
+        if (lastSettlement) {
+          const validRoadEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'road'));
+          const validShipEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'ship'));
+          
+          if (validRoadEdges.length > 0) {
+            buildRoad(validRoadEdges[Math.floor(Math.random() * validRoadEdges.length)].id);
+          } else if (validShipEdges.length > 0) {
+            buildShip(validShipEdges[Math.floor(Math.random() * validShipEdges.length)].id);
+          }
+        }
+      }
+    } else if (phase === 'main' || phase === 'road_building') {
+        if (Date.now() - botTurnStartRef.current > 10000) {
+           nextTurn();
+           return;
+        }
+
+        if (!gameState.hasRolled) {
+          // Bot: Should I play a Knight card before rolling?
+          if (!gameState.hasPlayedDevCardThisTurn && activePlayer.devCards.includes(DevCardType.Knight)) {
+            // If the robber is on one of our high-yield hexes, play Knight
+            const myProductiveHexIds = gameState.settlements
+              .filter(s => s.playerId === activePlayerId)
+              .flatMap(s => s.hexIds);
+            if (myProductiveHexIds.includes(gameState.robberHexId)) {
+              playDevCard(DevCardType.Knight);
+              return;
+            }
+          }
+
+          rollDice();
+          return;
+        }
+
+        // Try actions (using local check to avoid gameState.currentPlayerIndex mismatch)
+        const canAffordLocal = (cost: Record<string, number>) => Object.entries(cost).every(([res, amt]) => (activePlayer.resources as any)[res] >= amt);
+
+        const playerRoadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+        const playerShipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+        const playerSettlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+        const playerCitiesCount = gameState.settlements.filter(s => s.playerId === activePlayerId && s.isCity).length;
+
+        if (canAffordLocal(COSTS.city) && playerCitiesCount < 4) {
+          const upgradable = gameState.settlements.filter(s => s.playerId === activePlayerId && !s.isCity);
+          if (upgradable.length > 0) {
+            upgradeToCity(upgradable[0].vertexId);
+            return;
+          }
+        }
+
+        if (canAffordLocal(COSTS.settlement) && playerSettlementsCount < 5) {
+          const validV = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
+          if (validV.length > 0) {
+            buildSettlement(validV[0].id, validV[0].hexIds);
+            return;
+          }
+        }
+
+        if (canAffordLocal(COSTS.devCard) && gameState.bankDevCards.length > 0) {
+          buyDevCard();
+          return;
+        }
+
+        if (canAffordLocal(COSTS.road) && playerRoadsCount < 15) {
+          const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
+          if (validE.length > 0) {
+            buildRoad(validE[0].id);
+            return;
+          }
+        }
+
+        if (canAffordLocal(COSTS.ship) && playerShipsCount < 15) {
+          const validS = edges.filter(e => checkIsValidEdge(e.id, 'ship'));
+          if (validS.length > 0) {
+            buildShip(validS[0].id);
+            return;
+          }
+        }
+
+        if (phase === 'road_building' && gameState.freeRoads && gameState.freeRoads > 0) {
+           // We are in road building mode, should have already built one if we were in main before.
+           // This block handles the second road if we didn't exit.
+           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
+           if (validE.length > 0) {
+             buildRoad(validE[0].id);
+             return;
+           }
+        }
+
+        // Try bank trade if we have a lot of one resource
+        const surplusEntries = Object.entries(activePlayer.resources).filter(([_, count]) => (count as number) >= 4);
+        if (surplusEntries.length > 0) {
+          const giveRes = surplusEntries[0][0] as ResourceType;
+          const needed = [ResourceType.Ore, ResourceType.Grain, ResourceType.Brick, ResourceType.Lumber, ResourceType.Wool]
+            .find(r => activePlayer.resources[r] === 0);
+          if (needed && gameState.bankResources[needed] > 0) {
+            tradeWithBank(giveRes, needed);
+            return;
+          }
+        }
+
+        nextTurn();
+      } else if (phase === 'robber' || phase === 'robber_move') {
+        // Find a hex where opponent has buildings and move robber there
+        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.id !== gameState.robberHexId);
+        // Pirate can move to sea
+        const validSeaH = gameState.board.filter(h => h.type === HexType.Sea && h.id !== gameState.pirateHexId);
+
+        if (phase === 'robber_move' || phase === 'robber') {
+           // Decide between robber and pirate move if applicable
+           const activePlayer = gameState.players[activePlayerId];
+           const preferPirate = gameState.mapType !== 'standard' && validSeaH.length > 0 && (Math.random() < 0.5 || validH.length === 0);
+           
+           if (preferPirate) {
+              const scoredSea = validSeaH.map(h => {
+                 let score = 0;
+                 const px = Math.sqrt(3) * 40 * (h.q + h.r / 2);
+                 const py = 80 * 0.75 * h.r;
+                 const hexEdges = [];
+                 for (let i = 0; i < 6; i++) {
+                   const a1 = (Math.PI / 180) * (60 * i + 30);
+                   const a2 = (Math.PI / 180) * (60 * ((i + 1) % 6) + 30);
+                   const x1 = px + 40 * Math.cos(a1);
+                   const y1 = py + 40 * Math.sin(a1);
+                   const x2 = px + 40 * Math.cos(a2);
+                   const y2 = py + 40 * Math.sin(a2);
+                   hexEdges.push([`${Math.round(x1)},${Math.round(y1)}`, `${Math.round(x2)},${Math.round(y2)}`].sort().join('|'));
+                 }
+                 const adjShips = gameState.ships.filter(s => hexEdges.includes(s.edgeId) && s.playerId !== activePlayerId);
+                 score += adjShips.length * 5;
+                 return { id: h.id, score: score + Math.random() };
+              });
+              scoredSea.sort((a,b) => b.score - a.score);
+              movePirate(scoredSea[0].id);
+              return;
+           } else if (validH.length > 0) {
+              const scoredH = validH.map(h => {
+                 let score = 0;
+                 const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
+                 adjS.forEach(s => {
+                   if (s.playerId === activePlayerId) score -= 10;
+                   else score += (s.isCity ? 5 : 2);
+                 });
+                 if (h.type === HexType.Desert) score -= 5;
+                 return { id: h.id, score: score + Math.random() };
+              });
+              scoredH.sort((a,b) => b.score - a.score);
+              moveRobber(scoredH[0].id);
+              return;
+           } else if (validSeaH.length > 0) {
+              movePirate(validSeaH[0].id);
+              return;
+           }
+        }
+      } else if (phase === 'stealing') {
+        if (gameState.pendingStealFrom.length > 0) {
+          if (gameState.selectedStealTarget == null) {
+            // Steal from player with most points
+            const targets = gameState.pendingStealFrom.map(pid => ({ id: pid, points: gameState.players[pid].victoryPoints + (gameState.settlements.filter(s=>s.playerId===pid).length) }));
+            targets.sort((a,b) => b.points - a.points);
+            selectStealTarget(targets[0].id);
+            setTimeout(() => stealResource(targets[0].id), 1000);
+          } else {
+            // Recover from stuck state
+            stealResource(gameState.selectedStealTarget);
+          }
+        }
+      } else if (phase === 'gold_selection') {
+        const rewardAmount = gameState.pendingGoldRewards[0]?.amount || 1;
+        selectGoldResource({ lumber: 0, brick: 0, wool: 0, grain: 0, ore: rewardAmount });
+      } else {
+        // Fallback for other subphases
+        nextTurn();
+      }
+    }, 1200);
+
+    return () => {
+      clearTimeout(timer);
+      isProcessingBotRef.current = false;
+    };
+  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, botProcessorId, isDiceRolling]);
+
+  // --- INITIAL DICE ROLL DELAY LOGIC ---
+  useEffect(() => {
+    if (gameState?.phase === 'initial_dice_roll' && gameState.hasRolled) {
+      if (botProcessorId === socketService.playerId) {
+        const timer = setTimeout(() => {
+          resolveInitialRoll();
+        }, 3600); // 2500ms roll animation + 1100ms viewing time
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [gameState?.phase, gameState?.hasRolled, botProcessorId, resolveInitialRoll]);
+
+  // --- BOT TRADE EVALUATION LOGIC ---
+  const botTradeEvaluatedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!gameState || !roomState) return;
+    const isBotProcessor = botProcessorId === socketService.playerId;
+    if (!isBotProcessor) return;
+
+    if (gameState.tradeOffers) {
+      gameState.tradeOffers.forEach(offer => {
+        if (offer.status !== 'pending') return;
+
+        gameState.players.forEach(p => {
+          if (!p.isBot) return;
+          if (p.id === offer.initiatorId) return;
+
+          // If trade targeted to specific player, check bot ID
+          if (offer.targetPlayerId !== null && offer.targetPlayerId !== p.id) return;
+
+          // Check if bot has already reacted
+          if (offer.acceptedBy.includes(p.id) || offer.rejectedBy.includes(p.id)) return;
+
+          // Check if we already evaluated this combination in current session
+          const evaluationKey = `${offer.id}-${p.id}`;
+          if (botTradeEvaluatedRef.current.has(evaluationKey)) return;
+          
+          botTradeEvaluatedRef.current.add(evaluationKey);
+
+          // Give a short delay to make it feel human-like
+          setTimeout(() => {
+            // Re-evaluate in case state changed
+            const canAfford = Object.values(ResourceType).every(
+              res => (p.resources[res] || 0) >= (offer.request[res] || 0)
+            );
+
+            if (!canAfford) {
+              if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
+            } else {
+              const totalRequested = Object.values(offer.request).reduce((a, b) => a + (b || 0), 0);
+              const totalOffered = Object.values(offer.offer).reduce((a, b) => a + (b || 0), 0);
+
+              const acceptProbability = totalOffered >= totalRequested ? 0.7 : 0.2;
+              
+              if (Math.random() <= acceptProbability) {
+                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept');
+              } else {
+                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
+              }
+            }
+          }, 800 + Math.random() * 1000);
+        });
+      });
+    }
+  }, [gameState?.tradeOffers, botProcessorId, roomState?.roomId]);
+
+  useEffect(() => {
+    const imagesToPreload = [
+      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png',
+      FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
+      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png', // Icon Lumber (resource mapping)
+      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png', // Icon Dev
+      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png'  // Icon Road
+    ];
+    
+    let loadedCount = 0;
+    imagesToPreload.forEach(src => {
+      const img = new window.Image();
+      img.src = src;
+      img.onload = () => {
+        loadedCount++;
+        if (loadedCount === imagesToPreload.length) {
+          setAssetsLoaded(true);
+        }
+      };
+      img.onerror = () => {
+        loadedCount++;
+        if (loadedCount === imagesToPreload.length) {
+          setAssetsLoaded(true);
+        }
+      };
+    });
+  }, []);
+
+  const handleStartGame = async () => {
+    setIsStartingGame(true);
+    sailingStartTimeRef.current = performance.now();
+    setSailingText("正在驶入海域......");
+    setShowSailingScreen(true);
+    // Yield to the browser so the Sailing screen renders before blocking
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    if (!roomState) { setIsStartingGame(false); setShowSailingScreen(false); return; }
+    if (roomState.hostId !== socketService.playerId) { setIsStartingGame(false); setShowSailingScreen(false); return; }
+    
+    const allReady = roomState.players.every(p => p.isReady);
+    if (!allReady) {
+      console.warn("请等待所有玩家就绪后再开始游戏");
+      setIsStartingGame(false);
+      setShowSailingScreen(false);
+      return;
+    }
+
+    const totalBotCount = roomState.settings?.botConfig?.filter(b => b).length || 0;
+    const totalPlayersCount = roomState.players.length + totalBotCount;
+    const requiredPlayers = roomState.settings?.playerCount || 4;
+    
+    if (totalPlayersCount !== requiredPlayers) {
+        console.warn(`游戏需要配置刚好 ${requiredPlayers} 名玩家（包含真实玩家和机器人）`);
+        setIsStartingGame(false);
+        setShowSailingScreen(false);
+        return;
+    }
+
+    const assignedSessions = roomState.players.map(p => p.id);
+    const assignedNames = roomState.players.map(p => p.name);
+    
+    // Instead of directly initGame, set to initial_dice_roll phase
+    const initialState = initGame(
+      roomState.settings.playerCount, 
+      roomState.settings.mapType as MapType, 
+      roomState.settings.customBoard, 
+      roomState.settings.botConfig, 
+      assignedSessions,
+      assignedNames
+    );
+    
+    if (initialState) {
+      // Set to initial_dice_roll and initialize empty rolls
+      const initialStateWithRolls = {
+        ...initialState,
+        phase: 'initial_dice_roll' as const,
+        initialDiceRolls: {}
+      };
+      if (roomState?.roomId) {
+        socketService.startGame(roomState.roomId, initialStateWithRolls);
+      }
+    } else {
+      setIsStartingGame(false);
+      setShowSailingScreen(false);
+    }
+  };
+
+  const isHostInLobby = roomState?.hostId === socketService.playerId;
+
+  const standard2PlayerMap = useMemo(() => {
+    const originalMathRandom = Math.random;
+    try {
+      Math.random = seededRandom(mapPreviewSeed);
+      const topology = generateMapTopology('standard', 2);
+      return distributeResources(topology, 'standard', 2);
+    } finally {
+      Math.random = originalMathRandom;
+    }
+  }, [generateMapTopology, distributeResources, mapPreviewSeed]);
+
+  const archipelago6PlayerMap = useMemo(() => {
+    const originalMathRandom = Math.random;
+    try {
+      Math.random = seededRandom(mapPreviewSeed + 86420);
+      const topology = generateMapTopology('archipelago', 6);
+      return distributeResources(topology, 'archipelago', 6);
+    } finally {
+      Math.random = originalMathRandom;
+    }
+  }, [generateMapTopology, distributeResources, mapPreviewSeed]);
+
+  // Flexible style for Login and Lobby
+  const flexibleContainerStyle: React.CSSProperties = {
+    width: '100vw',
+    height: '100vh',
+    position: 'relative',
+    overflow: 'hidden'
+  };
+
+  // Locked landscape style for the Game
+  const lockedLandscapeStyle: React.CSSProperties = {
+    width: '100vw',
+    height: '100vh',
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    overflow: 'hidden'
+  };
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex w-full h-screen items-center justify-center bg-slate-50">
+         <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginScreen onLoginSuccess={user => setCurrentUser(user)} />;
+  }
+
+  if (showAdminDashboard && currentUser.role === 'admin') {
+    return (
+      <AdminDashboard 
+        onClose={() => setShowAdminDashboard(false)} 
+        onLogout={() => {
+          localStorage.removeItem('catan_auth_token');
+          setCurrentUser(null);
+          setShowAdminDashboard(false);
+        }} 
+      />
+    );
+  }
+
+  if (!isJoinedLobby) {
+    return (
+      <>
+      {showSailingScreen && (
+        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
+      )}
+      <div style={flexibleContainerStyle}>
+        <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative selection:bg-indigo-600 selection:text-white overflow-hidden">
+          {/* Decorative elements without CSS blurs to prevent hardware-accelerated color banding/uneven blocks */}
+          <div className="absolute inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_0%_0%,rgba(199,210,254,0.25),rgba(199,210,254,0)_45%),radial-gradient(circle_at_100%_70%,rgba(209,250,229,0.3),rgba(209,250,229,0)_50%)] bg-slate-50" />
+
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 w-full flex flex-col items-center justify-center p-4 pb-28 min-h-0 relative z-10 overflow-y-auto no-scrollbar">
+          {activeLobbyTab === 'lobby' ? (
+            <motion.div 
+              initial={{ opacity: 0, y: 20, scale: 0.95 }} 
+              animate={{ opacity: 1, y: 0, scale: 1 }} 
+              className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl shadow-indigo-100/50 border border-slate-200 max-w-[90vw] sm:max-w-md w-full text-center flex flex-col items-center"
+            >
+              <div className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-2 bg-slate-50 rounded-2xl flex items-center justify-center shadow-inner border border-slate-100 relative" onClick={handleLogoClick}>
+                {isSpectator && (
+                  <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default rounded-2xl" title="观战模式" />
+                )}
+                <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-8 h-8 sm:w-12 sm:h-12 object-contain drop-shadow-lg" />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-serif font-black italic mb-0.5 text-slate-800 tracking-tight leading-none">CATAN</h1>
+              <p className="text-[7px] sm:text-[9px] uppercase tracking-[0.4em] opacity-40 font-black mb-6 text-indigo-900">Professional Online Edition</p>
+              
+              <div className="flex flex-col gap-3 text-left w-full">
+                <div className="group text-center mb-2">
+                   <p className="text-sm font-bold text-slate-700">欢迎, {playerName}</p>
+                </div>
+                <div className="group">
+                  <label className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-1 block group-focus-within:text-indigo-500 transition-colors">房间代码</label>
+                  <div className="relative">
+                    <input 
+                      type="text" 
+                      value={inputRoomId}
+                      onChange={e => setInputRoomId(e.target.value)}
+                      placeholder="6位房间代码"
+                      disabled={!!localStorage.getItem('catan_active_room')}
+                      className="w-full bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white text-sm disabled:bg-slate-100 disabled:opacity-70 disabled:cursor-not-allowed"
+                    />
+                    {!!localStorage.getItem('catan_active_room') && (
+                      <Lock size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                    )}
+                  </div>
+                </div>
+                
+                <button 
+                  id="join-room-button"
+                  onClick={handleJoinRoom}
+                  className="w-full bg-indigo-600 text-white py-3 sm:py-4 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all mt-2 relative overflow-hidden group text-xs shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
+                >
+                  <span className="relative z-10 flex items-center justify-center gap-2"><Swords size={16} /> 进入海域</span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                </button>
+                {localStorage.getItem('catan_active_room') && (
+                  <button 
+                    onClick={() => {
+                      localStorage.removeItem('catan_active_room');
+                      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                      setRoomState(null);
+                    }}
+                    className="w-full mt-2 text-center text-slate-400 hover:text-red-500 text-[10px] uppercase font-black tracking-widest transition-colors py-2 flex items-center justify-center gap-1.5 group rounded-lg hover:bg-red-50"
+                  >
+                    <Trash2 size={12} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                    放弃重连，离开海域
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          ) : activeLobbyTab === 'rooms' ? (
+             <div className="w-full h-full max-w-[90vw] sm:max-w-[800px] pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
+               <GameRoomsTab 
+                 currentUser={currentUser} 
+                 onJoinRoom={(roomId) => {
+                   setInputRoomId(roomId);
+                   setActiveLobbyTab('lobby');
+                   setTimeout(() => document.getElementById('join-room-button')?.click(), 100);
+                 }}
+                 onSpectateRoom={(roomId) => {
+                   setInputRoomId(roomId);
+                   localStorage.setItem('catan_player_name', playerName);
+                   localStorage.setItem('catan_active_room', roomId);
+                   try {
+                     const newUrl = new URL(window.location.href);
+                     newUrl.searchParams.set('room', roomId);
+                     window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                   } catch (e) {}
+
+                   setSailingText("正在驶入海域......");
+                   setShowSailingScreen(true);
+                   socketService.joinRoom(roomId, playerName);
+                   setIsJoinedLobby(true);
+                 }}
+               />
+             </div>
+          ) : activeLobbyTab === 'rules' ? (
+             <div className="w-full h-full max-w-[90vw] sm:max-w-[800px] pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
+               <RulesModal inline={true} />
+             </div>
+          ) : (
+             <div className="w-full h-full max-w-[90vw] sm:max-w-md pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
+               <UserProfileModal
+                 currentUser={currentUser}
+                 onClose={() => {}}
+                 onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
+                 onLogout={() => {
+                   localStorage.removeItem('catan_auth_token');
+                   localStorage.removeItem('catan_player_name');
+                   setCurrentUser(null);
+                   setRoomState(null);
+                   setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                   setActiveLobbyTab('lobby');
+                 }}
+                 onAdminDashboard={() => setShowAdminDashboard(true)}
+                 inline={true}
+               />
+             </div>
+          )}
+        </div>
+
+        {/* Bottom Tab Bar */}
+        <div className="absolute bottom-0 left-0 w-full bg-white/70 backdrop-blur-xl border-t border-white/50 pt-3 pb-6 px-4 flex justify-center gap-8 sm:gap-12 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-50">
+           <button
+             onClick={() => setActiveLobbyTab('lobby')}
+             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+           >
+             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'lobby' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
+               <Swords size={22} />
+             </div>
+             <span className="text-[10px] font-black tracking-widest">好友约战</span>
+           </button>
+
+           <button
+             onClick={() => setActiveLobbyTab('rooms')}
+             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'rooms' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+           >
+             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'rooms' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
+               <Home size={22} />
+             </div>
+             <span className="text-[10px] font-black tracking-widest">游戏大厅</span>
+           </button>
+
+           <button
+             onClick={() => setActiveLobbyTab('profile')}
+             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'profile' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+           >
+             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'profile' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
+               <User size={22} />
+             </div>
+             <span className="text-[10px] font-black tracking-widest">我的</span>
+           </button>
+
+           <button
+             onClick={() => setActiveLobbyTab('rules')}
+             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'rules' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+           >
+             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'rules' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
+               <BookOpen size={22} />
+             </div>
+             <span className="text-[10px] font-black tracking-widest">游戏规则</span>
+           </button>
+        </div>
+      </div>
+      {showDebugButton && (
+        <button 
+          onClick={() => {
+            const newMode = !debugModeEnabled;
+            setDebugModeEnabled(newMode);
+            setShowDebugConsole(newMode);
+          }}
+          className="fixed bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+        >
+          调试
+        </button>
+      )}
+      <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+      <SoundSettingsModal 
+        isOpen={showSoundModal} 
+        onClose={() => setShowSoundModal(false)} 
+        isAdmin={currentUser?.role === 'admin'}
+      />
+    </div>
+    </>
+    );
+  }
+
+  if (!gameStarted) {
+    return (
+      <>
+        {showSailingScreen && (
+          <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
+        )}
+      <MapAlbumModal
+        isOpen={showMapAlbum}
+        onClose={() => setShowMapAlbum(false)}
+        savedMaps={savedMaps}
+        currentUser={currentUser}
+        onSelectMap={useSavedMap}
+        onDeleteMap={deleteSavedMap}
+        onRenameMap={renameSavedMap}
+        onUploadMap={uploadMapToCloud}
+        onGenerateNew={() => {
+          setShowMapAlbum(false);
+          setShowMapGenerator(true);
+        }}
+        albumFilter={albumFilter}
+        setAlbumFilter={setAlbumFilter}
+        MapPreviewRenderer={MapPreview}
+        selectedMapId={roomState?.settings?.customMapId}
+      />
+
+      <MapGeneratorModal
+        isOpen={showMapGenerator}
+        onClose={() => setShowMapGenerator(false)}
+        playerCount={roomState?.settings?.playerCount || 4}
+        mapType={roomState?.settings?.mapType as MapType || 'standard'}
+        generatePreview={generatePreview}
+        saveMapToAlbum={saveMapToAlbum}
+        startWithPreviewMap={usePreviewMap}
+        previewBoard={previewBoard}
+        MapPreviewRenderer={MapPreview}
+      />
+
+      <SaveMapConfirmModal
+        isOpen={!!mapSaveDialog}
+        onClose={() => setMapSaveDialog(null)}
+        defaultName={mapSaveDialog?.name || ''}
+        isAdmin={currentUser?.role === 'admin'}
+        onSave={handleConfirmSaveMap}
+      />
+
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-auto animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-lg font-black text-slate-800 mb-2">操作确认</h3>
+            <p className="text-sm font-medium text-slate-600 mb-6">{confirmAction.message}</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setConfirmAction(null)}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  confirmAction.onConfirm();
+                  setConfirmAction(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-indigo-500 text-white hover:bg-indigo-600 shadow-md shadow-indigo-200 transition-colors"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      
+      <div style={flexibleContainerStyle}>
+        <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-hidden relative selection:bg-indigo-600 selection:text-white">
+        {/* Decorative Background Gradient */}
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_rgba(79,70,229,0)_60%)] pointer-events-none z-0" />
+        
+        {/* Left Side: Branding & Controls */}
+        <motion.div 
+          initial={{ opacity: 0, x: -50 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 relative z-10 overflow-hidden min-h-0"
+        >
+          {/* Header & Logo Section */}
+          <div className="flex items-center gap-2 sm:gap-4 mb-2 sm:mb-4 px-1 lg:px-2 shrink-0 h-16 sm:h-20 lg:h-24 relative" onClick={handleLogoClick}>
+            <div className="w-10 h-10 sm:w-16 lg:w-20 lg:h-20 bg-white rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 shadow-xl shadow-indigo-100 border border-slate-100 relative overflow-hidden group">
+              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-xl sm:rounded-b-2xl opacity-50" />
+              {isSpectator && (
+                <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
+              )}
+              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-6 h-6 sm:w-10 lg:w-12 lg:h-12 object-contain relative z-10 drop-shadow-xl group-hover:scale-110 transition-transform duration-500" />
+            </div>
+            <div className="flex flex-col justify-center">
+              <h1 className="text-xl sm:text-3xl lg:text-6xl font-serif font-black italic tracking-tighter text-slate-900 leading-none drop-shadow-sm">CATAN</h1>
+              <p className="text-[6px] sm:text-[9px] lg:text-[11px] uppercase tracking-[0.5em] text-indigo-600 font-black mt-0.5 sm:mt-1">航海家版 · SEAFARERS</p>
+            </div>
+          </div>
+
+          <div className="flex-1" />
+
+          <div className="w-full max-w-lg space-y-2 sm:space-y-4 px-1 lg:px-2 flex flex-col justify-end min-h-0">
+            {/* Map Settings */}
+            <div className={!isHostInLobby ? 'opacity-70 pointer-events-none' : ''}>
+              <div className="flex items-center justify-between mb-0.5 sm:mb-2 ml-2">
+                <h3 className="text-[8px] font-black uppercase tracking-widest text-slate-400">地图选择</h3>
+                {isHostInLobby && <span className="text-[7px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">配置中</span>}
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                {[
+                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆' },
+                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿' }
+                ].map(map => {
+                  const isSelected = mapType === map.id && !roomState?.settings?.customBoard;
+                  return (
+                    <button
+                      key={map.id}
+                      onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined }); }}
+                      className={`flex flex-col items-center gap-1 sm:gap-2 p-1.5 sm:p-4 rounded-xl lg:rounded-2xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-white/50 border-slate-100 hover:border-indigo-200 text-slate-700'}`}
+                    >
+                      <div className={`w-14 h-10 sm:w-20 sm:h-16 lg:w-28 lg:h-20 relative overflow-hidden flex items-center justify-center transition-transform duration-500 ${isSelected ? 'scale-110' : ''}`}>
+                        <div className="absolute inset-x-0 inset-y-[-20%] pointer-events-none">
+                          <MapPreview board={map.board} isTopologyOnly={true} isLogo={true} />
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-center">
+                        <span className={`text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] ${isSelected ? 'text-indigo-600' : ''}`}>{map.label}</span>
+                        <span className="text-[6px] sm:text-[8px] opacity-50 font-bold mt-0.5 uppercase tracking-wider">{map.desc}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex gap-2 items-stretch mt-1">
+              {isHostInLobby && (
+                <button
+                  onClick={() => setShowMapAlbum(true)}
+                  className={`flex-1 flex flex-col items-center justify-center p-2 rounded-xl transition-all group overflow-hidden relative border ${roomState?.settings?.customBoard ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-indigo-50/50 border-indigo-100/50 hover:bg-indigo-100/50'}`}
+                >
+                  {roomState?.settings?.customBoard ? (
+                    <div className="absolute inset-0 opacity-100 group-hover:scale-105 transition-transform duration-500">
+                      <MapPreview board={roomState.settings.customBoard} isTopologyOnly={true} isLogo={true} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center relative mb-0.5">
+                        {!atlasLogoError ? (
+                          <img 
+                            src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%9C%B0%E5%9B%BE%E5%86%8C.png" 
+                            className="w-full h-full object-contain relative z-10" 
+                            alt="Atlas" 
+                            referrerPolicy="no-referrer"
+                            onError={() => setAtlasLogoError(true)}
+                          />
+                        ) : (
+                          <span className="text-xl sm:text-2xl">🗺️</span>
+                        )}
+                      </div>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-900 mt-1 relative z-10 transition-opacity opacity-100">地图收藏册</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              <div className={`${isHostInLobby ? 'flex-[2]' : 'w-full'} flex flex-col gap-1.5`}>
+                {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
+                  <button 
+                    onClick={handleToggleReady}
+                    disabled={isSpectator}
+                    className={`relative z-50 w-full bg-emerald-600 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale ${isSpectator ? 'opacity-50 grayscale' : ''}`}
+                  >
+                    <Play size={isMobile ? 10 : 14} fill="currentColor" />
+                    {isHostInLobby ? '就绪' : '准备游戏'}
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleToggleReady}
+                    disabled={isSpectator}
+                    className={`w-full bg-white text-slate-500 py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] border-2 border-slate-100 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] ${isSpectator ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                  >
+                    <X size={isMobile ? 10 : 14} />
+                    等待房主开启游戏
+                  </button>
+                )}
+                {isHostInLobby && !isSpectator && (
+                  <button 
+                    onClick={handleStartGame}
+                    disabled={isStartingGame || !roomState?.players.every(p => p.isReady) || !roomState || (roomState.players.length + (roomState.settings?.botConfig?.filter(b => b).length || 0)) !== roomState.settings?.playerCount}
+                    className="w-full bg-slate-900 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-[9px] sm:text-[10px] relative overflow-hidden"
+                  >
+                    <span className="relative z-10 flex items-center justify-center gap-2">
+                      {isStartingGame ? (
+                        <>
+                          <div className="w-2.5 h-2.5 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                          生成中
+                        </>
+                      ) : (
+                        roomState?.players.every(p => p.isReady) ? '开启游戏' : '等待全体玩家就绪'
+                      )}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+
+        {/* Right Side: Online Status & Room Info */}
+        <motion.div 
+          initial={{ opacity: 0, x: 50 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
+          className="w-full sm:h-full flex flex-col p-3 sm:p-4 lg:p-6 bg-white/80 sm:bg-white/60 backdrop-blur-3xl border-l border-slate-200 z-20 sm:w-[320px] md:w-[400px] lg:w-[480px] shrink-0 overflow-hidden min-h-0 shadow-2xl sm:shadow-none"
+        >
+          <div className="flex flex-col gap-2 sm:gap-4 w-full max-w-sm mx-auto h-full">
+            
+            {/* Room Info Section */}
+            <div className="relative">
+              <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-100 shadow-sm flex items-start justify-between gap-4 overflow-x-auto no-scrollbar min-h-[52px]">
+                <div className="flex items-start gap-4">
+                  {/* 1. 在线匹配玩家 and Player count */}
+                  <div className="flex flex-col gap-1 items-center shrink-0 pt-2 pb-1">
+                    <h2 className="text-[11px] sm:text-xs font-black font-serif italic text-emerald-600 tracking-tight leading-none">在线匹配玩家</h2>
+                    <div className={`flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-full border shadow-sm ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+                      <div className={`w-1 h-1 rounded-full animate-pulse ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest leading-none">{(roomState?.players.length || 0) + botConfig.filter(b => b).length} / {playerCount}</span>
+                    </div>
+                  </div>
+
+                  {/* 2. 设定人数 and dropdown */}
+                  <div className="flex flex-col gap-1.5 items-center pl-4 border-l border-slate-100 shrink-0 pt-0.5">
+                    <span className="text-[10px] sm:text-[11px] uppercase font-black tracking-widest text-slate-400 leading-none">设定人数</span>
+                    <div className="relative inline-block mt-1">
+                      <select 
+                        value={playerCount} 
+                        onChange={e => {
+                          const newCount = Number(e.target.value);
+                          setPlayerCount(newCount);
+                          syncSettings({ playerCount: newCount });
+                        }}
+                        disabled={!isHostInLobby}
+                        className="text-[13px] sm:text-sm font-black text-slate-800 outline-none disabled:opacity-50 appearance-none cursor-pointer pr-4 bg-transparent leading-none"
+                      >
+                        {[2, 3, 4, 5, 6].map(num => <option key={num} value={num}>{num} 人</option>)}
+                      </select>
+                      <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. 房间代码 and copy */}
+                <div className="flex flex-col gap-1.5 items-start pl-4 border-l border-slate-100 shrink-0 pt-0.5 pr-1 relative overflow-hidden">
+                  {/* Spectator logo mask */}
+                  {isSpectator && (
+                    <div className="absolute inset-0 bg-transparent pointer-events-none z-0" />
+                  )}
+                  <div className="relative z-10 flex flex-col gap-1.5 items-start">
+                    <span className="text-[9px] uppercase font-black tracking-widest text-slate-400 leading-none -ml-1">房间代码</span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[12px] sm:text-sm font-mono font-black text-slate-800 tracking-tighter leading-none">{roomState?.roomId || inputRoomId}</span>
+                      <div className="flex items-center gap-0.5 ml-1">
+                        <Eye size={10} className="text-stone-500 fill-stone-100/50" />
+                        <span className="text-[9px] font-mono font-black text-stone-500">{roomState?.spectators?.length || 0}</span>
+                        {isSpectator && (
+                          <button 
+                            onClick={handleReturnToLobby}
+                            className="ml-2 text-red-500 hover:text-red-600 transition-all transform active:scale-90 relative z-20"
+                            title="退出观战"
+                          >
+                            <LogOut size={12} className="scale-x-[-1]" />
+                          </button>
+                        )}
+                      </div>
+                      <button 
+                        onClick={handleCopyRoomCode}
+                        className="hover:bg-indigo-50 p-1 rounded-md transition-all border border-transparent -my-1 -mr-1 relative z-20"
+                      >
+                        <Copy size={11} className="text-indigo-400 block" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Players List */}
+            <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-1 no-scrollbar pt-2">
+              {Array.from({ length: Math.max(playerCount, (roomState?.players.length || 0) + botConfig.filter(b => b).length) }).map((_, globalIndex) => {
+                const paddedBotConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
+                const isBot = paddedBotConfig[globalIndex];
+                const nonBotSlotsBefore = paddedBotConfig.slice(0, globalIndex).filter(b => !b).length;
+                const p = roomState?.players[nonBotSlotsBefore];
+
+                if (!isBot && p) {
+                  return (
+                    <div key={p.id} className="flex items-center justify-between p-2.5 sm:p-3 rounded-xl bg-white border border-slate-100 shadow-sm transition-all hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-50 group">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 relative bg-slate-50 border border-slate-100 group-hover:scale-105 transition-transform duration-300">
+                          <User size={14} className="text-slate-400" />
+                          {roomState.hostId === p.id && (
+                            <div className="absolute -top-1 -right-1 bg-indigo-600 border border-white text-white p-0.5 rounded-full text-[5px] shadow-lg" title="房主">👑</div>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-black text-[11px] sm:text-xs leading-none text-slate-800 tracking-tight flex items-center gap-1">
+                            {p.name} {p.disconnected && <span className="text-red-500 text-[8px] animate-pulse">(掉线)</span>}
+                          </span>
+                          {p.id === socketService.playerId && <span className="text-[6px] font-black uppercase tracking-widest text-indigo-500 mt-0.5 block">这是我</span>}
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        {isHostInLobby && p.id !== socketService.playerId && (
+                          <div className="flex flex-col sm:flex-row items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setConfirmAction({
+                                  message: `确定要把 ${p.name} 降级为观众吗？`,
+                                  onConfirm: () => socketService.demoteToSpectator(roomState.roomId, p.id)
+                                });
+                              }}
+                              className="text-[9px] font-black bg-stone-100 text-stone-500 hover:bg-orange-100 hover:text-orange-600 px-2 py-1 rounded transition-colors"
+                            >
+                              降级
+                            </button>
+                            <button
+                              onClick={() => {
+                                setConfirmAction({
+                                  message: `确定要把 ${p.name} 踢出房间吗？`,
+                                  onConfirm: () => socketService.kickPlayer(roomState.roomId, p.id)
+                                });
+                              }}
+                              className="text-[9px] font-black bg-stone-100 text-stone-500 hover:bg-red-100 hover:text-red-600 px-2 py-1 rounded transition-colors"
+                            >
+                              踢出
+                            </button>
+                          </div>
+                        )}
+                        {p.isReady ? (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                            <Check size={8} className="text-emerald-600" />
+                            <span className="text-[7px] font-black uppercase tracking-widest text-emerald-600">已就绪</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200">
+                            <div className="w-0.5 h-0.5 rounded-full bg-slate-300 animate-pulse" />
+                            <span className="text-[7px] font-black uppercase tracking-widest text-slate-400">筹备中</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100 shadow-lg shadow-indigo-50/50' : 'border-dashed border-slate-200 opacity-40 hover:opacity-100 hover:border-indigo-200 group'}`}>
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200 group-hover:bg-slate-50'}`}>
+                        {isBot ? <Bot size={14} className="text-indigo-600" /> : <Users size={12} className="text-slate-300" />}
+                      </div>
+                      <div className="flex flex-col">
+                        <span className={`text-[11px] font-black transition-colors ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
+                        {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest">高级AI</span>}
+                      </div>
+                    </div>
+                    {isHostInLobby && (
+                      <button 
+                        onClick={() => {
+                          const newConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
+                          newConfig[globalIndex] = !newConfig[globalIndex];
+                          setBotConfig(newConfig);
+                          syncSettings({ botConfig: newConfig });
+                        }}
+                        className={`text-[7px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
+                      >
+                        {isBot ? '撤防' : '配置AI玩家'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {roomState?.spectators && roomState.spectators.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-slate-100/50">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-1 flex items-center gap-1.5"><Eye size={10} /> 观众席 ({roomState.spectators.length})</h3>
+                <div className="flex flex-col gap-1 overflow-y-auto max-h-24 pr-1 no-scrollbar">
+                  {roomState.spectators.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between p-2 rounded-lg bg-stone-50 border border-stone-100 group">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded flex items-center justify-center bg-stone-200 text-stone-400">
+                          <Eye size={10} />
+                        </div>
+                        <span className="font-black text-[10px] text-stone-600 truncate max-w-[100px]">{s.name} {s.disconnected && <span className="text-red-500 text-[8px] animate-pulse">(掉线)</span>}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isHostInLobby && (
+                          <div className="flex flex-col sm:flex-row items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setConfirmAction({
+                                  message: `确定要把 ${s.name} 升级为玩家吗？`,
+                                  onConfirm: () => socketService.promoteToPlayer(roomState.roomId, s.id)
+                                });
+                              }}
+                              className="text-[8px] font-black bg-stone-200 text-stone-600 hover:bg-emerald-100 hover:text-emerald-700 px-1.5 py-0.5 rounded transition-colors"
+                            >
+                              上船
+                            </button>
+                            <button
+                              onClick={() => {
+                                setConfirmAction({
+                                  message: `确定要把 ${s.name} 踢出房间吗？`,
+                                  onConfirm: () => socketService.kickPlayer(roomState.roomId, s.id)
+                                });
+                              }}
+                              className="text-[8px] font-black bg-stone-200 text-stone-600 hover:bg-red-100 hover:text-red-600 px-1.5 py-0.5 rounded transition-colors"
+                            >
+                              踢出
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="pt-2 sm:pt-4 flex flex-col items-center gap-2 border-t border-slate-100">
+               <button 
+                 onClick={(e) => {
+                   e.preventDefault();
+                   e.stopPropagation();
+                   const roomId = roomState?.roomId || inputRoomId;
+                   if (roomId) {
+                     socketService.leaveRoom(roomId);
+                   }
+                   localStorage.removeItem('catan_active_room');
+                   setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                   setRoomState(null);
+                   setIsJoinedLobby(false);
+                   try { window.history.replaceState({}, '', window.location.pathname); } catch (err) {}
+                 }}
+                 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-2"
+               >
+                 <LogOut size={12} className="scale-x-[-1]" />
+                 离开房间
+               </button>
+               
+               {isSpectator && (
+                 <div className="mt-2">
+                 </div>
+               )}
+               
+               {isHostInLobby && !isSpectator && (
+                 <button 
+                   onClick={() => {
+                     if (confirm('确定要解散此房间吗？所有玩家将被移出。')) {
+                       const roomId = roomState?.roomId || inputRoomId;
+                       if (roomId) {
+                         socketService.resetGame(roomId);
+                       }
+                     }
+                   }}
+                   className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500 hover:text-red-700 transition-colors flex items-center gap-2 mt-2"
+                 >
+                   <Trash2 size={12} />
+                   解散房间
+                 </button>
+               )}
+            </div>
+          </div>
+        </motion.div>
+      </div>
+      {showDebugButton && (
+        <button 
+          onClick={() => {
+            const newMode = !debugModeEnabled;
+            setDebugModeEnabled(newMode);
+            setShowDebugConsole(newMode);
+          }}
+          className="fixed bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+        >
+          调试
+        </button>
+      )}
+
+      {/* Copy Toast fixed at screen level */}
+      <AnimatePresence>
+        {showCopyToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-12 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-[12px] sm:text-sm px-4 py-2 rounded-xl shadow-2xl whitespace-nowrap z-[9999] font-medium"
+          >
+            已复制房间代码，去邀请好友来玩吧
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+    </>
+    );
+  }
+
+  if (!roomState) {
+    return (
+      <>
+      {showSailingScreen && (
+        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
+      )}
+      <div style={flexibleContainerStyle}>
+        <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e]" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
+          <div className="w-16 h-16 bg-white/80 rounded-2xl shadow-xl shadow-sky-200 border border-white/50 flex items-center justify-center mb-6 animate-pulse">
+            <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan" className="w-10 h-10 object-contain opacity-70" />
+          </div>
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#0c4a6e] animate-pulse">正在进入海域......</p>
+        </div>
+      </div>
+      </>
+    );
+  }
+
+  if (!gameState) {
+    return (
+      <>
+        {showSailingScreen && (
+          <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
+        )}
+        <div style={lockedLandscapeStyle}>
+        <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
+      {/* Ocean atmosphere */}
+      <div className="absolute inset-0 bg-white/40 pointer-events-none" />
+      
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="text-center relative z-10"
+      >
+        <h1 className="text-6xl sm:text-8xl font-serif italic font-black mb-4 tracking-tighter text-[#0c4a6e] drop-shadow-[0_2px_10px_rgba(255,255,255,0.8)]">CATAN</h1>
+        <div className="w-24 h-1 bg-indigo-200 mx-auto mb-10 overflow-hidden rounded-full">
+          <motion.div 
+            initial={{ x: '-100%' }}
+            animate={{ x: '100%' }}
+            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+            className="w-full h-full bg-[#0369a1]"
+          />
+        </div>
+        <p className="text-[10px] sm:text-xs uppercase tracking-[0.5em] font-black text-[#0369a1]">连接卡坦岛......</p>
+      </motion.div>
+    </div>
+  </div>
+  </>
+  );
+}
+
+  const actingPlayer = gameState?.players[activePlayerId];
+  const settlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
+  const roadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
+  const shipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+  const totalRoadsAndShips = roadsCount + shipsCount;
+  
+  const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
+  const canPlayDevCard = gameState?.phase === 'main' && isMyHumanTurn;
+
+  const leftWidth = isMobile ? Math.max(logicalWindowSize.width * 0.18, 160) : 280;
+  const rightWidth = isMobile ? Math.max(logicalWindowSize.width * 0.20, 180) : 280;
+  const stageWidth = logicalWindowSize.width - leftWidth - rightWidth;
+  const headerHeight = isMobile ? 40 : 54;
+
+  const nextAction = (() => {
+    if (!gameState) return null;
+    const actingPlayerName = actingPlayer?.name || `玩家 ${activePlayerId + 1}`;
+    
+    if (gameState.phase === 'order_determination' || gameState.phase === 'initial_dice_roll') {
+      const myRolls = gameState.initialDiceRolls[myPlayerIndex];
+      const hasRolled = myRolls && myRolls.length > 0;
+      if (activePlayerId === myPlayerIndex) {
+        return hasRolled ? "等待结果..." : "请掷骰决定顺序";
+      }
+      return hasRolled ? "等待结果..." : `等待 ${actingPlayerName} 掷骰`;
+    }
+
+    if (gameState.phase === 'setup') {
+      return activePlayerId === myPlayerIndex 
+        ? "初始建设：请放置建筑" 
+        : `等待 ${actingPlayerName} 建设`;
+    }
+
+    if (activePlayerId === myPlayerIndex) {
+      if (!gameState.hasRolled && gameState.phase === 'main') return "请掷骰子回合开始";
+      if (gameState.phase === 'main') return "交易与建设中";
+      if (gameState.phase === 'discard') return "请弃置一半资源";
+      if (gameState.phase === 'robber' || gameState.phase === 'robber_move') return "请移动强盗";
+      if (gameState.phase === 'stealing') return "请选择窃取对象";
+      if (gameState.phase === 'road_building') return "建设道路/船只";
+      if (gameState.phase === 'year_of_plenty') return "领取丰收资源";
+      if (gameState.phase === 'monopoly') return "执行资源垄断";
+      if (gameState.phase === 'gold_selection') return "领取金矿奖励";
+    }
+
+    // Waiting for others
+    const phaseShortNames: Record<string, string> = {
+      'main': '回合中',
+      'discard': '弃牌中',
+      'robber': '移动强盗',
+      'robber_move': '移动强盗',
+      'stealing': '窃取中',
+      'road_building': '道路/船只建设',
+      'year_of_plenty': '丰收之年',
+      'monopoly': '垄断中',
+      'gold_selection': '奖励确认'
+    };
+    const phaseDesc = phaseShortNames[gameState.phase] || '行动中';
+    return `${actingPlayerName} ${phaseDesc}...`;
+  })();
+
+  return (
+    <>
+      {showSailingScreen && (
+        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
+      )}
+    {/* {isSpectator && roomState && (
+      <button 
+        onClick={handleReturnToLobby}
+        className="fixed top-2 right-2 z-[9999] flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white rounded-full font-black uppercase tracking-[0.2em] shadow-md hover:bg-red-700 transition-all border border-white/20 pointer-events-auto text-[10px] group"
+      >
+        <LogOut size={12} className="group-hover:-translate-x-1 transition-transform" />
+        <span>退出</span>
+      </button>
+    )} */}
+    <div style={lockedLandscapeStyle}>
+      {shouldApplyPortraitRotation && <PortraitOverlay />}
+      <div 
+        style={shouldApplyPortraitRotation ? {
+          width: windowSize.height,
+          height: windowSize.width,
+          transform: 'rotate(90deg)',
+          transformOrigin: 'top left',
+          position: 'absolute',
+          top: 0,
+          left: windowSize.width,
+        } : {
+          width: '100%',
+          height: '100%'
+        }}
+        className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
+      >
+
+      <header className="w-full flex items-center bg-white border-b border-black/5 px-2 z-50 overflow-hidden" style={{ height: headerHeight }}>
+        {/* Left: Logo & Room Code */}
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 cursor-default lg:absolute lg:left-2">
+          <div className="flex items-center gap-2 lg:gap-3 relative" onClick={handleLogoClick}>
+            <div className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center relative">
+              {isSpectator && (
+                <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
+              )}
+              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
+            </div>
+            <div className="flex items-center pr-4 border-r border-black/5 relative gap-2 h-full">
+              {/* Spectator logo mask */}
+              {isSpectator && (
+                <div className="absolute inset-0 bg-transparent pointer-events-none z-0" />
+              )}
+              <div className="relative z-10 flex flex-col items-center justify-center font-sans">
+                <span className="text-[8px] lg:text-[9px] uppercase font-black tracking-[0.2em] opacity-40 leading-[1.2]">海域代码</span>
+                <span className="text-[13px] uppercase font-black tracking-tighter opacity-90 leading-[1.2]">{roomState?.roomId || 'OFFLINE'}</span>
+              </div>
+              <div className="relative z-10 flex flex-col items-center justify-center gap-1 ml-1.5 h-full">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowRulesModal(true); }}
+                  className="text-stone-400 hover:text-stone-600 transition-colors flex items-center justify-center"
+                  title="游戏规则"
+                >
+                  <BookOpen size={14} strokeWidth={2} />
+                </button>
+                <div className="flex items-center justify-center text-stone-400 relative" title="观战人数">
+                  <Eye size={14} strokeWidth={2} className="fill-transparent" />
+                  <span className="absolute left-full ml-1 text-[9px] font-mono font-black leading-none">{roomState?.spectators?.length || 0}</span>
+                </div>
+              </div>
+              <div className="relative z-10 flex flex-col items-center justify-center gap-1 ml-1.5 h-full">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowSoundModal(true); }}
+                  className="text-stone-400 hover:text-stone-600 transition-colors flex items-center justify-center"
+                  title="声音设置"
+                >
+                  <Bell size={14} strokeWidth={2} />
+                </button>
+              </div>
+              {isSpectator && (
+                <button 
+                  onClick={handleReturnToLobby}
+                  className="ml-3 text-red-400 hover:text-red-600 transition-all transform active:scale-90 relative z-20 flex items-center"
+                  title="退出观战"
+                >
+                  <LogOut size={13} strokeWidth={2.5} className="scale-x-[-1]" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Player Cards */}
+        <div 
+          ref={playerBarRef}
+          className="flex-1 flex justify-start lg:justify-center overflow-x-auto no-scrollbar py-1 lg:ml-32 lg:mr-32"
+        >
+          <div className="flex items-center gap-2 lg:gap-4 px-4 lg:px-0">
+            {gameState.players.map((p, i) => {
+              const isCurrent = i === activePlayerId;
+              const displayResources = (isDiceRolling && !isSpectator && displayedResourcesMap[p.id]) ? displayedResourcesMap[p.id] : p.resources;
+              const resourceCount = Object.values(displayResources).reduce((a, b) => a + b, 0);
+              const publicScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints;
+              const isFocused = isSpectator && i === spectatorFocusId;
+
+              return (
+                <div 
+                  key={p.id} 
+                  data-player-index={i}
+                  onClick={() => {
+                    console.log("Player card clicked for index:", i);
+                    if (isSpectator) {
+                      setSpectatorFocusId(prev => prev === i ? null : i);
+                      console.log("Spectator focus set/unset to:", i);
+                    }
+                  }}
+                  className={`relative shrink-0 group flex items-center ${isMobile ? 'gap-1 px-1.5 py-0.5' : 'gap-2 px-3 py-1'} rounded-full transition-all duration-500 
+                    ${isCurrent ? 'bg-indigo-50 border border-indigo-100 shadow-sm' : 'opacity-60 hover:opacity-100'}
+                    ${isFocused && !isCurrent ? 'ring-2 ring-indigo-400 bg-indigo-50/50 opacity-100' : ''}
+                    ${isSpectator ? 'cursor-pointer active:scale-95' : 'cursor-default'}
+                  `}>
+                <div 
+                  onClick={() => {
+                    if (p.sessionId === socketService.playerId) {
+                      toggleBot(p.id);
+                    }
+                  }}
+                  className={`rounded-full border border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${isMobile ? 'w-5 h-5' : 'w-4 h-4'} ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
+                  style={{ backgroundColor: p.color }}
+                >
+                  {p.isBot ? (
+                    <Bot size={isMobile ? 10 : 8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
+                  ) : (
+                    <User size={isMobile ? 10 : 8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
+                  )}
+                </div>
+                <div className="flex flex-col flex-1 pl-0.5">
+                    <div className="flex items-center gap-1">
+                      <span className={`${isMobile ? 'text-[9px]' : 'text-[11px]'} font-bold leading-none truncate max-w-[40px] md:max-w-[80px]`}>{p.name}</span>
+                      {roomState?.players?.find(rp => rp.id === p.sessionId)?.disconnected && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[8px] bg-red-100 text-red-600 px-1 py-0.5 rounded font-bold shadow-sm whitespace-nowrap animate-pulse">掉线</span>
+                        </div>
+                      )}
+                      {gameState.longestRoadPlayerId === p.id && (
+                        <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-[#b79148]/20 border border-[#b79148]/40 shadow-sm" title={`最长道路 (${p.longestRoadLength})`}>
+                          <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png" alt="longest-road" className="w-2.5 h-2.5 object-contain" />
+                        </div>
+                      )}
+                      {gameState.largestArmyPlayerId === p.id && (
+                        <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-slate-500/20 border border-slate-500/40 shadow-sm" title={`最大名望骑士 (${p.knightsPlayed})`}>
+                          <span className="text-[8px] leading-none">⚔️</span>
+                        </div>
+                      )}
+                      {((gameState.phase === 'initial_dice_roll' || gameState.phase === 'order_determination' || (gameState.phase === 'setup' && gameState.settlements.length < gameState.players.length)) && gameState.initialDiceRolls[i]) ? (
+                        <div className="flex items-center gap-0.5 px-1 rounded-sm bg-orange-500/10 border border-orange-500/20">
+                          <span className="text-[8px] font-black text-orange-600">
+                            {isDiceRolling ? "?" : String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center mt-0.5 leading-none">
+                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}分</span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
+                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png" alt="res" className="w-2.5 h-2.5 object-contain" />
+                        {resourceCount}
+                      </span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
+                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png" alt="dev" className="w-2.5 h-2.5 object-contain" />
+                        {p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length}
+                      </span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
+                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png" alt="road" className="w-2.5 h-2.5 object-contain" />
+                        {p.longestRoadLength}
+                      </span>
+                      <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="骑士">
+                        <span className="text-[10px]">⚔️</span>
+                        {p.knightsPlayed}
+                      </span>
+                    </div>
+                </div>
+              </div>
+            );
+          })}
+          </div>
+        </div>
+      </header>
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Spectator interaction blocker - Adjusted to not cover the top bar (h-16) */}
+        {isSpectator && (
+          <div className="fixed top-16 inset-x-0 bottom-0 z-[80] pointer-events-auto bg-transparent select-none cursor-default" />
+        )}
+        {/* Left Panel */}
+        <AnimatePresence>
+          {showLeftPanel && (
+            <motion.aside 
+              initial={{ width: leftWidth }}
+              animate={{ width: leftWidth }}
+              exit={{ width: 0 }}
+              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white overflow-y-auto no-scrollbar overflow-x-hidden shrink-0 z-50 relative`}
+            >
+              <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
+            <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
+              <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">银行库存</h3>
+            </div>
+            <div className={`grid grid-cols-3 grid-rows-2 ${isMobile ? 'gap-0.5' : 'gap-1'}`}>
+              {Object.entries(gameState.bankResources).map(([res, count]) => {
+                return (
+                <div key={res} className={`flex items-center justify-between ${isMobile ? 'p-0.5 px-1' : 'p-1.5'} rounded-md bg-stone-100/50 border border-black/10`}>
+                  <ResourceIcon type={res as ResourceType} className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
+                  <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold opacity-60`}>{count}</span>
+                </div>
+                );
+              })}
+              <div className={`flex items-center justify-between ${isMobile ? 'p-0.5 px-1' : 'p-1.5'} rounded-md bg-red-600 shadow-sm text-white`}>
+                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-black`}>发</span>
+                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold`}>{gameState.bankDevCards.length}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className={`${isMobile ? 'pt-1' : 'pt-4'} border-t border-black/5`}>
+            <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-2'}`}>
+              <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">
+                {isSpectator ? `${visiblePlayer?.name || '玩家'}的资源卡` : (gameState.phase === 'discard' && gameState.pendingDiscards.some(p => p.playerId === myPlayerIndex) ? '弃牌阶段' : '我的资源卡')}
+              </h3>
+              <Info size={12} className="opacity-20" />
+            </div>
+            {/* Action panels removed from here, now in Central overlay */}
+            <div className="grid grid-cols-1 gap-1">
+              {Object.entries((isDiceRolling && !isSpectator && visiblePlayer && displayedResourcesMap[visiblePlayer.id]) ? displayedResourcesMap[visiblePlayer.id] : (visiblePlayer?.resources || {})).map(([res, count]) => (
+                  <ResourceRow key={res} type={res as ResourceType} count={count} compact={isMobile} playerId={visiblePlayer?.id} />
+                ))}
+              </div>
+          </section>
+
+          <section className="pt-2 border-t border-black/5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">我的发展卡</h3>
+            </div>
+            <div className="space-y-1.5">
+              {visiblePlayer?.devCards.length === 0 && (!visiblePlayer?.devCardsBoughtThisTurn || visiblePlayer?.devCardsBoughtThisTurn.length === 0) && (!visiblePlayer?.playedDevCards || visiblePlayer?.playedDevCards.length === 0) ? (
+                <p className="text-[10px] opacity-30 italic">暂无发展卡</p>
+              ) : (
+                <>
+                  {/* Playable Cards */}
+                  {visiblePlayer && visiblePlayer.devCards.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">可使用</h4>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {Object.values(DevCardType).map(type => {
+                          const count = visiblePlayer.devCards.filter(c => c === type).length;
+                          if (count === 0) return null;
+                          
+                          return (
+                            <div key={`playable-${type}`} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100 shadow-sm group hover:border-red-200 transition-all">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-lg bg-zinc-100 flex items-center justify-center text-xs relative shadow-inner">
+                                  {type === DevCardType.Knight ? '⚔️' : 
+                                   type === DevCardType.VictoryPoint ? '🏆' :
+                                   type === DevCardType.RoadBuilding ? '🛣️' :
+                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                                  {count > 1 && (
+                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold ring-2 ring-white">
+                                      {count}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-[9px] font-black uppercase tracking-tight">
+                                  {type === DevCardType.Knight ? '骑士' : 
+                                   type === DevCardType.VictoryPoint ? '胜利点' :
+                                   type === DevCardType.RoadBuilding ? '道路建设' :
+                                   type === DevCardType.YearOfPlenty ? '丰收之年' : '垄断'}
+                                </span>
+                              </div>
+                              {type !== DevCardType.VictoryPoint && (
+                                <div className="flex items-center gap-1.5 grayscale group-hover:grayscale-0 transition-all">
+                                  {gameState.playingDevCard === type ? (
+                                    <span className="text-[8px] font-black uppercase tracking-widest bg-stone-100 text-stone-400 px-2 py-1 rounded-full">
+                                      正在使用
+                                    </span>
+                                  ) : (
+                                    <button 
+                                      onClick={() => setConfirmDevCard(type)}
+                                      disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn || visiblePlayer.id !== me.id}
+                                      className="text-[8px] font-black uppercase tracking-widest bg-black text-white px-1.5 py-0.5 rounded-full hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed"
+                                    >
+                                      使用
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bought This Turn */}
+                  {visiblePlayer && visiblePlayer.devCardsBoughtThisTurn && visiblePlayer.devCardsBoughtThisTurn.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">本回合购买</h4>
+                      {Object.values(DevCardType).map(type => {
+                        const count = visiblePlayer.devCardsBoughtThisTurn.filter(c => c === type).length;
+                        if (count === 0) return null;
+                        
+                        return (
+                          <div key={`bought-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/50 border border-red-100 shadow-sm opacity-60">
+                            <div className="flex items-center justify-between mx-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
+                                  {type === DevCardType.Knight ? '⚔️' : 
+                                   type === DevCardType.VictoryPoint ? '🏆' :
+                                   type === DevCardType.RoadBuilding ? '🛣️' :
+                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                                  {count > 1 && (
+                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
+                                      {count}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-[8px] font-black uppercase tracking-tight">
+                                  {type === DevCardType.Knight ? '骑士' : 
+                                   type === DevCardType.VictoryPoint ? '胜利点' :
+                                   type === DevCardType.RoadBuilding ? '道路建设' :
+                                   type === DevCardType.YearOfPlenty ? '丰收之年' : '垄断'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Played Cards */}
+                  {visiblePlayer && visiblePlayer.playedDevCards && visiblePlayer.playedDevCards.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">已使用</h4>
+                      {Object.values(DevCardType).map(type => {
+                        const count = visiblePlayer.playedDevCards.filter(c => c === type).length;
+                        if (count === 0 || (gameState.playingDevCard === type && count === 1)) return null;
+                        
+                        const displayCount = gameState.playingDevCard === type ? count - 1 : count;
+                        if (displayCount === 0) return null;
+                        
+                        return (
+                          <div key={`played-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/30 border border-red-100/50 opacity-40 grayscale">
+                            <div className="flex items-center justify-between mx-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
+                                  {type === DevCardType.Knight ? '⚔️' : 
+                                   type === DevCardType.VictoryPoint ? '🏆' :
+                                   type === DevCardType.RoadBuilding ? '🛣️' :
+                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                                  {displayCount > 1 && (
+                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
+                                      {displayCount}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-[8px] font-black uppercase tracking-tight line-through">
+                                  {type === DevCardType.Knight ? '骑士' : 
+                                   type === DevCardType.VictoryPoint ? '胜利点' :
+                                   type === DevCardType.RoadBuilding ? '道路建设' :
+                                   type === DevCardType.YearOfPlenty ? '丰收之年' : '垄断'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+        </motion.aside>
+      )}
+    </AnimatePresence>
+
+        {/* Center Map */}
+        <main className="flex-1 flex relative overflow-hidden bg-[#e4e3e0]">
+          <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+
+          {/* Dev Card Overlay */}
+          <AnimatePresence>
+            {devCardOverlay && (
+              <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+              >
+                <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full text-white shadow-2xl flex items-center gap-3 border border-white/10">
+                  <span className="text-xl">✨</span>
+                  <p className="font-bold tracking-widest text-sm whitespace-nowrap">
+                    <span className="text-amber-400">{devCardOverlay.playerName}</span> {devCardOverlay.actionStr}
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Action Guidance Text */}
+          {gameStarted && nextAction && (
+            <div className="absolute bottom-1.5 left-1.5 z-40 max-w-[40%] pointer-events-none">
+              <p className="text-[10px] font-black italic uppercase tracking-[0.2em] text-black/25 leading-none">
+                {nextAction}
+              </p>
+            </div>
+          )}
+
+          
+          {gameStarted && (
+            <div className={`absolute top-1 left-1 z-[50] flex flex-col gap-0.5 pointer-events-auto ${isMobile ? 'scale-90 origin-top-left' : ''}`}>
+              {!isSpectator && (
+                <button 
+                  onClick={() => {
+                    if (isHost) {
+                      setShowExitOptions(true);
+                    } else {
+                      handleReturnToLobby();
+                    }
+                  }}
+                  className={`flex items-center justify-center ${isMobile ? 'w-8 h-8 rounded-md' : 'w-10 h-10 rounded-lg'} bg-white/90 backdrop-blur-xl border border-black/5 text-stone-600 shadow-xl hover:bg-stone-100 transition-all transform active:scale-95 group pointer-events-auto`}
+                  style={{ cursor: 'pointer' }}
+                  title={isHost ? "退出选项" : "中途离开"}
+                >
+                  <LogOutIcon size={isMobile ? 12 : 18} className="group-hover:-translate-x-0.5 transition-transform scale-x-[-1]" />
+                </button>
+              )}
+
+              {isHost && !isSpectator && (
+                <button 
+                  onClick={() => setShowReserveRoomModal(true)}
+                  className={`flex items-center justify-center gap-1.5 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-3 py-2 text-[11px] rounded-lg'} bg-white/90 backdrop-blur-xl border border-black/5 text-stone-600 font-bold uppercase tracking-widest shadow-xl hover:bg-emerald-50 hover:text-emerald-600 transition-all transform active:scale-95 group relative`}
+                  title="保留房间"
+                >
+                  <Clock size={isMobile ? 10 : 14} className={roomState?.reservedUntil ? "text-emerald-500" : ""} />
+                  {roomState?.reservedUntil && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500"></span>}
+                  <span className="hidden md:inline">{roomState?.reservedUntil ? '已保留' : '保留房间'}</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Connection Error Banner */}
+          {!isConnected && (
+            <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-auto">
+              <div className="bg-red-500 text-white px-8 py-6 rounded-[2rem] shadow-2xl shadow-red-500/20 text-center flex flex-col items-center animate-pulse">
+                <RefreshCw size={48} className="animate-spin mb-4" />
+                <h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-sm">连接已断开</h3>
+                <p className="text-sm opacity-90 mt-2 font-medium max-w-sm leading-relaxed">正在尝试重新连接到服务器，请稍候...</p>
+              </div>
+            </div>
+          )}
+
+
+
+          {gameStarted && (
+            <div className={`absolute top-2 right-2 z-[100] flex gap-1 ${isMobile ? 'flex-col gap-1' : ''}`}>
+              {gameState.winnerId !== null && (
+                <button
+                  onClick={() => setShowGameOver(true)}
+                  className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 bg-white/90 text-amber-600 animate-pulse`}
+                >
+                  <Trophy size={isMobile ? 10 : 16} />
+                  <span>结算</span>
+                </button>
+              )}
+              <button
+                onClick={toggleFullscreen}
+                className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 bg-white/90 text-stone-600`}
+              >
+                {isFullscreen ? <Minimize size={isMobile ? 10 : 16} /> : <Maximize size={isMobile ? 10 : 16} />}
+                <span>{isFullscreen ? '退屏' : '全屏'}</span>
+              </button>
+              <button
+                id="toggle-bot-button"
+                onClick={() => toggleBot(myPlayerIndex)}
+                className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 ${me?.isBot ? 'bg-indigo-500 text-white' : 'bg-white/90 text-stone-600'} ${isSpectator ? 'opacity-50 cursor-not-allowed' : ''}`}
+                disabled={isSpectator}
+              >
+                <Bot size={isMobile ? 10 : 16} />
+                <span>托管</span>
+              </button>
+            </div>
+          )}
+
+          {/* Debug Button */}
+          {showDebugButton && (
+            <button 
+              onClick={() => {
+                const newMode = !debugModeEnabled;
+                setDebugModeEnabled(newMode);
+                setShowDebugConsole(newMode);
+              }}
+              className="absolute bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
+            >
+              调试
+            </button>
+          )}
+
+          <div className={`w-full h-full transition-opacity duration-700 ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
+            <Stage 
+            ref={stageRef}
+            width={stageWidth} 
+            height={logicalWindowSize.height - headerHeight}
+            draggable
+            onDragStart={() => {
+              setHasManuallyInteracted(true);
+              if (boardLayerRef.current) {
+                // Standard pixel ratio for performance during interaction
+                boardLayerRef.current.cache({ pixelRatio: (window.devicePixelRatio || 1) });
+              }
+            }}
+            onDragEnd={() => {
+              boardLayerRef.current?.clearCache();
+            }}
+            onWheel={handleWheel}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onDblClick={() => {
+              if (Date.now() - lastGestureTime.current > 300) {
+                centerMap(true);
+              }
+            }}
+            onDblTap={() => {
+              if (Date.now() - lastGestureTime.current > 300) {
+                centerMap(true);
+              }
+            }}
+          >
+            <Layer ref={boardLayerRef}>
+              {hexCoords.filter(hex => !hex.isOuterSea).map((hex) => (
+                <HexCell 
+                  key={hex.id} 
+                  hex={hex} 
+                  isSelected={selectedHex === hex.id}
+                  isRobber={gameState.robberHexId === hex.id}
+                  isPirate={gameState.pirateHexId === hex.id}
+                  onClick={() => handleHexClick(hex.id, hex.type as HexType)}
+                />
+              ))}
+              
+              {/* Debug: Detection Areas */}
+              {debugModeEnabled && hexCoords.filter(hex => !hex.isOuterSea).map(hex => (
+                <Circle
+                  key={`debug-${hex.id}`}
+                  x={hex.x}
+                  y={hex.y}
+                  radius={12}
+                  fill="rgba(255, 0, 0, 0.3)"
+                  stroke="red"
+                  strokeWidth={1}
+                  listening={false}
+                />
+              ))}
+
+              {/* Edges for Roads/Ships */}
+              {edges.map(edge => {
+                const road = gameState.roads.find(r => r.edgeId === edge.id);
+                const ship = gameState.ships.find(s => s.edgeId === edge.id);
+                const port = gameState.ports.find(p => p.edgeId === edge.id);
+                const color = road ? gameState.players.find(p => p.id === road.playerId)?.color : ship ? gameState.players.find(p => p.id === ship.playerId)?.color : 'transparent';
+                const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
+                
+                let nx = 0;
+                let ny = 0;
+
+                if (port) {
+                  const adjacentHexes = getHexesForEdge(hexCoords, edge.id);
+                  const landHex = adjacentHexes.find(h => h && (h.isMainland || h.isIsland));
+                  if (landHex) {
+                    const cx = (edge.x1 + edge.x2) / 2;
+                    const cy = (edge.y1 + edge.y2) / 2;
+                    const dx = cx - landHex.x;
+                    const dy = cy - landHex.y;
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    if (len > 0) {
+                      nx = dx / len;
+                      ny = dy / len;
+                    }
+                  }
+                }
+
+                return (
+                  <Group key={edge.id}>
+                    {port && (
+                      <Port 
+                        port={port} 
+                        cx={(edge.x1 + edge.x2) / 2} 
+                        cy={(edge.y1 + edge.y2) / 2} 
+                        nx={nx}
+                        ny={ny}
+                      />
+                    )}
+                    <Line
+                      id={`edge-debug-${edge.id}`}
+                      points={[edge.x1, edge.y1, edge.x2, edge.y2]}
+                      stroke="rgba(255, 0, 0, 0.2)"
+                      strokeWidth={20}
+                      listening={false}
+                      perfectDrawEnabled={false}
+                      visible={debugModeEnabled}
+                    />
+                    <Line
+                      id={`edge-${edge.id}`}
+                      points={[edge.x1, edge.y1, edge.x2, edge.y2]}
+                      stroke={color !== 'transparent' ? color : ((effectiveBuildMode === 'road' || effectiveBuildMode === 'ship') && checkIsValidEdge(edge.id, effectiveBuildMode as any) ? 'rgba(0,0,0,0.3)' : 'transparent')}
+                      strokeWidth={6}
+                      hitStrokeWidth={25}
+                      dash={ship ? [10, 5] : []}
+                      lineCap="round"
+                      lineJoin="round"
+                      listening={color !== 'transparent' || ((effectiveBuildMode === 'road' || effectiveBuildMode === 'ship') && checkIsValidEdge(edge.id, effectiveBuildMode as any))}
+                      onClick={() => handleEdgeClick(edge.id)}
+                      onTap={() => handleEdgeClick(edge.id)}
+                      perfectDrawEnabled={false}
+                      onMouseEnter={(e: any) => {
+                        if (canBuild && (buildMode === 'road' || buildMode === 'ship') && checkIsValidEdge(edge.id, buildMode)) {
+                          e.target.stroke('rgba(0,0,0,0.5)');
+                          e.target.getStage().container().style.cursor = 'pointer';
+                        }
+                      }}
+                      onMouseLeave={(e: any) => {
+                        if (canBuild && (buildMode === 'road' || buildMode === 'ship') && checkIsValidEdge(edge.id, buildMode)) {
+                          e.target.stroke('rgba(0,0,0,0.3)');
+                          e.target.getStage().container().style.cursor = 'default';
+                        }
+                      }}
+                    />
+                  </Group>
+                );
+              })}
+
+              {/* Vertices for Settlements/Cities */}
+              {vertices.map(vertex => {
+                const settlement = gameState.settlements.find(s => s.vertexId === vertex.id);
+                const color = settlement ? gameState.players.find(p => p.id === settlement.playerId)?.color : 'transparent';
+                const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
+                const isValid = (isMyHumanTurn ? canBuild : true) && (effectiveBuildMode === 'settlement' || effectiveBuildMode === 'city') && checkIsValidVertex(vertex.id, effectiveBuildMode as any);
+
+                const isValidCityUpgrade = settlement && !settlement.isCity && effectiveBuildMode === 'city' && checkIsValidVertex(vertex.id, 'city');
+                
+                const handleMouseEnter = (e: any) => {
+                  if (isValid || isValidCityUpgrade) {
+                    if (isMyHumanTurn) e.target.getStage().container().style.cursor = 'pointer';
+                    e.target.to({ scaleX: 1.2, scaleY: 1.2, duration: 0.1 });
+                  }
+                };
+
+                const handleMouseLeave = (e: any) => {
+                  if (isValid || isValidCityUpgrade) {
+                    if (isMyHumanTurn) e.target.getStage().container().style.cursor = 'default';
+                    e.target.to({ scaleX: 1, scaleY: 1, duration: 0.1 });
+                  }
+                };
+
+                const handleClick = () => handleVertexClick(vertex.id, vertex.hexIds);
+
+                return (
+                  <Group key={vertex.id} id={`vertex-${vertex.id}`} x={vertex.x} y={vertex.y}>
+                    {/* Debug hit area for vertices */}
+                    {debugModeEnabled && (
+                      <Circle
+                        radius={12}
+                        fill="rgba(0, 255, 0, 0.2)"
+                        stroke="green"
+                        strokeWidth={1}
+                        listening={false}
+                      />
+                    )}
+                    {/* Invisible hit area for city upgrade */}
+                    {isValidCityUpgrade && (
+                      <Circle 
+                        radius={16}
+                        fill={debugModeEnabled ? "rgba(0, 0, 255, 0.2)" : "transparent"}
+                        stroke={debugModeEnabled ? "blue" : "transparent"}
+                        strokeWidth={debugModeEnabled ? 1 : 0}
+                        onClick={handleClick}
+                        onTap={handleClick}
+                        onMouseEnter={handleMouseEnter}
+                        onMouseLeave={handleMouseLeave}
+                      />
+                    )}
+                    {settlement ? (
+                      settlement.isCity ? (
+                        // City Icon (Building SVG)
+                        <Path
+                          data="M-8 -10 L-8 10 L8 10 L8 -2 L2 -2 L2 -10 Z"
+                          fill={color}
+                          stroke="#fff"
+                          strokeWidth={1.5}
+                          scaleX={1.2}
+                          scaleY={1.2}
+                          shadowColor="black"
+                          shadowBlur={5}
+                          shadowOpacity={0.3}
+                          listening={false} // Visual only
+                          perfectDrawEnabled={false}
+                        />
+                      ) : (
+                        // Settlement Icon (House SVG)
+                        <Path
+                          data="M-8 0 L0 -8 L8 0 L8 8 L-8 8 Z"
+                          fill={color}
+                          stroke="#fff"
+                          strokeWidth={1.5}
+                          scaleX={1.1}
+                          scaleY={1.1}
+                          shadowColor="black"
+                          shadowBlur={5}
+                          shadowOpacity={0.3}
+                          listening={isValidCityUpgrade}
+                          onClick={handleClick}
+                          onTap={handleClick}
+                          onMouseEnter={handleMouseEnter}
+                          onMouseLeave={handleMouseLeave}
+                          perfectDrawEnabled={false}
+                        />
+                      )
+                    ) : (
+                      // Preview Icon & Hit Area
+                      isValid && (
+                        <>
+                          <Circle
+                            radius={16} // Provide a generous hit area for ease of use
+                            fill={debugModeEnabled ? "rgba(255, 0, 0, 0.2)" : "transparent"}
+                            stroke={debugModeEnabled ? "red" : "transparent"}
+                            strokeWidth={debugModeEnabled ? 1 : 0}
+                            onClick={handleClick}
+                            onTap={handleClick}
+                            onMouseEnter={handleMouseEnter}
+                            onMouseLeave={handleMouseLeave}
+                            perfectDrawEnabled={false}
+                          />
+                          <Circle
+                            radius={6} // Visual indicator
+                            fill={'rgba(0,0,0,0.3)'}
+                            listening={false}
+                            perfectDrawEnabled={false}
+                          />
+                        </>
+                      )
+                    )}
+                  </Group>
+                );
+              })}
+
+              {/* Robber/Pirate Icons - Rendered last to be on top */}
+              {hexCoords.map(hex => {
+                const isRobber = gameState.robberHexId === hex.id;
+                const isPirate = gameState.pirateHexId === hex.id;
+                const isPhaseRobber = gameState.phase === 'robber';
+                
+                if (isRobber) {
+                  return <RobberToken key={`robber-${hex.id}`} x={hex.x} y={hex.y} isPhaseRobber={isPhaseRobber} />;
+                }
+                if (isPirate) {
+                  return <PirateToken key={`pirate-${hex.id}`} x={hex.x} y={hex.y} isPhaseRobber={isPhaseRobber} />;
+                }
+                return null;
+              })}
+              {gameState?.pirateHexId === 'pirate_start' && (() => {
+                  const OuterHexes = gameState.board.map(hex => ({
+                      ...hex,
+                      x: HEX_WIDTH * (hex.q + hex.r / 2),
+                      y: HEX_HEIGHT * 0.75 * hex.r
+                  })).filter(h => h.isOuterSea || h._category === 'OuterSea' || h.type === HexType.Sea);
+                  
+                  if (OuterHexes.length > 0) {
+                      // Sort by x + y to get the top-left most hex
+                      const edgeSea = OuterHexes.sort((a, b) => (a.x + a.y) - (b.x + b.y))[0];
+                      return <PirateToken key="pirate-start" x={edgeSea.x} y={edgeSea.y} isPhaseRobber={gameState.phase === 'robber'} />;
+                  }
+                  return null;
+              })()}
+            </Layer>
+          </Stage>
+          </div>
+
+          {/* Dice Floating Controls */}
+          <AnimatePresence>
+            {!gameState.hasRolled && gameState.phase !== 'setup' && (
+              <motion.div
+                initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
+                transition={{ type: 'spring', bounce: 0.4, duration: 0.6 }}
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
+              >
+                <motion.button 
+                  whileHover={isMyHumanTurn ? { scale: 1.05 } : {}}
+                  whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
+                  onClick={() => isMyHumanTurn && rollDice()}
+                  disabled={!isMyHumanTurn}
+                  className={`no-click-sound ${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
+                    isMyHumanTurn 
+                      ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
+                      : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
+                  }`}
+                >
+                  <Dices size={isMobile ? 14 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
+                  <span className={`${isMobile ? 'text-[10px]' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait">
+            {(gameState.hasRolled || (gameState.phase === 'initial_dice_roll' && gameState.dice && gameState.dice[0] > 0)) && (
+              <motion.div
+                key={gameState.hasRolled ? 'main-roll' : `initial-roll-${Object.keys(gameState.initialDiceRolls).length}`}
+                initial={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
+                animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
+                exit={{ opacity: 0, scale: 0.5, y: -50 }}
+                transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
+              >
+                <div className={`bg-white ${isMobile ? 'p-2' : 'p-3'} rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-3 overflow-visible`}>
+                  <div className="flex gap-1.5 overflow-visible">
+                    <DiceFace 
+                      key={`dice1-${diceAnimId}`} 
+                      value={gameState.dice?.[0] || 1} 
+                      isRolling={isDiceRolling}
+                      diceIndex={1}
+                    />
+                    <DiceFace 
+                      key={`dice2-${diceAnimId}`} 
+                      value={gameState.dice?.[1] || 1} 
+                      isRolling={isDiceRolling}
+                      diceIndex={2}
+                    />
+                  </div>
+                  <div className="flex items-center justify-center min-w-[2.5rem] h-full text-center">
+                    <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}>
+                      {diceSum}
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        
+{/* Exit Options Modal */}
+      <AnimatePresence>
+        {showExitOptions && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowExitOptions(false)}
+              className="absolute inset-0 bg-stone-900/40"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-xs w-full flex flex-col items-center text-center max-h-[85vh] overflow-hidden"
+            >
+              <h3 className="text-lg font-black text-stone-800 mb-4">退出选项</h3>
+              
+              <div className="flex flex-col w-full gap-2">
+                <button 
+                  onClick={() => {
+                    handleReturnToLobby();
+                    setShowExitOptions(false);
+                  }}
+                  className="w-full py-3 bg-stone-100 text-stone-700 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center gap-2"
+                >
+                  <LogOutIcon size={16} />
+                  <span>中途离开</span>
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setShowExitOptions(false);
+                    setShowDissolveRoomConfirm(true);
+                  }}
+                  className="w-full py-3 bg-red-50 text-red-600 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-100 transition-all flex items-center justify-center gap-2"
+                >
+                  <Trash2 size={16} />
+                  <span>解散房间</span>
+                </button>
+
+                <button 
+                  onClick={() => setShowExitOptions(false)}
+                  className="mt-2 text-[10px] text-stone-400 font-bold uppercase hover:text-stone-600 transition-colors py-2"
+                >
+                  取消
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Reserve Room Modal */}
+      <AnimatePresence>
+        {showReserveRoomModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowReserveRoomModal(false)}
+              className="absolute inset-0 bg-stone-900/40"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white rounded-2xl shadow-2xl p-5 max-w-sm w-full flex flex-col max-h-[85vh]"
+            >
+              <div className="mb-4">
+                <h3 className="text-lg font-black text-stone-800 flex items-center gap-2">
+                  <Clock size={20} className="text-emerald-500" />
+                  保留房间
+                </h3>
+                <p className="text-stone-500 text-[10px] mt-1 leading-relaxed">
+                  在保留时间内，即使所有玩家退出该房间，房间也<strong className="text-stone-700">不会被自动解散</strong>。
+                </p>
+                {roomState?.reservedUntil && (
+                  <p className="text-emerald-600 text-[10px] mt-2 font-bold bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-100">
+                    当前保留至: {new Date(roomState.reservedUntil).toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
+              
+              <div className="flex flex-col gap-2 mb-6">
+                <button 
+                  onClick={() => {
+                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 30 * 60 * 1000);
+                    setShowReserveRoomModal(false);
+                  }}
+                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
+                >
+                  保留 30 分钟
+                </button>
+                <button 
+                  onClick={() => {
+                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 60 * 60 * 1000);
+                    setShowReserveRoomModal(false);
+                  }}
+                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
+                >
+                  保留 1 小时
+                </button>
+                <button 
+                  onClick={() => {
+                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 3 * 60 * 60 * 1000);
+                    setShowReserveRoomModal(false);
+                  }}
+                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
+                >
+                  保留 3 小时
+                </button>
+                
+                <div className="flex items-center gap-2 mt-2 border-t border-stone-100 pt-4">
+                  <input 
+                    type="number" 
+                    value={reserveCustomMinutes}
+                    onChange={(e) => setReserveCustomMinutes(e.target.value)}
+                    className="flex-grow min-w-0 bg-stone-50 border border-stone-200 py-2.5 px-3 rounded-xl text-xs font-mono outline-emerald-500 text-stone-700"
+                    placeholder="自定义(分钟)"
+                    min="1"
+                  />
+                  <button 
+                    onClick={() => {
+                      const mins = parseInt(reserveCustomMinutes, 10);
+                      if (mins > 0) {
+                        socketService.reserveRoom(roomState?.roomId || inputRoomId, mins * 60 * 1000);
+                        setShowReserveRoomModal(false);
+                      }
+                    }}
+                    className="py-2.5 px-4 bg-emerald-500 text-white font-bold text-xs rounded-xl shrink-0 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                  >
+                    确认
+                  </button>
+                </div>
+
+                {roomState?.reservedUntil && (
+                  <button 
+                    onClick={() => {
+                      socketService.reserveRoom(roomState?.roomId || inputRoomId, null);
+                      setShowReserveRoomModal(false);
+                    }}
+                    className="w-full py-2.5 bg-red-50 text-red-600 font-bold text-xs rounded-xl mt-4 active:scale-95 transition-all border border-red-100 uppercase tracking-wider"
+                  >
+                    取消保留
+                  </button>
+                )}
+              </div>
+
+              <button 
+                onClick={() => setShowReserveRoomModal(false)}
+                className="w-full py-2 bg-stone-100 text-stone-500 font-bold text-[10px] rounded-lg hover:bg-stone-200 transition-colors uppercase tracking-widest"
+              >
+                关闭
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+{/* Dissolve Room Confirmation Modal */}
+      <AnimatePresence>
+        {showDissolveRoomConfirm && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDissolveRoomConfirm(false)}
+              className="absolute inset-0 bg-stone-900/40"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-xs w-full border border-black/5 flex flex-col items-center text-center max-h-[85vh] overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-3 opacity-5">
+                <Trash2 size={60} />
+              </div>
+              
+              <div className="w-10 h-10 bg-red-50 text-red-500 rounded-xl flex items-center justify-center mb-3 shadow-sm">
+                <Trash2 size={20} />
+              </div>
+              
+              <h3 className="text-lg font-black text-stone-800 mb-1">确定解散房间？</h3>
+              <p className="text-stone-500 text-[9px] mb-4 leading-relaxed px-2">
+                解散后所有玩家将被移出房间，<br />房间数据将永久删除且不可恢复。
+              </p>
+              
+              <div className="flex flex-col w-full gap-1.5">
+                <button 
+                  onClick={() => {
+                    const roomId = roomState?.roomId || inputRoomId;
+                    socketService.resetGame(roomId);
+                    localStorage.removeItem('catan_active_room');
+                    setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                    setIsJoinedLobby(false);
+                    setRoomState(null);
+                    syncGameState(null as any);
+                    setGameStarted(false);
+                    window.history.replaceState({}, '', window.location.pathname);
+                    setShowDissolveRoomConfirm(false);
+                  }}
+                  className="w-full py-2 bg-red-500 text-white font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-red-600 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
+                >
+                  确定解散
+                </button>
+                <button 
+                  onClick={() => setShowDissolveRoomConfirm(false)}
+                  className="w-full py-2 bg-stone-100 text-stone-600 font-bold text-[10px] uppercase tracking-widest rounded-lg hover:bg-stone-200 transition-all active:scale-[0.98]"
+                >
+                  取消
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {gameState?.tradeOffers?.filter(o => !closedTradeIds.has(o.id)).map(offer => {
+            const initiator = gameState.players.find(p => p.id === offer.initiatorId);
+            if (!initiator) return null;
+            const isInitiator = offer.initiatorId === myPlayerIndex;
+            const isTarget = offer.targetPlayerId === null || offer.targetPlayerId === myPlayerIndex;
+            
+            // Only show targeted trades to relevant players
+            if (offer.targetPlayerId !== null && !isInitiator && !isTarget) return null;
+
+            const completedWith = (offer as any).completedWith;
+
+            return (
+              <motion.div
+                key={`trade-alert-${offer.id}`}
+                initial={{ opacity: 0, y: -50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -50 }}
+                className="absolute top-4 lg:top-6 left-1/2 -translate-x-1/2 z-[200] bg-white border border-stone-200 shadow-2xl rounded-3xl p-4 lg:p-6 w-[95%] max-w-[400px] max-h-[90%] flex flex-col pointer-events-auto"
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h3 className="font-black text-lg flex items-center gap-2">
+                       玩家交易
+                       {offer.status === 'completed' && <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full">已成交</span>}
+                       {offer.status === 'canceled' && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">已取消</span>}
+                    </h3>
+                    <p className="text-xs text-stone-500 font-medium">来自 {initiator.name}</p>
+                  </div>
+                  {isInitiator && offer.status === 'pending' && (
+                    <button onClick={() => cancelTrade(offer.id)} className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors">
+                      取消交易
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="flex-1 bg-stone-50 p-3 rounded-2xl flex flex-col items-center">
+                    <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">{isInitiator ? '你送出' : 'TA送出'}</span>
+                    <div className="flex gap-1 flex-wrap justify-center">
+                      {Object.values(ResourceType).filter(r => (offer.offer[r] || 0) > 0).map(r => (
+                        <div key={`offer-res-${r}`} className="flex items-center gap-1">
+                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
+                            <span className="text-xs font-bold px-1">{offer.offer[r]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <Repeat size={16} className="text-stone-300" />
+                  <div className="flex-1 bg-stone-50 p-3 rounded-2xl flex flex-col items-center">
+                    <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">{isInitiator ? '你得到' : 'TA要求'}</span>
+                    <div className="flex gap-1 flex-wrap justify-center">
+                      {Object.values(ResourceType).filter(r => (offer.request[r] || 0) > 0).map(r => (
+                        <div key={`req-res-${r}`} className="flex items-center gap-1">
+                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
+                            <span className="text-xs font-bold px-1">{offer.request[r]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Trade Reaction List */}
+                <div className="space-y-2 flex-1 overflow-y-auto no-scrollbar py-2">
+                  {gameState.players.map(p => {
+                    if (p.id === initiator.id) return null;
+                    const isMe = p.id === myPlayerIndex;
+                    const isAccepted = offer.acceptedBy.includes(p.id);
+                    let isRejected = offer.rejectedBy.includes(p.id);
+                    
+                    const canAfford = Object.entries(offer.request || {}).every(
+                      ([r, count]) => !count || (p.resources[r as ResourceType] || 0) >= (count as number)
+                    );
+                    
+                    const status = isAccepted ? 'accept' : (isRejected ? 'reject' : 'pending');
+                    const isFinalPartner = completedWith === p.id;
+
+                    return (
+                      <div key={`player-react-${p.id}`} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${isFinalPartner ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-100'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
+                          <span className={`text-sm font-black ${isFinalPartner ? 'text-emerald-700' : 'text-stone-700'}`}>{p.name} {isMe && '(你)'}</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {isMe && status === 'pending' && !isInitiator && offer.status === 'pending' ? (
+                            <div className="flex gap-1.5">
+                              <button 
+                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject')}
+                                className="px-3 py-1.5 bg-red-50 text-red-500 border border-red-100 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all"
+                              >
+                                拒绝
+                              </button>
+                              <button 
+                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept')}
+                                disabled={!canAfford}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${canAfford ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-stone-200 text-stone-400 cursor-not-allowed'}`}
+                              >
+                                {canAfford ? '接受' : '资源不足'}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {isFinalPartner && (
+                                <span className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-md">
+                                  🤝 成交
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'accept' && (
+                                <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  接受
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'reject' && (
+                                <span className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                                  拒绝
+                                </span>
+                              )}
+                              {!isFinalPartner && status === 'pending' && !isMe && offer.status === 'pending' && (
+                                <div className="w-4 h-4 rounded-full border-2 border-stone-100 border-t-stone-200 animate-spin opacity-20" />
+                              )}
+
+                              {isInitiator && status === 'accept' && offer.status === 'pending' && (
+                                <button 
+                                  disabled={finalizingTradeIds.has(offer.id)}
+                                  onClick={() => {
+                                      setFinalizingTradeIds(prev => new Set([...prev, offer.id]));
+                                      // Delay finalization to let all players see the result
+                                      setTimeout(() => {
+                                        if (roomState?.roomId) socketService.sendFinalizeTrade(roomState.roomId, offer.id, p.id);
+                                      }, 500);
+                                  }}
+                                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${finalizingTradeIds.has(offer.id) ? 'bg-stone-300 text-stone-500 shadow-none' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-600/20'}`}
+                                >
+                                  {finalizingTradeIds.has(offer.id) ? '处理中...' : '成交'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            );
+        })}
+      </AnimatePresence>
+
+      {/* Game Initializing/Loading Overlays */}
+      <AnimatePresence>
+        {isInitializingGame && gameStarted && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center"
+          >
+            <motion.div 
+               initial={{ scale: 0.8, opacity: 0 }}
+               animate={{ scale: 1, opacity: 1 }}
+               className="flex flex-col items-center"
+            >
+              <div className="w-24 h-24 mb-6 bg-slate-50 rounded-[2rem] flex items-center justify-center shadow-2xl relative">
+                <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan" className="w-16 h-16 object-contain z-10" />
+                <div className="absolute inset-0 border-4 border-indigo-500/20 border-t-indigo-500 rounded-[2rem] animate-spin" />
+              </div>
+              <h2 className="text-2xl font-serif font-black italic text-slate-800">正在生成地图...</h2>
+              <p className="text-[10px] uppercase tracking-[0.4em] text-slate-400 font-bold mt-4 animate-pulse">
+                系统初始化中
+              </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+
+      {/* Debug Panel */}
+      <AnimatePresence>
+        {showDebugConsole && (
+          <motion.div
+            initial={{ opacity: 0, x: 300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 300 }}
+            className="fixed top-20 right-4 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-black/5 w-80 z-[300] max-h-[80vh] overflow-y-auto no-scrollbar"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-black uppercase tracking-widest text-xs">调试控制台</h3>
+              <button onClick={() => setShowDebugConsole(false)} className="p-2 hover:bg-black/5 rounded-full">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <h4 className="font-bold text-[10px] uppercase tracking-widest opacity-40 mb-3">地图分布</h4>
+                <div className="space-y-4">
+                  {(() => {
+                    const counts = (hexList: any[]) => {
+                      const res: Record<string, number> = {};
+                      const nums: Record<number, number> = {};
+                      hexList.forEach(h => {
+                        if (h.type !== HexType.Sea && h.type !== HexType.Desert) {
+                          const typeStr = h.type === HexType.Forest ? '木材' :
+                                          h.type === HexType.Hills ? '砖块' :
+                                          h.type === HexType.Pasture ? '羊毛' :
+                                          h.type === HexType.Fields ? '小麦' :
+                                          h.type === HexType.Mountains ? '铁矿石' :
+                                          h.type === HexType.Gold ? '金矿' : h.type;
+                          res[typeStr] = (res[typeStr] || 0) + 1;
+                          if (h.number) {
+                            nums[h.number] = (nums[h.number] || 0) + 1;
+                          }
+                        }
+                      });
+                      return { resources: res, numbers: nums };
+                    };
+                    console.log("Debug map stats:", gameState?.board?.map(h => ({id: h.id, type: h.type, isMain: h.isMainland, isIs: h.isIsland})));
+                    const mainlandStats = counts(gameState?.board?.filter(h => h.isMainland || (!h.isMainland && !h.isIsland && h.type !== HexType.Sea && h.type !== HexType.Desert)) || []);
+                    const islandsStats = counts(gameState?.board?.filter(h => h.isIsland) || []);
+
+                    return (
+                      <>
+                        <div className="bg-stone-50 p-3 rounded-xl text-[10px]">
+                          <div className="font-bold mb-1">主岛资源分布</div>
+                          <div className="mb-2">
+                            <span className="opacity-60">资源:</span> {Object.entries(mainlandStats.resources).map(([k,v]) => `${k}x${v}`).join(', ')}
+                          </div>
+                          <div>
+                             <span className="opacity-60">数字:</span> {Object.entries(mainlandStats.numbers).map(([k,v]) => `${k}x${v}`).join(', ')}
+                          </div>
+                        </div>
+                        <div className="bg-stone-50 p-3 rounded-xl text-[10px]">
+                          <div className="font-bold mb-1">小岛综合分布</div>
+                          <div className="mb-2">
+                            <span className="opacity-60">资源:</span> {Object.entries(islandsStats.resources).map(([k,v]) => `${k}x${v}`).join(', ')}
+                          </div>
+                          <div>
+                             <span className="opacity-60">数字:</span> {Object.entries(islandsStats.numbers).map(([k,v]) => `${k}x${v}`).join(', ')}
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[10px] uppercase tracking-widest opacity-40 mb-3">控制骰子</h4>
+                <div className="flex gap-2">
+                  {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(num => (
+                    <button
+                      key={num}
+                      onClick={() => {
+                        // Simple logic to split num into two dice
+                        const d1 = Math.floor(num / 2);
+                        const d2 = num - d1;
+                        setDice(d1, d2);
+                      }}
+                      className="w-8 h-8 bg-stone-100 hover:bg-black hover:text-white rounded-lg text-xs font-mono font-bold transition-colors"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[10px] uppercase tracking-widest opacity-40 mb-3">资源管理 (当前玩家)</h4>
+                <div className="space-y-2">
+                  {Object.values(ResourceType).map(res => (
+                    <div key={res} className="flex items-center justify-between p-2 bg-stone-50 rounded-xl">
+                      <div className="flex items-center gap-2">
+                        <ResourceIcon type={res as ResourceType} className="w-4 h-4" />
+                        <span className="text-xs font-bold">{RESOURCE_NAMES[res]}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => setPlayerResource(activePlayerId, res, Math.max(0, actingPlayer.resources[res] - 5))}
+                          className="w-6 h-6 bg-white border border-black/10 rounded-full flex items-center justify-center hover:bg-stone-100"
+                        >
+                          -
+                        </button>
+                        <span className="font-mono text-xs w-4 text-center">{actingPlayer.resources[res]}</span>
+                        <button 
+                          onClick={() => setPlayerResource(activePlayerId, res, actingPlayer.resources[res] + 5)}
+                          className="w-6 h-6 bg-black text-white rounded-full flex items-center justify-center hover:bg-zinc-800"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* Debug Toggle Button Removed - Replaced by logo 5-click toggle */}
+
+      {/* Removed DiscardModal rendering here as it's now in the left panel */}
+
+
+
+      {/* Player Trade Modal */}
+      <AnimatePresence>
+        {showPlayerTradeModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[200] flex items-center justify-center pointer-events-none p-4 w-full"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white border border-stone-200 rounded-3xl p-4 lg:p-5 max-w-[400px] w-full max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <h2 className="text-xl font-black tracking-tight">玩家交易</h2>
+                  <p className="text-stone-500 font-medium text-xs">与其他玩家交换资源</p>
+                </div>
+                <button 
+                  onClick={() => setShowPlayerTradeModal(false)}
+                  className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center hover:bg-stone-200 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="space-y-2 overflow-y-auto text-[10px]">
+                <div>
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你送出 (Offer)</h3>
+                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
+                    {Object.values(ResourceType).map(r => (
+                      <div key={`offer-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
+                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <button 
+                            disabled={(playerTradeOffer[r] || 0) <= 0}
+                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                          >-</button>
+                          <span className="font-bold text-xs">{playerTradeOffer[r] || 0}</span>
+                          <button 
+                            disabled={(playerTradeOffer[r] || 0) >= (me.resources[r] || 0)}
+                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                          >+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你希望得到 (Request)</h3>
+                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
+                    {Object.values(ResourceType).map(r => (
+                      <div key={`request-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
+                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <button 
+                            disabled={(playerTradeRequest[r] || 0) <= 0}
+                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
+                          >-</button>
+                          <span className="font-bold text-xs">{playerTradeRequest[r] || 0}</span>
+                          <button 
+                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
+                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center"
+                          >+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">交易对象</h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => setPlayerTradeTarget(null)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === null ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                    >
+                      所有人
+                    </button>
+                    {gameState?.players.filter(p => p.id !== me.id && !p.isBot).map(p => (
+                      <button
+                        key={`target-${p.id}`}
+                        onClick={() => setPlayerTradeTarget(p.id)}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === p.id ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button 
+                  disabled={
+                    Object.values(playerTradeOffer).reduce((a,b) => a+b, 0) === 0 || 
+                    Object.values(playerTradeRequest).reduce((a,b) => a+b, 0) === 0
+                  }
+                  onClick={() => {
+                    proposeTrade(playerTradeOffer, playerTradeRequest, playerTradeTarget);
+                    setShowPlayerTradeModal(false);
+                  }}
+                  className="w-full bg-black text-white px-4 py-3 rounded-lg font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all hover:bg-zinc-800 text-xs"
+                >
+                  发起交易
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dev Card Confirmation Modal */}
+      <AnimatePresence>
+        {confirmDevCard && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-transparent"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-[280px] lg:max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden p-6 lg:p-10 text-center"
+            >
+              <div className="w-16 h-16 lg:w-20 lg:h-20 rounded-2xl lg:rounded-3xl bg-zinc-50 mx-auto flex items-center justify-center text-3xl lg:text-4xl shadow-inner mb-4 lg:mb-6">
+                {confirmDevCard === DevCardType.Knight ? '⚔️' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '🏆' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '🛣️' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+              </div>
+              <h2 className="text-xl lg:text-2xl font-serif font-black italic mb-1 lg:mb-2">
+                {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '开启垄断'}
+              </h2>
+              <p className="text-[10px] lg:text-xs opacity-50 uppercase tracking-[0.1em] lg:tracking-[0.2em] font-bold mb-6 lg:mb-8 leading-relaxed">
+                {confirmDevCard === DevCardType.Knight ? '移动强盗并从相邻玩家处偷取一张资源卡。' : 
+                 confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
+                 confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
+                 confirmDevCard === DevCardType.YearOfPlenty ? '从银行免费领取任意 2 张资源卡。' : '选择一种资源，所有玩家必须交出该资源。'}
+              </p>
+              
+              <div className="space-y-2 lg:space-y-3">
+                <button 
+                  onClick={() => {
+                    playDevCard(confirmDevCard);
+                    setConfirmDevCard(null);
+                  }}
+                  className="w-full bg-black text-white py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] shadow-xl hover:bg-zinc-800 transition-all active:scale-95"
+                >
+                  确认使用
+                </button>
+                <button 
+                  onClick={() => setConfirmDevCard(null)}
+                  className="w-full py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] text-stone-400 hover:text-stone-600 transition-colors"
+                >
+                  取消
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+ 
+      {/* Trade Modal */}
+      <AnimatePresence>
+        {showTradeModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-none p-4 w-full"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white border border-stone-200 w-full max-w-[340px] rounded-[2rem] shadow-2xl overflow-hidden max-h-[95%] flex flex-col pointer-events-auto"
+            >
+              <div className="p-4 border-b border-black/5 flex items-center justify-between bg-stone-50/50">
+                <div>
+                  <h2 className="text-lg font-serif font-black italic">海上贸易</h2>
+                  <p className="text-[8px] opacity-40 uppercase tracking-widest mt-0.5">与银行进行 {currentTradeRatio}:1 资源交换</p>
+                </div>
+                <button onClick={() => setShowTradeModal(false)} className="p-2 rounded-full hover:bg-black/5 transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 flex flex-row gap-4">
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">支付 ({currentTradeRatio})</h4>
+                  <div className="grid grid-cols-1 gap-1">
+                    {Object.values(ResourceType).map(r => (
+                      <button 
+                        key={r} 
+                        onClick={() => setTradeGive(r)}
+                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeGive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
+                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
+                        </div>
+                        <span className={`text-[10px] font-mono ${tradeGive === r ? 'opacity-60' : 'opacity-40'}`}>x{me.resources[r]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">获得 (1)</h4>
+                  <div className="grid grid-cols-1 gap-1">
+                    {Object.values(ResourceType).map(r => (
+                      <button 
+                        key={r} 
+                        onClick={() => setTradeReceive(r)}
+                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeReceive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
+                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="p-4 bg-stone-50 flex flex-col gap-3 shrink-0 border-t border-black/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-widest opacity-40">交换数量:</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-white border border-black/5 rounded-full p-0.5">
+                      <button 
+                        onClick={() => setTradeQuantity(Math.max(1, tradeQuantity - 1))}
+                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
+                      >
+                        -
+                      </button>
+                      <span className="w-5 text-center font-mono font-bold text-xs">{tradeQuantity}</span>
+                      <button 
+                        onClick={() => setTradeQuantity(Math.min(maxTradeQuantity, tradeQuantity + 1))}
+                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
+                        disabled={tradeQuantity >= maxTradeQuantity}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <span className="text-[8px] opacity-30 font-medium">限额 {maxTradeQuantity}</span>
+                  </div>
+                </div>
+                <button 
+                  disabled={!tradeGive || !tradeReceive || tradeGive === tradeReceive || maxTradeQuantity < 1}
+                  onClick={handleTrade}
+                  className="w-full bg-black text-white py-3 rounded-full font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl active:scale-95 text-[10px]"
+                >
+                  确认 ({tradeQuantity * currentTradeRatio} 换 {tradeQuantity})
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Stealing Modal */}
+      <AnimatePresence mode="wait">
+        {gameState.phase === 'stealing' && (
+          <motion.div 
+            key="stealing-modal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-auto p-4 w-full"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white border-2 border-stone-100 rounded-[2rem] shadow-2xl overflow-hidden max-w-[280px] w-full p-4 lg:p-6 flex flex-col items-center text-center relative pointer-events-auto"
+            >
+              <div className="w-10 h-10 rounded-xl bg-stone-50 flex items-center justify-center text-xl mb-2 shadow-inner">
+                🕵️
+              </div>
+              <h3 className="text-lg font-serif font-black italic mb-1 text-slate-900">选择偷取对象</h3>
+              <p className="text-[9px] opacity-40 uppercase tracking-widest mb-4 px-2 leading-relaxed">
+                从相邻建筑的玩家手中抽取随机资源<br />
+                <span className="text-red-500 font-bold opacity-100">点击选择偷取他的资源</span>
+              </p>
+              
+              <div className="grid grid-cols-1 gap-1.5 w-full">
+                {gameState.pendingStealFrom.map(pid => (
+                  <button
+                    key={pid}
+                    onClick={() => {
+                      if (isMyHumanTurn && gameState.selectedStealTarget == null) {
+                        doSteal(pid);
+                      }
+                    }}
+                    disabled={!isMyHumanTurn || gameState.selectedStealTarget != null}
+                    className={`flex items-center justify-between px-4 py-3 rounded-2xl border transition-all relative overflow-hidden group ${
+                      gameState.selectedStealTarget === pid
+                        ? "bg-black text-white border-black scale-[1.02] shadow-xl"
+                        : gameState.selectedStealTarget != null
+                          ? "opacity-20 border-black/5"
+                          : isMyHumanTurn 
+                            ? "bg-stone-50 border-stone-100 hover:border-black/20 hover:bg-stone-100 active:scale-98" 
+                            : "opacity-40 bg-stone-50 border-stone-100 cursor-not-allowed"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 relative z-10 text-left">
+                      <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: gameState.players[pid].color }} />
+                      <span className="font-black tracking-tight text-[11px] uppercase truncate max-w-[120px]">{gameState.players[pid].name}</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-2 relative z-10">
+                      <span className="text-[9px] font-bold opacity-40">卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
+                      {isMyHumanTurn && gameState.selectedStealTarget === null && (
+                        <ChevronRight size={12} className="opacity-20 group-hover:translate-x-1 transition-transform" />
+                      )}
+                      {gameState.selectedStealTarget === pid && (
+                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                          <Check size={10} />
+                        </div>
+                      )}
+                    </div>
+
+                    {gameState.selectedStealTarget === pid && (
+                      <motion.div 
+                        layoutId="active-target-bg"
+                        className="absolute inset-0 bg-black z-0"
+                      />
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {(!isMyHumanTurn || gameState.selectedStealTarget !== null) && (
+                <div 
+                  className={`mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full border border-black/5 transition-colors ${gameState.selectedStealTarget !== null && isMyHumanTurn ? 'cursor-pointer bg-stone-100 hover:bg-stone-200 active:bg-stone-300' : 'bg-stone-100'}`}
+                  onClick={() => {
+                    if (isMyHumanTurn && gameState.selectedStealTarget !== null) {
+                      stealResource(gameState.selectedStealTarget);
+                    }
+                  }}
+                  title={gameState.selectedStealTarget !== null && isMyHumanTurn ? "如果卡住可以点击此处强制继续" : ""}
+                >
+                  <div className="w-1 h-1 rounded-full bg-stone-400 animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-stone-400">
+                    {gameState.selectedStealTarget !== null ? '正在窃取... (卡住点此)' : '正在等待行动玩家...'}
+                  </span>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Gold Selection Modal Removed */}
+
+      {/* Central Action Modals (Discard, Monopoly, Year of Plenty, Gold Selection) */}
+      <AnimatePresence>
+        {((gameState.phase === 'discard' && gameState.pendingDiscards.some(p => p.playerId === myPlayerIndex)) ||
+          (gameState.phase === 'year_of_plenty' && amIActivePlayer) ||
+          (gameState.phase === 'monopoly' && amIActivePlayer) ||
+          (gameState.phase === 'gold_selection' && (gameState.pendingGoldRewards?.length || 0) > 0 && gameState.pendingGoldRewards[0].playerId === myPlayerIndex) ||
+          (gameState.phase === 'robber' && amIActivePlayer && pendingRobberHex != null)) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            // Backdrop with zero opacity as requested to see resources behind
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-transparent pointer-events-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-[300px] lg:max-w-sm rounded-[1.8rem] lg:rounded-[2.5rem] shadow-2xl border border-black/10 p-4 lg:p-8 pointer-events-auto max-h-[95vh] overflow-y-auto no-scrollbar"
+            >
+              {gameState.phase === 'robber' && pendingRobberHex != null && (
+                <div className="space-y-4 text-center">
+                  <h3 className="text-lg lg:text-xl font-serif font-black italic text-stone-800">确认移动{pendingRobberHex.type === HexType.Sea ? '海盗' : '强盗'}？</h3>
+                  <div className="flex justify-center gap-4 mt-6">
+                    <button
+                      onClick={() => setPendingRobberHex(null)}
+                      className="px-6 py-2.5 rounded-xl border-2 border-stone-200 text-stone-500 font-bold uppercase tracking-wider hover:bg-stone-50 active:scale-95 transition-all"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (pendingRobberHex.type === HexType.Sea) {
+                          movePirate(pendingRobberHex.id);
+                        } else {
+                          moveRobber(pendingRobberHex.id);
+                        }
+                        setPendingRobberHex(null);
+                      }}
+                      className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-bold uppercase tracking-wider hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-600/30"
+                    >
+                      确定
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.phase === 'discard' && (
+                <div className="space-y-4">
+                  <div className="text-center space-y-1">
+                    <h3 className="text-lg lg:text-xl font-serif font-black italic text-red-600">强盗突袭！</h3>
+                    <p className="text-[10px] lg:text-xs font-bold text-slate-800">
+                      请弃掉 {gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 张牌 (还需 {((gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0) - Object.values(discardSelection).reduce((a, b) => a + b, 0))} 张)
+                    </p>
+                  </div>
+                  <DiscardPanel 
+                    key={myPlayerIndex} 
+                    player={me} 
+                    amount={gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 
+                    onDiscard={(res) => discardCards(myPlayerIndex, res)} 
+                    onChange={setDiscardSelection}
+                  />
+                </div>
+              )}
+
+              {gameState.phase === 'year_of_plenty' && (
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <h3 className="text-lg lg:text-xl font-serif font-black italic mb-1">丰收之年</h3>
+                    <p className="text-[9px] lg:text-[10px] opacity-40 uppercase tracking-widest">请从银行任选 2 张资源</p>
+                  </div>
+                  <div className="space-y-2">
+                    <ResourceSelector 
+                      title="第一张资源"
+                      selected={tradeGive}
+                      onSelect={setTradeGive}
+                    />
+                    <ResourceSelector 
+                      title="第二张资源"
+                      selected={tradeReceive}
+                      onSelect={setTradeReceive}
+                    />
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button 
+                      onClick={cancelDevCard}
+                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (tradeGive && tradeReceive) {
+                          resolveYearOfPlenty(tradeGive, tradeReceive);
+                          setTradeGive(null);
+                          setTradeReceive(null);
+                        }
+                      }}
+                      disabled={!tradeGive || !tradeReceive}
+                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
+                    >
+                      确认领取
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.phase === 'monopoly' && (
+                <div className="space-y-4">
+                  <div className="text-center">
+                    <h3 className="text-xl font-serif font-black italic mb-1">垄断资源</h3>
+                    <p className="text-[10px] opacity-40 uppercase tracking-widest">所有玩家必须交出你选中的资源</p>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5 lg:gap-2">
+                    {Object.values(ResourceType).map(res => (
+                      <button
+                        key={`mono-${res}`}
+                        onClick={() => setTradeGive(res)}
+                        className={`p-2 lg:p-3 rounded-xl border transition-all flex flex-col items-center gap-1 ${tradeGive === res ? 'border-black bg-stone-50 scale-105 shadow-md' : 'border-black/5 hover:border-black/20 hover:bg-stone-50'}`}
+                      >
+                        <ResourceIcon type={res as ResourceType} className="w-6 h-6 lg:w-7 lg:h-7" />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 pt-1 lg:pt-2">
+                    <button 
+                      onClick={cancelDevCard}
+                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
+                    >
+                      取消
+                    </button>
+                    <button 
+                      onClick={() => {
+                        if (tradeGive) {
+                          resolveMonopoly(tradeGive);
+                          setTradeGive(null);
+                        }
+                      }}
+                      disabled={!tradeGive}
+                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
+                    >
+                      执行垄断
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.phase === 'gold_selection' && (
+                <div className="space-y-4">
+                  <GoldSelectionPanel 
+                    bankResources={gameState.bankResources}
+                    amount={gameState.pendingGoldRewards[0].amount}
+                    onSelect={selectGoldResource}
+                  />
+                  <button 
+                    onClick={() => {
+                      // Logic to skip if possible or handle cancellation if allowed
+                      // (Usually gold rush is mandatory, but we can add a cancel if needed)
+                    }}
+                    className="w-full py-2 text-[9px] font-black uppercase tracking-widest text-stone-300 pointer-events-none"
+                  >
+                    结算中...
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      
+</main>
+
+        {/* Right Panel */}
+        <AnimatePresence>
+          {showRightPanel && (
+            <motion.aside 
+              initial={{ width: rightWidth }}
+              animate={{ width: rightWidth }}
+              exit={{ width: 0 }}
+              className={`border-l border-black/5 ${isMobile ? 'p-1' : 'p-2 lg:p-2.5'} flex flex-col h-full bg-white overflow-hidden shrink-0 z-50 relative`}
+            >
+              <section className="flex-1 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-1 shrink-0">
+                  <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
+                </div>
+                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
+              {gameState?.phase === 'road_building' ? (
+                <div className="flex-1 flex items-center justify-center text-center p-4">
+                  <p className="text-xs font-bold text-gray-500">
+                    道路建设：<br/>请在地图上点击建设 2 条免资源的道路
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <BuildItem 
+                    id="build-road"
+                    compact={isMobile}
+                    icon={<Hammer size={16} />} 
+                    label="道路" 
+                    cost={COSTS.road} 
+                    active={buildMode === 'road'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.road) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
+                  />
+                  <BuildItem 
+                    id="build-ship"
+                    compact={isMobile}
+                    icon={<ShipIcon size={16} />} 
+                    label="船只" 
+                    cost={COSTS.ship} 
+                    active={buildMode === 'ship'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.ship) || gameState?.mapType === 'standard') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
+                  />
+                  <BuildItem 
+                    id="build-settlement"
+                    compact={isMobile}
+                    icon={<Home size={16} />} 
+                    label="村庄" 
+                    cost={COSTS.settlement} 
+                    active={buildMode === 'settlement'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.settlement) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount > totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'settlement' ? null : 'settlement')} 
+                  />
+                  <BuildItem 
+                    id="build-city"
+                    compact={isMobile}
+                    icon={<Trophy size={16} />} 
+                    label="城市" 
+                    cost={COSTS.city} 
+                    active={buildMode === 'city'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || !canAfford(COSTS.city) || gameState?.phase === 'setup'}
+                    onClick={() => handleSetBuildMode(buildMode === 'city' ? null : 'city')} 
+                  />
+                  <BuildItem 
+                    id="buy-dev-card"
+                    compact={isMobile}
+                    icon={<BookOpen size={16} />} 
+                    label="发展卡" 
+                    cost={COSTS.devCard} 
+                    disabled={!canBuild || !canAfford(COSTS.devCard) || gameState?.phase === 'setup'}
+                    onClick={buyDevCard} 
+                  />
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* Removed duplicate development cards section here */}
+
+          <section className="pt-1.5 mt-auto border-t border-black/5 space-y-1">
+            <div className={`flex ${isMobile ? 'flex-col gap-1' : 'gap-1.5'}`}>
+              <button 
+                id="trade-bank-button"
+                onClick={() => setShowTradeModal(true)}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Repeat size={isMobile ? 12 : 14} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>系统交易</span>
+              </button>
+              <button 
+                id="trade-player-button"
+                onClick={openPlayerTradeModal}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Users size={isMobile ? 12 : 14} className="opacity-40" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>玩家交易</span>
+              </button>
+            </div>
+            <div className="relative">
+               <div className="relative group">
+                <button 
+                  id="end-turn-button"
+                  onClick={nextTurn}
+                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination' || isDiceRolling}
+                  className={`w-full flex items-center justify-center gap-1 ${isMobile ? 'rounded-lg h-7' : 'rounded-lg h-10'} bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed`}
+                >
+                  <ChevronRight size={14} className="opacity-40" />
+                  <span className={`${isMobile ? 'text-[9px]' : 'text-xs'} font-bold uppercase tracking-widest`}>结束回合</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </motion.aside>
+      )}
+    </AnimatePresence>
+    </div>
+
+      <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+      <SoundSettingsModal 
+        isOpen={showSoundModal} 
+        onClose={() => setShowSoundModal(false)} 
+        isAdmin={currentUser?.role === 'admin'}
+      />
+      
+      {/* Game Over Modal */}
+      <AnimatePresence>
+        {showGameOver && (
+          <GameOverModal 
+            gameState={gameState} 
+            maxWidth={stageWidth}
+            onReturnToLobby={handleReturnToLobby}
+            onReturnToMap={handleReturnToMap}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  </div>
+  </>
+  );
+}
+
+function MapPreview({ board, isTopologyOnly = false, isLogo = false }: { board: any[], isTopologyOnly?: boolean, isLogo?: boolean }) {
+  const [scale, setScale] = useState(0.5);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isReady, setIsReady] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+    
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight
+        });
+      }
+    };
+    
+    updateDimensions();
+    
+    const resizeObserver = new ResizeObserver(() => updateDimensions());
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!board || board.length === 0 || dimensions.width === 0 || dimensions.height === 0) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    
+    const relevantHexes = board.filter(hex => !(hex.isOuterSea || hex.category === 'OuterSea'));
+    if (relevantHexes.length === 0) return;
+
+    relevantHexes.forEach(hex => {
+      const x = HEX_WIDTH * (hex.q + hex.r / 2);
+      const y = HEX_HEIGHT * 0.75 * hex.r;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+    const boardWidth = maxX - minX + HEX_WIDTH * 2;
+    const boardHeight = maxY - minY + HEX_HEIGHT * 2;
+    const scaleX = dimensions.width / boardWidth;
+    const scaleY = dimensions.height / boardHeight;
+    setScale(Math.min(scaleX, scaleY) * 0.9);
+    setIsReady(true);
+  }, [board, dimensions]);
+
+  const hexCoords = useMemo(() => {
+    if (!board) return [];
+    return board
+      .filter(hex => !(hex.isOuterSea || hex.category === 'OuterSea'))
+      .map(hex => {
+        const x = HEX_WIDTH * (hex.q + hex.r / 2);
+        const y = HEX_HEIGHT * 0.75 * hex.r;
+        return { ...hex, x, y, radius: HEX_RADIUS };
+      });
+  }, [board]);
+
+  return (
+    <div ref={containerRef} className={`w-full h-full flex items-center justify-center transition-opacity duration-300 ${isReady ? 'opacity-100' : 'opacity-0'}`}>
+      <Stage width={dimensions.width} height={dimensions.height}>
+        <Layer x={dimensions.width / 2} y={dimensions.height / 2} scale={{ x: scale, y: scale }}>
+          {hexCoords.map(hex => {
+            let fill = '#fff';
+            if (isTopologyOnly) {
+              const isDesert = (hex.type === HexType.Desert || hex.category === 'Desert') && !isLogo;
+              const isMainland = hex.category === 'Mainland' || hex.isMainland || (hex.category === 'Desert' && isLogo) || (hex.type === HexType.Gold && hex.isMainland);
+              const isIsland = hex.category === 'Island' || hex.isIsland || (hex.type === HexType.Gold && hex.isIsland);
+              
+              if (isDesert) fill = '#dca467'; // 沙漠 (Desert)
+              else if (isMainland) fill = '#558b2f'; // 大陆 (Mainland)
+              else if (isIsland) fill = '#7cb342'; // 岛屿 (Island)
+              else fill = '#4eaadd'; // 内海 (InnerSea)
+            } else {
+              const resType = hex.type === HexType.Gold ? 'gold' : hex.type === HexType.Desert ? 'desert' : hex.type === HexType.Sea ? 'sea' : HEX_RESOURCES[hex.type as HexType];
+              fill = RESOURCE_COLORS[resType as any] || '#ccc';
+            }
+
+            return (
+              <Group key={hex.id} x={hex.x} y={hex.y}>
+                <RegularPolygon
+                  sides={6}
+                  radius={HEX_RADIUS - 1}
+                  fill={fill}
+                  stroke="rgba(0,0,0,0.1)"
+                  strokeWidth={1}
+                  rotation={0}
+                />
+                {!isTopologyOnly && hex.number && (
+                  <Group>
+                    <Circle radius={12} fill="#fff" shadowBlur={2} shadowOpacity={0.2} />
+                    <Text
+                      text={hex.number.toString()}
+                      fontSize={14}
+                      fontStyle="bold"
+                      fill={hex.number === 6 || hex.number === 8 ? '#d32f2f' : '#333'}
+                      offsetX={hex.number > 9 ? 8 : 4}
+                      offsetY={6}
+                    />
+                  </Group>
+                )}
+              </Group>
+            );
+          })}
+        </Layer>
+      </Stage>
+    </div>
+  );
+}
+
+function ResourceRow({ type, count, compact, playerId }: { type: ResourceType, count: number, compact?: boolean, playerId?: string | number }) {
+  const prevCount = useRef<number>(count);
+  const prevPlayerId = useRef<string | number | undefined>(playerId);
+  const [anim, setAnim] = useState<{ id: number; text: string } | null>(null);
+
+  useEffect(() => {
+    if (prevPlayerId.current !== playerId) {
+      // Player switched or first load, just update refs without animation
+      prevCount.current = count;
+      prevPlayerId.current = playerId;
+      setAnim(null);
+      return;
+    }
+
+    if (count > prevCount.current) {
+      const diff = count - prevCount.current;
+      audioService.play('resource');
+      setAnim({
+        id: Date.now(),
+        text: `+${diff}`
+      });
+    }
+    prevCount.current = count;
+  }, [count, playerId]);
+
+  useEffect(() => {
+    if (anim) {
+      const timer = setTimeout(() => {
+        setAnim(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [anim]);
+
+  return (
+    <div className={`flex items-center justify-between ${compact ? 'py-1 px-1.5' : 'py-2 px-3'} rounded-md bg-white border border-black/10 hover:shadow-md transition-all group`}>
+      <style>{`
+        @keyframes resourceBounceFade {
+          0% {
+            transform: scale(0.3) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 0;
+          }
+          10% {
+            transform: scale(1.4) translateY(-4px);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          20% {
+            transform: scale(0.9) translateY(1px);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          30% {
+            transform: scale(1) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          33.3% {
+            transform: scale(1) translateY(0);
+            color: rgb(239, 68, 68);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1) translateY(0);
+            color: rgb(156, 163, 175);
+            opacity: 0;
+          }
+        }
+        .resource-diff-anim {
+          animation: resourceBounceFade 3s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+          display: inline-block;
+        }
+      `}</style>
+      <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
+        <div 
+          className={`${compact ? 'w-5 h-5' : 'w-8 h-8 md:w-9 md:h-9'} shrink-0 rounded-sm lg:rounded-md flex items-center justify-center shadow-inner transition-transform group-hover:scale-110`}
+        >
+          <ResourceIcon type={type} className={compact ? 'w-3.5 h-3.5' : 'w-5 h-5 lg:w-6 lg:h-6'} />
+        </div>
+        <span className={`font-black uppercase tracking-tight opacity-70 group-hover:opacity-100 transition-opacity ${compact ? 'text-[8px]' : 'text-[11px]'}`}>{RESOURCE_NAMES[type]}</span>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {anim && (
+          <span 
+            key={anim.id} 
+            className={`resource-diff-anim font-mono font-black ${compact ? 'text-[10px] mr-0.5' : 'text-sm mr-1'}`}
+          >
+            {anim.text}
+          </span>
+        )}
+        <span className={`font-mono font-black ${compact ? 'text-[9px] pl-1' : 'text-base'}`}>{count}</span>
+      </div>
+    </div>
+  );
+}
+
+function BuildItem({ id, icon, label, cost, onClick, active, disabled, compact, isDevCard, activeColor }: { id?: string, icon: React.ReactNode, label: string, cost: Record<string, number>, onClick?: () => void, active?: boolean, disabled?: boolean, compact?: boolean, isDevCard?: boolean, activeColor?: string }) {
+  return (
+    <button 
+      id={id}
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full flex items-center justify-between ${compact ? 'py-1 px-2' : 'py-3 px-4'} rounded-xl border transition-all ${disabled ? '' : 'group'} ${active ? 'scale-[1.01]' : `bg-white border-black/5 ${disabled ? '' : 'hover:border-black/20 hover:shadow-xl'}`} ${disabled ? 'cursor-not-allowed text-black' : ''} flex-1 min-h-0 min-w-0 lg:max-h-20`}
+      style={active ? { 
+        backgroundColor: (activeColor || '#10b981') + '08', 
+        borderColor: (activeColor || '#10b981') + '30',
+        boxShadow: `0 8px 24px -6px ${(activeColor || '#10b981')}20`
+      } : {}}
+    >
+      <div className={`flex items-center ${compact ? 'gap-1.5' : 'gap-3'} min-w-0`}>
+        <div 
+          className={`${compact ? 'w-6 h-6 sm:w-7 sm:h-7' : 'w-10 h-10'} shrink-0 rounded-lg flex items-center justify-center transition-all duration-300 ${active ? '' : (disabled ? 'bg-stone-100 text-stone-400' : 'bg-black text-white')}`}
+          style={active ? { backgroundColor: activeColor, color: 'white' } : {}}
+        >
+          {React.cloneElement(icon as React.ReactElement<any>, { size: compact ? 12 : 18 })}
+        </div>
+        <div className="flex flex-col items-start min-w-0">
+          <span className={`${compact ? 'text-[8px] sm:text-[9px]' : 'text-sm'} font-black uppercase tracking-widest truncate w-full ${active ? 'text-stone-900 opacity-90' : 'text-stone-800'}`}>{label}</span>
+        </div>
+      </div>
+      <div className="flex flex-col items-end gap-0.5 opacity-60 shrink-0">
+        <div className="flex gap-1.5">
+          {Object.entries(cost).map(([res, amt]) => (
+            <div key={res} className="flex flex-col items-center gap-0.5">
+              <ResourceIcon type={res as ResourceType} className={compact ? 'w-2.5 h-2.5' : 'w-5 h-5'} />
+              <span className={`${compact ? 'text-[7px]' : 'text-[10px]'} font-mono font-bold leading-none`}>{amt}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, isSelected: boolean, isRobber: boolean, isPirate: boolean, onClick: () => void }) {
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    let src = '';
+    switch (hex.type) {
+      case HexType.Forest: src = FOREST_IMG; break;
+      case HexType.Hills: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E4%B8%98%E9%99%B5.jpg'; break;
+      case HexType.Pasture: src = PASTURE_IMG; break;
+      case HexType.Fields: src = FIELDS_IMG; break;
+      case HexType.Mountains: src = Mountains_IMG; break;
+      case HexType.Desert: src = Desert_IMG; break;
+      case HexType.Gold: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%87%91%E7%9F%BF.jpg'; break;
+      case HexType.Sea: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E6%B4%8B.png'; break;
+    }
+    if (src) {
+      const img = new window.Image();
+      img.src = src;
+      img.referrerPolicy = 'no-referrer';
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => setImage(img);
+    }
+  }, [hex.type]);
+
+  const color = RESOURCE_COLORS[hex.type === HexType.Gold ? 'gold' : hex.type === HexType.Desert ? 'desert' : hex.type === HexType.Sea ? 'sea' : (HEX_RESOURCES[hex.type as HexType] as any)] || '#ccc';
+
+  return (
+    <Group 
+      x={hex.x} 
+      y={hex.y} 
+      onClick={onClick} 
+      onTap={onClick}
+      onMouseEnter={(e: any) => {
+        const container = e.target.getStage().container();
+        container.style.cursor = 'pointer';
+      }}
+      onMouseLeave={(e: any) => {
+        const container = e.target.getStage().container();
+        container.style.cursor = 'default';
+      }}
+    >
+      <RegularPolygon
+        sides={6}
+        radius={HEX_RADIUS - 1}
+        fill={image ? undefined : color}
+        fillPatternImage={image || undefined}
+        fillPatternScale={image ? { x: (HEX_RADIUS * 2) / image.width, y: (HEX_RADIUS * 2) / image.height } : undefined}
+        fillPatternOffset={image ? { x: image.width / 2, y: image.height / 2 } : undefined}
+        stroke="rgba(0,0,0,0.1)"
+        strokeWidth={1}
+        opacity={hex.type === HexType.Sea ? 0.8 : 1}
+        shadowBlur={isRobber || isPirate ? 20 : 0}
+        shadowOpacity={0.2}
+        rotation={0}
+        perfectDrawEnabled={false}
+        shadowForStrokeEnabled={false}
+      />
+      
+      {hex.number && (
+        <Group listening={false}>
+          <Circle 
+            radius={12} 
+            fill="rgba(255, 255, 255, 0.7)" 
+            stroke="rgba(0,0,0,0.1)" 
+            strokeWidth={1}
+            shadowBlur={5}
+            shadowOpacity={0.1}
+            perfectDrawEnabled={false}
+          />
+          <Text
+            text={hex.number.toString()}
+            fontSize={12}
+            fontStyle="900"
+            fill={hex.number === 6 || hex.number === 8 ? '#E74C3C' : '#1a1a1a'}
+            offsetX={hex.number > 9 ? 7 : 3.5}
+            offsetY={6}
+            fontFamily="Inter"
+          />
+          <ProbabilityDots value={hex.number} />
+        </Group>
+      )}
+    </Group>
+  );
+}
+
+function ProbabilityDots({ value }: { value: number }) {
+  const dots = value === 2 || value === 12 ? 1 : 
+               value === 3 || value === 11 ? 2 :
+               value === 4 || value === 10 ? 3 :
+               value === 5 || value === 9 ? 4 :
+               value === 6 || value === 8 ? 5 : 0;
+  
+  return (
+    <Group y={8}>
+      {Array.from({ length: dots }).map((_, i) => (
+        <Circle 
+          key={i} 
+          x={(i - (dots - 1) / 2) * 3} 
+          radius={1} 
+          fill={value === 6 || value === 8 ? '#E74C3C' : '#000'} 
+          opacity={0.8}
+          perfectDrawEnabled={false}
+        />
+      ))}
+    </Group>
+  );
+}
+
+function DiceFacePips({ value }: { value: number }) {
+  // Indices for active dots in a 3x3 grid:
+  // 0 1 2
+  // 3 4 5
+  // 6 7 8
+  const getPipIndices = (val: number) => {
+    switch (val) {
+      case 1: return [4];
+      case 2: return [0, 8];
+      case 3: return [0, 4, 8];
+      case 4: return [0, 2, 6, 8];
+      case 5: return [0, 2, 4, 6, 8];
+      case 6: return [0, 2, 3, 5, 6, 8];
+      default: return [];
+    }
+  };
+
+  const activeIndices = getPipIndices(value);
+
+  return (
+    <div className="w-full h-full p-[14%] grid grid-cols-3 grid-rows-3 gap-[6%]">
+      {Array.from({ length: 9 }).map((_, idx) => {
+        const isActive = activeIndices.includes(idx);
+        if (!isActive) return <div key={idx} />;
+        
+        // Special red center pip for face 1
+        const isRedCenter = value === 1 && idx === 4;
+        return (
+          <div 
+            key={idx} 
+            className={`rounded-full shadow-[inset_0_1.5px_2px_rgba(0,0,0,0.65)] ${
+              isRedCenter 
+                ? 'bg-red-500 scale-110 shadow-[inset_0_1.5px_2px_rgba(150,0,0,0.8)]' 
+                : 'bg-neutral-800'
+            }`} 
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function DiceFace({ value, isRolling, diceIndex }: { value: number, isRolling?: boolean, diceIndex: 1 | 2 }) {
+  const getTargetAngles = (val: number) => {
+    switch (val) {
+      case 1: return { x: 0, y: 0 };
+      case 6: return { x: 0, y: 180 };
+      case 3: return { x: 0, y: 90 };
+      case 4: return { x: 0, y: -90 };
+      case 2: return { x: -90, y: 0 };
+      case 5: return { x: 90, y: 0 };
+      default: return { x: 0, y: 0 };
+    }
+  };
+
+  const [angles, setAngles] = useState(() => {
+    const base = getTargetAngles(value);
+    return { x: base.x, y: base.y, z: 0 };
+  });
+  const [isAnimating, setIsAnimating] = useState(false);
+  const wasRollingRef = useRef(false);
+  const size = 44; // Slightly smaller size
+  const halfSize = size / 2;
+
+  useEffect(() => {
+    const base = getTargetAngles(value);
+    if (isRolling) {
+      setIsAnimating(true);
+      wasRollingRef.current = true;
+      // Immediately reset to a starting offset (no transition) to prepare for a big spin
+      const initX = Math.floor(Math.random() * 90) - 45;
+      const initY = Math.floor(Math.random() * 90) - 45;
+      const initZ = Math.floor(Math.random() * 90) - 45;
+      
+      setAngles({ x: initX, y: initY, z: initZ });
+
+      // Apply the massive 3D spins in next frame
+      const frame = requestAnimationFrame(() => {
+        const spinsX = diceIndex === 1 ? 6 : 5;
+        const spinsY = diceIndex === 1 ? 5 : 6;
+        const spinsZ = diceIndex === 1 ? 4 : 3;
+        
+        setAngles({
+          x: spinsX * 360 + base.x,
+          y: spinsY * 360 + base.y,
+          z: spinsZ * 360 // Perfectly flat frontal face, no organic lean/tilt
+        });
+      });
+
+      return () => cancelAnimationFrame(frame);
+    } else {
+      setIsAnimating(false);
+      wasRollingRef.current = false;
+      setAngles({ x: base.x, y: base.y, z: 0 });
+    }
+  }, [value, isRolling, diceIndex]);
+
+  return (
+    <div className="relative select-none overflow-visible md:scale-100 scale-[0.75] origin-center" style={{ width: size, height: size, perspective: '300px' }}>
+      <style>{`
+        @keyframes diceBounce {
+          0% { transform: translateY(0) scale(0.8); }
+          15% { transform: translateY(-38px) scale(1.15) rotate(12deg); }
+          30% { transform: translateY(10px) scale(0.85) rotate(-8deg); }
+          45% { transform: translateY(-18px) scale(1.08) rotate(5deg); }
+          60% { transform: translateY(5px) scale(0.95) rotate(-3deg); }
+          75% { transform: translateY(-6px) scale(1.02) rotate(1deg); }
+          90% { transform: translateY(1px) scale(0.99); }
+          100% { transform: translateY(0) scale(1); }
+        }
+        .dice-bounce-active {
+          animation: diceBounce 2.5s cubic-bezier(0.15, 0.85, 0.3, 1) forwards;
+        }
+      `}</style>
+      <div 
+        className={`w-full h-full relative ${isAnimating ? 'dice-bounce-active' : ''}`}
+        style={{ transformStyle: 'preserve-3d' }}
+      >
+        <div 
+          className="w-full h-full relative"
+          style={{
+            transformStyle: 'preserve-3d',
+            transform: `rotateX(${angles.x}deg) rotateY(${angles.y}deg) rotateZ(${angles.z}deg)`,
+            transition: isAnimating ? 'transform 2.5s cubic-bezier(0.15, 0.85, 0.3, 1)' : 'none'
+          }}
+        >
+          {/* Front Face: 1 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(0deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={1} />
+          </div>
+          {/* Back Face: 6 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(180deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={6} />
+          </div>
+          {/* Left Face: 3 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(-90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={3} />
+          </div>
+          {/* Right Face: 4 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateY(90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={4} />
+          </div>
+          {/* Top Face: 2 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateX(90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={2} />
+          </div>
+          {/* Bottom Face: 5 */}
+          <div className="absolute inset-0 bg-stone-50 rounded-lg border border-black/15 shadow-[inset_0_1px_3px_rgba(0,0,0,0.1),_0_2px_4px_rgba(0,0,0,0.05)]" style={{ transform: `rotateX(-90deg) translateZ(${halfSize}px)`, backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+            <DiceFacePips value={5} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusCard({ title, color, desc }: { title: string, color: string, desc: string }) {
+  return (
+    <div className="bg-white/80 backdrop-blur-xl p-5 rounded-3xl shadow-2xl border border-black/5 w-48 transition-transform hover:-translate-y-1">
+      <div className="flex items-center gap-3 mb-2">
+        <div className={`w-3 h-3 rounded-full ${color} shadow-lg`} />
+        <span className="text-[10px] font-black uppercase tracking-widest">{title}</span>
+      </div>
+      <p className="text-[10px] opacity-40 leading-relaxed font-medium">{desc}</p>
+    </div>
+  );
+}
+
+function CostCard({ label, cost }: { label: string, cost: Record<string, number> }) {
+  return (
+    <div className="p-4 rounded-2xl bg-stone-50 border border-black/5">
+      <h4 className="font-black text-[10px] uppercase tracking-widest mb-3 opacity-40">{label}</h4>
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(cost).map(([res, amt]) => (
+          <div key={res} className="flex flex-col items-center gap-0.5 bg-white px-2 py-1 rounded-lg border border-black/5 shadow-sm min-w-[32px]">
+            <ResourceIcon type={res as ResourceType} className="w-3 h-3" />
+            <span className="text-[9px] font-bold">{amt}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void }) {
+  const [selected, setSelected] = useState<Record<ResourceType, number>>({
+    [ResourceType.Lumber]: 0,
+    [ResourceType.Brick]: 0,
+    [ResourceType.Wool]: 0,
+    [ResourceType.Grain]: 0,
+    [ResourceType.Ore]: 0,
+  });
+
+  const totalSelected = Object.values(selected).reduce((a, b) => a + b, 0);
+  const remaining = amount - totalSelected;
+
+  const handleIncrement = (res: ResourceType) => {
+    if (totalSelected < amount && player.resources[res] > selected[res]) {
+      const newVal = { ...selected, [res]: selected[res] + 1 };
+      setSelected(newVal);
+      onChange?.(newVal);
+    }
+  };
+
+  const handleDecrement = (res: ResourceType) => {
+    if (selected[res] > 0) {
+      const newVal = { ...selected, [res]: selected[res] - 1 };
+      setSelected(newVal);
+      onChange?.(newVal);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1 lg:gap-2 bg-red-50 p-2 lg:p-4 rounded-[1.2rem] lg:rounded-[1.5rem] border border-red-100 shadow-inner">
+      <div className="space-y-1 lg:space-y-1.5">
+        {Object.values(ResourceType).map(res => {
+          const count = player.resources[res];
+          if (count === 0) return null;
+          return (
+            <div key={res} className="flex items-center justify-between p-1.5 lg:p-2.5 bg-white rounded-lg lg:rounded-xl shadow-sm border border-black/[0.03]">
+              <div className="flex items-center gap-1.5 lg:gap-2">
+                <ResourceIcon type={res as ResourceType} className="w-4 h-4 lg:w-5 lg:h-5" />
+                <span className="font-bold text-[10px] lg:text-xs text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
+                <span className="text-[9px] lg:text-[10px] text-slate-400 font-medium">({count})</span>
+              </div>
+              <div className="flex items-center gap-2 lg:gap-3">
+                <button 
+                  onClick={() => handleDecrement(res)}
+                  disabled={selected[res] === 0}
+                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-[10px] lg:text-xs font-black"
+                >
+                  -
+                </button>
+                <span className="font-mono font-black w-3 lg:w-4 text-center text-[10px] lg:text-sm text-slate-800">{selected[res]}</span>
+                <button 
+                  onClick={() => handleIncrement(res)}
+                  disabled={totalSelected >= amount || selected[res] >= count}
+                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-[10px] lg:text-xs font-black shadow-md shadow-black/10"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button 
+        onClick={() => onDiscard(selected)}
+        disabled={remaining !== 0}
+        className="w-full mt-1 lg:mt-2 py-3 lg:py-4 bg-red-400 text-white rounded-xl lg:rounded-2xl text-[11px] lg:text-[13px] font-black uppercase tracking-widest shadow-lg shadow-red-200 hover:bg-red-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-1.5 lg:gap-2"
+      >
+        确认弃牌
+      </button>
+    </div>
+  );
+}
+

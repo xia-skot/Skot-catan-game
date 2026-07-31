@@ -38,7 +38,7 @@ const adminMiddleware = (req: any, res: any, next: any) => {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
   
   app.use(express.json());
 
@@ -377,6 +377,28 @@ async function startServer() {
   });
 
   // ========== ADMIN ROUTES ==========
+  let globalSoundSettings: Record<string, number> = {
+    dice: 100,
+    resource: 100,
+    pirate: 100,
+    click: 100,
+    build: 100,
+    bgm: 100,
+  };
+
+  app.get('/api/sound-settings', (req, res) => {
+    res.json({ soundSettings: globalSoundSettings });
+  });
+
+  app.post('/api/admin/sound-settings', authMiddleware, adminMiddleware, (req, res) => {
+    const { soundSettings } = req.body;
+    if (soundSettings && typeof soundSettings === 'object') {
+      globalSoundSettings = { ...globalSoundSettings, ...soundSettings };
+      io.emit('sound_settings_updated', globalSoundSettings);
+    }
+    res.json({ success: true, soundSettings: globalSoundSettings });
+  });
+
   app.post('/api/admin/settings', authMiddleware, adminMiddleware, (req, res) => {
     const { maxVisibleRooms } = req.body;
     if (typeof maxVisibleRooms === 'number') {
@@ -442,6 +464,40 @@ async function startServer() {
     } catch (error) {
       console.error('Admin delete game error', error);
       res.status(500).json({ error: '删除游戏记录失败' });
+    }
+  });
+
+  app.get('/api/admin/user/:username/games', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      if (!gamesCollection) return res.status(500).json({ error: '数据库未连接' });
+      const { username } = req.params;
+      
+      const games = await gamesCollection.find({ "players.name": username })
+        .sort({ completedAt: -1 })
+        .limit(20)
+        .toArray();
+        
+      res.json({ games });
+    } catch (err) {
+      console.error('Fetch admin user games error', err);
+      res.status(500).json({ error: '获取战绩失败' });
+    }
+  });
+
+  app.get('/api/admin/user/:username/info', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      if (!usersCollection) return res.status(500).json({ error: '数据库未连接' });
+      const { username } = req.params;
+      
+      const user = await usersCollection.findOne({ username }, { projection: { password: 0 } });
+      if (!user) {
+        return res.json({ user: { username, isGuest: true, email: '临时游客/AI玩家' } });
+      }
+      
+      res.json({ user: { id: user._id, username: user.username, email: user.email, role: user.role, isGuest: false } });
+    } catch (err) {
+      console.error('Fetch admin user info error', err);
+      res.status(500).json({ error: '获取玩家信息失败' });
     }
   });
 
@@ -1075,6 +1131,15 @@ async function startServer() {
         activeRooms = activeRooms.slice(0, globalSettings.maxVisibleRooms);
       }
       socket.emit('active_rooms_list', activeRooms);
+    });
+
+    socket.emit('sound_settings_updated', globalSoundSettings);
+
+    socket.on('admin_update_sound_settings', (soundSettings: any) => {
+      if (soundSettings && typeof soundSettings === 'object') {
+        globalSoundSettings = { ...globalSoundSettings, ...soundSettings };
+        io.emit('sound_settings_updated', globalSoundSettings);
+      }
     });
 
     socket.on('disconnect', () => {
