@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save } from 'lucide-react';
+import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings } from 'lucide-react';
 
 export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, onClose: () => void }) {
   const [data, setData] = useState<any>(null);
@@ -196,6 +196,40 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
               </div>
             </div>
 
+            <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-black text-slate-800 mb-1 flex items-center gap-2">
+                  <Settings size={18} className="text-slate-400" />
+                  大厅游戏房间显示数量
+                </p>
+                <p className="text-xs text-slate-500 font-medium">普通玩家在“游戏房间”列表中最多能看到的活跃房间数量</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  className="w-20 px-3 py-2 border border-slate-200 rounded-xl text-sm font-bold text-center outline-none focus:border-indigo-500"
+                  defaultValue={data.settings?.maxVisibleRooms || 10}
+                  onBlur={async (e) => {
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val)) {
+                      try {
+                        await fetch('/api/admin/settings', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
+                          },
+                          body: JSON.stringify({ maxVisibleRooms: val })
+                        });
+                      } catch (err) {
+                        console.error('Failed to update setting', err);
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
                 <h3 className="text-lg font-black text-slate-800 mb-6 flex flex-wrap gap-2 items-center">
@@ -312,7 +346,7 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
                     <thead>
                       <tr>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">地图/房号</th>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">获胜者</th>
+                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">所有玩家得分</th>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">回合/完成时间</th>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-right">操作</th>
                       </tr>
@@ -323,7 +357,32 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
                         return (
                           <tr key={g._id} className="hover:bg-slate-50 transition-colors">
                             <td className="py-4 px-4 text-sm font-bold text-slate-700 whitespace-nowrap">{g.mapType === 'standard' ? '标准大陆' : g.mapType === 'islands' ? '群岛' : '自定义'} <span className="text-[10px] font-mono text-slate-400 block mt-1">Room: {g.roomId}</span></td>
-                            <td className="py-4 px-4 text-sm font-bold text-emerald-600">{winner?.name || '未知'} <span className="text-xs text-slate-400 inline-block ml-1">({winner?.score}分)</span></td>
+                            <td className="py-2 px-4 text-xs">
+                              <div className="flex flex-col gap-1">
+                                {[...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p: any, idx: number) => (
+                                  <div key={idx} className={`flex flex-col p-1.5 rounded-lg border ${p.id === g.winnerId ? 'bg-yellow-50 border-yellow-200' : 'bg-slate-50 border-slate-100'}`}>
+                                    <div className="flex items-center justify-between">
+                                      <span className={`font-bold ${p.id === g.winnerId ? 'text-yellow-700' : 'text-slate-600'}`}>
+                                        {p.name} {p.id === g.winnerId && '👑'} {p.isBot && <span className="text-[8px] bg-white px-1 rounded ml-1 text-slate-400 border border-slate-200">BOT</span>}
+                                      </span>
+                                      <span className={`font-mono font-black ${p.id === g.winnerId ? 'text-yellow-700' : 'text-slate-600'}`}>
+                                        {p.score || 0}分
+                                      </span>
+                                    </div>
+                                    {p.breakdown && (
+                                      <div className="flex items-center gap-1.5 text-[8px] font-bold text-slate-400 mt-1 flex-wrap">
+                                        <span title="村庄">🏠 {p.breakdown.settlements || 0}</span>
+                                        <span title="城市">🏰 {p.breakdown.cities || 0}</span>
+                                        {p.breakdown.longestRoad && <span title="最长道路" className="text-orange-500">🛣️</span>}
+                                        {p.breakdown.largestArmy && <span title="最大军队" className="text-red-500">⚔️</span>}
+                                        {p.breakdown.vpCards > 0 && <span title="分数卡">📄 {p.breakdown.vpCards}</span>}
+                                        {p.breakdown.islandBonus > 0 && <span title="岛屿奖励">🏝️ {p.breakdown.islandBonus}</span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
                             <td className="py-4 px-4 text-xs font-mono text-slate-500">回合 {g.turnCount || '-'}<span className="block text-[10px] text-slate-400 mt-1">{new Date(g.completedAt).toLocaleString()}</span></td>
                             <td className="py-4 px-4 text-right flex justify-end gap-1">
                               {confirmDeleteGameId === g._id ? (

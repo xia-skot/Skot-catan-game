@@ -377,6 +377,14 @@ async function startServer() {
   });
 
   // ========== ADMIN ROUTES ==========
+  app.post('/api/admin/settings', authMiddleware, adminMiddleware, (req, res) => {
+    const { maxVisibleRooms } = req.body;
+    if (typeof maxVisibleRooms === 'number') {
+      globalSettings.maxVisibleRooms = maxVisibleRooms;
+    }
+    res.json({ success: true, settings: globalSettings });
+  });
+
   app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
     try {
       const userCount = usersCollection ? await usersCollection.countDocuments({ isGuest: false }) : 0;
@@ -388,6 +396,7 @@ async function startServer() {
 
       res.json({
         stats: { users: userCount, guests: guestCount, games: gameCount },
+        settings: globalSettings,
         latestUsers,
         latestGames
       });
@@ -625,6 +634,9 @@ async function startServer() {
 
   // Socket.io logic
   const rooms = new Map<string, any>();
+  const globalSettings = {
+    maxVisibleRooms: 10
+  };
 
   const touchRoom = (roomId: string) => {
     const room = rooms.get(roomId);
@@ -676,6 +688,15 @@ async function startServer() {
 
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
+
+    socket.onAny((eventName, ...args) => {
+      if (args && args.length > 0 && typeof args[0] === 'string') {
+        const roomId = args[0];
+        if (rooms.has(roomId)) {
+          touchRoom(roomId);
+        }
+      }
+    });
 
     socket.on('join_room', (roomId: string, playerId: string, playerName: string) => {
       touchRoom(roomId);
@@ -772,7 +793,8 @@ async function startServer() {
         }
         
         if (room.players.length === 0) {
-          io.to(roomId).emit('room_state', room);
+          rooms.delete(roomId);
+          console.log(`[Server] Room ${roomId} deleted as it became empty.`);
         } else {
           io.to(roomId).emit('room_state', room);
         }
@@ -874,7 +896,15 @@ async function startServer() {
                      id: p.id,
                      name: p.name,
                      isBot: p.isBot,
-                     score: (p.settlements || 0) + ((p.cities || 0) * 2) + (p.victoryPoints || 0) + unplayedVPCards
+                     score: (p.settlements || 0) + ((p.cities || 0) * 2) + (p.victoryPoints || 0) + unplayedVPCards,
+                     breakdown: {
+                       settlements: p.settlements || 0,
+                       cities: p.cities || 0,
+                       longestRoad: gameState.longestRoadPlayerId === p.id,
+                       largestArmy: gameState.largestArmyPlayerId === p.id,
+                       vpCards: (p.vpCardsCount || 0) + unplayedVPCards,
+                       islandBonus: p.islandBonusPoints || 0
+                     }
                    };
                  }),
                  winnerId: gameState.winnerId,
@@ -1029,6 +1059,24 @@ async function startServer() {
       }
     });
 
+    socket.on('get_active_rooms', (isAdmin?: boolean) => {
+      let activeRooms = Array.from(rooms.values())
+        .map(r => ({
+          ...r,
+          status: r.gameState ? 'playing' : 'waiting'
+        }))
+        .filter(r => {
+          if (r.settings?.isPrivate) return false;
+          const hasOnlinePlayers = r.players && r.players.some((p: any) => !p.disconnected);
+          if (!hasOnlinePlayers) return false;
+          return r.status === 'waiting' || r.status === 'playing';
+        });
+      if (!isAdmin) {
+        activeRooms = activeRooms.slice(0, globalSettings.maxVisibleRooms);
+      }
+      socket.emit('active_rooms_list', activeRooms);
+    });
+
     socket.on('disconnect', () => {
       console.log('User disconnected:', socket.id);
       
@@ -1043,12 +1091,27 @@ async function startServer() {
 
         const playerIndex = room.players.findIndex((p: any) => p.socketId === socket.id);
         if (playerIndex !== -1) {
-          room.players[playerIndex].disconnected = true;
-          console.log('Player marked disconnected:', room.players[playerIndex].id);
+          const disconnectedPlayer = room.players[playerIndex];
+          if (!room.gameState) {
+            // If the game hasn't started yet, remove the player completely
+            room.players.splice(playerIndex, 1);
+            if (room.hostId === disconnectedPlayer.id && room.players.length > 0) {
+              room.hostId = room.players[0].id;
+            }
+          } else {
+            // If the game is in progress, mark them as disconnected
+            disconnectedPlayer.disconnected = true;
+            console.log('Player marked disconnected:', disconnectedPlayer.id);
+            if (room.hostId === disconnectedPlayer.id) {
+              const nextHost = room.players.find((p: any) => !p.disconnected);
+              if (nextHost) room.hostId = nextHost.id;
+            }
+          }
           touchRoom(roomId);
           
           if (room.players.length === 0) {
-            io.to(roomId).emit('room_state', room);
+            rooms.delete(roomId);
+            console.log(`[Server] Room ${roomId} deleted as it became empty on disconnect.`);
           } else {
             io.to(roomId).emit('room_state', room);
           }

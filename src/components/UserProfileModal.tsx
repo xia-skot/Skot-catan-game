@@ -309,16 +309,28 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                           </div>
                           <div className="flex flex-col gap-2">
                             {[...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p: any, idx: number) => (
-                               <div key={idx} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg text-sm border border-slate-100 shadow-sm relative overflow-hidden">
-                                 <div className="flex items-center gap-2 relative z-10">
-                                   <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
-                                     {idx + 1}
-                                   </span>
-                                   <span className={`font-bold text-xs truncate max-w-[120px] ${p.id === g.winnerId ? 'text-yellow-600' : 'text-slate-600'}`}>
-                                     {p.name} {p.id === g.winnerId && '👑'} {p.isBot && <span className="opacity-50 text-[9px] bg-slate-100 px-1 rounded ml-1">BOT</span>}
-                                   </span>
+                               <div key={idx} className="flex flex-col bg-white px-3 py-2 rounded-lg text-sm border border-slate-100 shadow-sm relative overflow-hidden gap-1.5">
+                                 <div className="flex items-center justify-between">
+                                   <div className="flex items-center gap-2 relative z-10">
+                                     <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
+                                       {idx + 1}
+                                     </span>
+                                     <span className={`font-bold text-xs truncate max-w-[120px] ${p.id === g.winnerId ? 'text-yellow-600' : 'text-slate-600'}`}>
+                                       {p.name} {p.id === g.winnerId && '👑'} {p.isBot && <span className="opacity-50 text-[9px] bg-slate-100 px-1 rounded ml-1">BOT</span>}
+                                     </span>
+                                   </div>
+                                   <span className="font-mono font-black text-indigo-600 text-xs relative z-10">{p.score || 0} 分</span>
                                  </div>
-                                 <span className="font-mono font-bold text-slate-500 text-xs relative z-10">{p.score || 0} 分</span>
+                                 {p.breakdown && (
+                                   <div className="flex items-center gap-2 text-[9px] font-bold text-slate-400 border-t border-slate-50 pt-1.5 flex-wrap">
+                                     <span title="村庄">🏠 {p.breakdown.settlements || 0}</span>
+                                     <span title="城市">🏰 {p.breakdown.cities || 0}</span>
+                                     {p.breakdown.longestRoad && <span title="最长道路" className="text-orange-500">🛣️</span>}
+                                     {p.breakdown.largestArmy && <span title="最大军队" className="text-red-500">⚔️</span>}
+                                     {p.breakdown.vpCards > 0 && <span title="分数卡">📄 {p.breakdown.vpCards}</span>}
+                                     {p.breakdown.islandBonus > 0 && <span title="岛屿奖励">🏝️ {p.breakdown.islandBonus}</span>}
+                                   </div>
+                                 )}
                                </div>
                             ))}
                           </div>

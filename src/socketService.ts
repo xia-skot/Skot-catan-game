@@ -15,6 +15,7 @@ export interface RoomState {
   };
   gameState?: any;
   reservedUntil?: number | null;
+  status?: 'waiting' | 'playing';
 }
 
 class SocketService {
@@ -126,6 +127,17 @@ class SocketService {
 
   joinRoom(roomId: string, playerName: string) {
     this.emit('join_room', roomId, this.playerId, playerName);
+  }
+
+  getActiveRooms(isAdmin: boolean, callback: (rooms: RoomState[]) => void) {
+    if (!this.socket) {
+      setTimeout(() => this.getActiveRooms(isAdmin, callback), 100);
+      return;
+    }
+    this.socket.emit('get_active_rooms', isAdmin);
+    this.socket.once('active_rooms_list', (rooms: RoomState[]) => {
+      callback(rooms);
+    });
   }
 
   leaveRoom(roomId: string) {

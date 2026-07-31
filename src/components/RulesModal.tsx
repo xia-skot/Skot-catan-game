@@ -15,11 +15,13 @@ import {
 } from '../images';
 
 interface RulesModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  inline?: boolean;
 }
 
 const HexImg = ({ src, alt }: { src: string, alt: string }) => (
+
   <div className={`w-12 h-[54px] mb-1.5 flex items-center justify-center relative`}>
     <div className={`absolute inset-0 bg-slate-300`} style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }} />
     <div className="absolute inset-[2px] overflow-hidden bg-slate-100 flex items-center justify-center" style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}>
@@ -67,43 +69,32 @@ const MockPort = ({ type }: { type: '3:1' | 'wood' | 'brick' | 'wool' | 'grain' 
   );
 };
 
-export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
-  if (!isOpen) return null;
+export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline = false }) => {
+  if (!inline && !isOpen) return null;
 
-  return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 sm:p-6">
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
-        />
-        <motion.div 
-          initial={{ scale: 0.95, opacity: 0, y: 20 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 0.95, opacity: 0, y: 20 }}
-          className="relative bg-white rounded-2xl shadow-2xl p-0 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200"
-        >
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
-            <h2 className="text-xl font-serif font-black italic text-slate-800 flex items-center gap-2">
-              <BookOpen size={24} className="text-indigo-600" />
-              游戏规则与指南
-            </h2>
-            <button 
-              onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shadow-sm"
-            >
-              <X size={16} />
-            </button>
-          </div>
+  const content = (
+    <>
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+        <h2 className="text-xl font-serif font-black italic text-slate-800 flex items-center gap-2">
+          <BookOpen size={24} className="text-indigo-600" />
+          游戏规则与指南
+        </h2>
+        {!inline && onClose && (
+          <button 
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shadow-sm"
+          >
+            <X size={16} />
+          </button>
+        )}
+      </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-white no-scrollbar">
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-white no-scrollbar">
+
             
-            {/* 2. 资源板块 */}
+            {/* 1. 资源板块 */}
             <section>
               <h3 className="text-lg font-black text-slate-800 mb-4 flex items-center gap-2 border-l-4 border-emerald-500 pl-3">
                 <Star size={18} className="text-emerald-500" />
@@ -236,7 +227,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
               </div>
             </section>
 
-            {/* 3. 游戏流程 */}
+            {/* 2. 游戏流程 */}
             <section>
               <h3 className="text-lg font-black text-slate-800 mb-3 flex items-center gap-2 border-l-4 border-sky-500 pl-3">
                 <Users size={18} className="text-sky-500" />
@@ -262,7 +253,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
               </div>
             </section>
 
-            {/* 4. 计分规则 */}
+            {/* 3. 计分规则 */}
             <section>
               <h3 className="text-lg font-black text-slate-800 mb-3 flex items-center gap-2 border-l-4 border-amber-500 pl-3">
                 <Star size={18} className="text-amber-500" />
@@ -320,7 +311,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
               </div>
             </section>
 
-            {/* 5. 建筑与发展卡消耗 */}
+            {/* 4. 建筑与发展卡消耗 */}
             <section>
               <h3 className="text-lg font-black text-slate-800 mb-3 flex items-center gap-2 border-l-4 border-rose-500 pl-3">
                 <Map size={18} className="text-rose-500" />
@@ -385,7 +376,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </div>
             </section>
-            {/* 6. 发展卡详情 */}
+            {/* 5. 发展卡详情 */}
             <section>
               <h3 className="text-lg font-black text-slate-800 mb-3 flex items-center gap-2 border-l-4 border-violet-500 pl-3">
                 <BookOpen size={18} className="text-violet-500" />
@@ -445,6 +436,34 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
             </section>
             
           </div>
+    </>
+  );
+
+  if (inline) {
+    return (
+      <div className="w-full h-full flex flex-col bg-white">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 sm:p-6">
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+        />
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.95, opacity: 0, y: 20 }}
+          className="relative bg-white rounded-2xl shadow-2xl p-0 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200"
+        >
+          {content}
         </motion.div>
       </div>
     </AnimatePresence>
