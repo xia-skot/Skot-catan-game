@@ -7,6 +7,8 @@ import {
   PASTURE_IMG,
   Desert_IMG,
   Mountains_IMG,
+  HILLS_IMG,
+  GOLD_IMG,
   LUMBER_ICON,
   BRICK_ICON,
   WOOL_ICON,
@@ -20,19 +22,27 @@ interface RulesModalProps {
   inline?: boolean;
 }
 
-const HexImg = ({ src, alt }: { src: string, alt: string }) => (
-
-  <div className={`w-12 h-[54px] mb-1.5 flex items-center justify-center relative`}>
-    <div className={`absolute inset-0 bg-slate-300`} style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }} />
-    <div className="absolute inset-[2px] overflow-hidden bg-slate-100 flex items-center justify-center" style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}>
-      {src ? (
-        <img src={src} alt={alt} className="w-full h-full object-cover scale-[1.4]" />
-      ) : (
-        <Anchor size={20} className="text-slate-400" />
-      )}
+const HexImg = ({ src, alt }: { src: string, alt: string }) => {
+  const [hasError, setHasError] = useState(false);
+  return (
+    <div className={`w-12 h-[54px] mb-1.5 flex items-center justify-center relative`}>
+      <div className={`absolute inset-0 bg-slate-300`} style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }} />
+      <div className="absolute inset-[2px] overflow-hidden bg-slate-100 flex items-center justify-center" style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}>
+        {src && !hasError ? (
+          <img
+            src={src}
+            alt={alt}
+            className="w-full h-full object-cover scale-[1.4]"
+            referrerPolicy="no-referrer"
+            onError={() => setHasError(true)}
+          />
+        ) : (
+          <div className="text-[10px] font-black text-slate-500 text-center px-1">{alt}</div>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const MockPort = ({ type }: { type: '3:1' | 'wood' | 'brick' | 'wool' | 'grain' | 'ore' }) => {
   const is3to1 = type === '3:1';
@@ -232,7 +242,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   <div className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-2xl transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 flex items-center justify-center relative">
-                        <HexImg src={'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E4%B8%98%E9%99%B5.jpg'} alt="丘陵" />
+                        <HexImg src={HILLS_IMG} alt="丘陵" />
                       </div>
                       <span className="font-bold text-slate-700 text-sm">丘陵</span>
                     </div>
@@ -292,7 +302,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   <div className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-2xl transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 flex items-center justify-center relative">
-                        <HexImg src={'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%87%91%E7%9F%BF.jpg'} alt="金矿" />
+                        <HexImg src={GOLD_IMG} alt="金矿" />
                       </div>
                       <span className="font-bold text-amber-700 text-sm">金矿</span>
                     </div>
@@ -307,7 +317,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   <div className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-2xl transition-colors">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 flex items-center justify-center relative">
-                        <HexImg src={'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B2%99%E6%BC%A0.jpg'} alt="沙漠" />
+                        <HexImg src={Desert_IMG} alt="沙漠" />
                       </div>
                       <span className="font-bold text-slate-700 text-sm">沙漠</span>
                     </div>

@@ -130,14 +130,31 @@ class SocketService {
   }
 
   getActiveRooms(isAdmin: boolean, callback: (rooms: RoomState[]) => void) {
+    this.connect();
     if (!this.socket) {
       setTimeout(() => this.getActiveRooms(isAdmin, callback), 100);
       return;
     }
-    this.socket.emit('get_active_rooms', isAdmin);
+
+    let handled = false;
+    const timeout = setTimeout(() => {
+      if (!handled) {
+        handled = true;
+        this.socket?.off('active_rooms_list');
+        callback([]);
+      }
+    }, 2500);
+
+    this.socket.off('active_rooms_list');
     this.socket.once('active_rooms_list', (rooms: RoomState[]) => {
-      callback(rooms);
+      if (!handled) {
+        handled = true;
+        clearTimeout(timeout);
+        callback(rooms || []);
+      }
     });
+
+    this.socket.emit('get_active_rooms', isAdmin);
   }
 
   leaveRoom(roomId: string) {

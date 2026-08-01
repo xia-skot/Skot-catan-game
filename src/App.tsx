@@ -122,7 +122,12 @@ import { RulesModal } from './components/RulesModal';
 import { SoundSettingsModal } from './components/SoundSettingsModal';
 import { GameRoomsTab } from './components/GameRoomsTab';
 import { socketService, RoomState } from './socketService';
-import { FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, RESOURCE_ICONS } from './images';
+import { 
+  FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
+  HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, PIRATE_SHIP_IMG,
+  DEV_CARD_ICON, RES_CARD_ICON, ROAD_ICON, MAP_ALBUM_ICON,
+  RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG 
+} from './images';
 
 const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
   <img 
@@ -287,7 +292,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 
   useEffect(() => {
     const image = new window.Image();
-    image.src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%BC%BA%E7%9B%972.png';
+    image.src = ROBBER_IMG;
     image.referrerPolicy = 'no-referrer';
     image.crossOrigin = 'Anonymous';
     image.onload = () => setImg(image);
@@ -343,7 +348,7 @@ const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 
   useEffect(() => {
     const image = new window.Image();
-    image.src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E7%9B%97%E8%88%B9.png';
+    image.src = PIRATE_SHIP_IMG;
     image.referrerPolicy = 'no-referrer';
     image.crossOrigin = 'Anonymous';
     image.onload = () => setImg(image);
@@ -402,10 +407,12 @@ const seededRandom = (seed: number) => {
   };
 };
 
-function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false }: { onComplete: () => void, text?: string, loop?: boolean }) {
+function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false, onCancel }: { onComplete: () => void, text?: string, loop?: boolean, onCancel?: () => void }) {
   const [preloadProgress, setPreloadProgress] = useState(0);
   const [preloadStatusText, setPreloadStatusText] = useState('正在缓冲资源...');
   const [preloadFinished, setPreloadFinished] = useState(false);
+  const [boatLoaded, setBoatLoaded] = useState(false);
+  const [showCancelBtn, setShowCancelBtn] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -419,7 +426,15 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
         setPreloadFinished(true);
       }
     });
-    return () => { isMounted = false; };
+
+    const cancelTimer = setTimeout(() => {
+      if (isMounted) setShowCancelBtn(true);
+    }, 6000);
+
+    return () => { 
+      isMounted = false; 
+      clearTimeout(cancelTimer);
+    };
   }, []);
 
   const calculatePaths = (w: number, h: number) => {
@@ -463,7 +478,6 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
   const [paths, setPaths] = useState(() => calculatePaths(window.innerWidth, window.innerHeight));
   
-  // Use a ref for loop to avoid re-triggering the main effect and resetting animation
   const loopRef = useRef(loop);
   useEffect(() => {
     loopRef.current = loop;
@@ -483,7 +497,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
          isMounted = false;
          window.removeEventListener('resize', upds);
      };
-  }, []); // Only run once on mount
+  }, []);
 
   return (
     <motion.div 
@@ -500,17 +514,32 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
             
             <div 
                 onAnimationIteration={() => {
-                  // Check the ref to see if we should stop at the end of this cycle (and assets are preloaded)
                   if (!loopRef.current && preloadFinished) {
                     onComplete();
                   }
                 }}
                 style={{
-                animation: 'sailBoatAnim 2.0s linear infinite', // Always infinite to prevent restart flicker
+                animation: 'sailBoatAnim 2.0s linear infinite',
                 position: 'absolute', left: 0, top: 0, zIndex: 10
             }} className="will-change-transform pointer-events-none">
-                <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                    <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png" alt="Sailing Boat" className="w-full h-full object-contain" />
+                <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
+                    <img 
+                      src={SAILING_BOAT_IMG} 
+                      alt="Sailing Boat" 
+                      className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
+                      onLoad={() => setBoatLoaded(true)}
+                      onError={() => setBoatLoaded(false)}
+                      referrerPolicy="no-referrer"
+                    />
+                    {/* SVG Fallback boat so it is instantly visible before/if image loads */}
+                    {!boatLoaded && (
+                      <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" fill="none">
+                        <path d="M15 65 L85 65 L70 85 L30 85 Z" fill="#7c2d12" stroke="#451a03" strokeWidth="2" />
+                        <path d="M48 15 L48 65" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
+                        <path d="M50 18 L80 40 L50 48 Z" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="2" />
+                        <path d="M46 22 L22 42 L46 48 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2" />
+                      </svg>
+                    )}
                 </div>
             </div>
 
@@ -526,16 +555,35 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
                 <path d={paths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
             </svg>
 
-            <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4">
+            {/* Main centered text */}
+            <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4 pointer-events-none">
                 <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
                     {text}
                 </span>
+            </div>
+
+            {/* Bottom-left small loading text and progress bar */}
+            <div className="absolute bottom-3 left-3 z-[10000] flex flex-col items-start gap-1 max-w-[200px] sm:max-w-[260px] pointer-events-auto">
                 {!preloadFinished && (
-                    <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3.5 py-1 rounded-full border border-sky-200/80 shadow-xs">
-                        <span className="text-xs font-bold text-[#0284c7]">
-                          {preloadStatusText} {preloadProgress}%
+                    <div className="flex flex-col gap-0.5 w-full">
+                        <span className="text-[10px] font-bold text-[#0369a1] tracking-tight">
+                          资源缓冲中 ({preloadProgress}%)
                         </span>
+                        <div className="w-28 sm:w-36 h-1 bg-white/60 rounded-full overflow-hidden border border-sky-300/50 shadow-xs">
+                            <div 
+                              className="h-full bg-sky-600 rounded-full transition-all duration-200" 
+                              style={{ width: `${preloadProgress}%` }}
+                            />
+                        </div>
                     </div>
+                )}
+                {showCancelBtn && onCancel && (
+                  <button 
+                    onClick={onCancel}
+                    className="mt-1 px-2.5 py-1 bg-white/90 text-slate-700 hover:bg-white text-[10px] font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
+                  >
+                    超时？点击返回大厅
+                  </button>
                 )}
             </div>
         </div>
@@ -1975,6 +2023,14 @@ export default function App() {
       } catch (e) {}
     };
 
+    const unlockOrientation = () => {
+      try {
+        if (window.screen && window.screen.orientation && typeof (window.screen.orientation as any).unlock === 'function') {
+          (window.screen.orientation as any).unlock();
+        }
+      } catch (e) {}
+    };
+
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -1990,6 +2046,8 @@ export default function App() {
 
       if (gameStarted) {
         tryLockOrientation();
+      } else {
+        unlockOrientation();
       }
     };
     window.addEventListener('resize', handleResize);
@@ -2000,11 +2058,14 @@ export default function App() {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
       tryLockOrientation();
+    } else {
+      unlockOrientation();
     }
 
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
+      unlockOrientation();
     };
   }, [centerMap, gameStarted]);
 
@@ -3141,6 +3202,7 @@ export default function App() {
             setShowSailingScreen(false);
           }
         }} 
+        onCancel={() => setShowSailingScreen(false)}
         text={sailingText} 
         loop={!roomState} 
       />
@@ -3160,7 +3222,7 @@ export default function App() {
             {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default rounded-2xl" title="观战模式" />
             )}
-            <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4" onClick={handleLogoClick} />
+            <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4" onClick={handleLogoClick} />
             <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
             
             <div className="flex flex-col gap-4 text-left w-full">
@@ -3433,7 +3495,7 @@ export default function App() {
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-8 h-8 sm:w-10 sm:h-10 lg:w-11 lg:h-11 object-contain relative z-10 group-hover:scale-105 transition-transform duration-300" />
+              <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-8 h-8 sm:w-10 sm:h-10 lg:w-11 lg:h-11 object-contain relative z-10 group-hover:scale-105 transition-transform duration-300" />
             </div>
             <div className="flex flex-col justify-center">
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">CATAN</h1>
@@ -3489,7 +3551,7 @@ export default function App() {
                       <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center relative mb-0.5">
                         {!atlasLogoError ? (
                           <img 
-                            src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%9C%B0%E5%9B%BE%E5%86%8C.png" 
+                            src={MAP_ALBUM_ICON} 
                             className="w-full h-full object-contain relative z-10" 
                             alt="Atlas" 
                             referrerPolicy="no-referrer"
@@ -3956,7 +4018,7 @@ export default function App() {
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-full h-full object-contain drop-shadow-sm" />
+              <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-sm" />
             </div>
             <div className="flex flex-col justify-center font-sans min-w-0">
               <span className="text-[8px] sm:text-[9px] uppercase font-black tracking-wider text-stone-400 leading-none whitespace-nowrap mb-0.5">海域代码</span>
@@ -4075,7 +4137,7 @@ export default function App() {
                       )}
                       {gameState.longestRoadPlayerId === p.id && (
                         <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-[#b79148]/20 border border-[#b79148]/40 shadow-sm" title={`最长道路 (${p.longestRoadLength})`}>
-                          <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png" alt="longest-road" className="w-2.5 h-2.5 object-contain" />
+                          <img src={ROAD_ICON} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
                         </div>
                       )}
                       {gameState.largestArmyPlayerId === p.id && (
@@ -4094,15 +4156,15 @@ export default function App() {
                     <div className="flex items-center mt-0.5 leading-none">
                       <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}分</span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
-                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png" alt="res" className="w-2.5 h-2.5 object-contain" />
+                        <img src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
                         {resourceCount}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
-                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png" alt="dev" className="w-2.5 h-2.5 object-contain" />
+                        <img src={DEV_CARD_ICON} alt="dev" className="w-2.5 h-2.5 object-contain" />
                         {p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
-                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png" alt="road" className="w-2.5 h-2.5 object-contain" />
+                        <img src={ROAD_ICON} alt="road" className="w-2.5 h-2.5 object-contain" />
                         {p.longestRoadLength}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="骑士">
@@ -5186,7 +5248,7 @@ export default function App() {
                className="flex flex-col items-center"
             >
               <div className="w-24 h-24 mb-6 bg-slate-50 rounded-[2rem] flex items-center justify-center shadow-2xl relative">
-                <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan" className="w-16 h-16 object-contain z-10" />
+                <img src={CATAN_LOGO_IMG} alt="Catan" className="w-16 h-16 object-contain z-10" />
                 <div className="absolute inset-0 border-4 border-indigo-500/20 border-t-indigo-500 rounded-[2rem] animate-spin" />
               </div>
               <h2 className="text-2xl font-serif font-black italic text-slate-800">正在生成地图...</h2>
@@ -6264,13 +6326,13 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
     let src = '';
     switch (hex.type) {
       case HexType.Forest: src = FOREST_IMG; break;
-      case HexType.Hills: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E4%B8%98%E9%99%B5.jpg'; break;
+      case HexType.Hills: src = HILLS_IMG; break;
       case HexType.Pasture: src = PASTURE_IMG; break;
       case HexType.Fields: src = FIELDS_IMG; break;
       case HexType.Mountains: src = Mountains_IMG; break;
       case HexType.Desert: src = Desert_IMG; break;
-      case HexType.Gold: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%87%91%E7%9F%BF.jpg'; break;
-      case HexType.Sea: src = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E6%B4%8B.png'; break;
+      case HexType.Gold: src = GOLD_IMG; break;
+      case HexType.Sea: src = SEA_HEX_IMG; break;
     }
     if (src) {
       const img = new window.Image();
