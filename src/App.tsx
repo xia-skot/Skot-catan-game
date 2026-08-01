@@ -1,5 +1,72 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, startTransition } from 'react';
 import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
+import Konva from 'konva';
+
+// Monkey-patch Konva.Stage.prototype.setPointersPositions to correctly transform coordinates when CSS rotated in portrait mode
+const origSetPointersPositions = Konva.Stage.prototype.setPointersPositions;
+
+Konva.Stage.prototype.setPointersPositions = function (evt: any) {
+  if (!evt) {
+    origSetPointersPositions.call(this, evt);
+    return;
+  }
+
+  const content = this.content;
+  if (!content) {
+    origSetPointersPositions.call(this, evt);
+    return;
+  }
+
+  const rotatedContainer = content.closest('[data-portrait-rotated="true"]');
+  if (!rotatedContainer) {
+    origSetPointersPositions.call(this, evt);
+    return;
+  }
+
+  const rect = content.getBoundingClientRect();
+  const scaleX = rect.height / content.clientWidth || 1;
+  const scaleY = rect.width / content.clientHeight || 1;
+
+  const getRotatedPos = (clientX: number, clientY: number) => {
+    return {
+      x: (clientY - rect.top) / scaleX,
+      y: (rect.right - clientX) / scaleY,
+    };
+  };
+
+  if (evt.touches !== undefined) {
+    this._pointerPositions = [];
+    this._changedPointerPositions = [];
+
+    Array.prototype.forEach.call(evt.touches, (touch: any) => {
+      const pos = getRotatedPos(touch.clientX, touch.clientY);
+      this._pointerPositions.push({
+        id: touch.identifier,
+        x: pos.x,
+        y: pos.y,
+      });
+    });
+
+    Array.prototype.forEach.call(evt.changedTouches || evt.touches, (touch: any) => {
+      const pos = getRotatedPos(touch.clientX, touch.clientY);
+      this._changedPointerPositions.push({
+        id: touch.identifier,
+        x: pos.x,
+        y: pos.y,
+      });
+    });
+
+    if (this._pointerPositions.length > 0) {
+      this.pointerPos = this._pointerPositions[0];
+    }
+  } else {
+    const pos = getRotatedPos(evt.clientX, evt.clientY);
+    this.pointerPos = pos;
+    const firstId = (Konva.Util as any)._getFirstPointerId(evt);
+    this._pointerPositions = [{ x: pos.x, y: pos.y, id: firstId }];
+    this._changedPointerPositions = [{ x: pos.x, y: pos.y, id: firstId }];
+  }
+};
 import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame';
 import { HexType, ResourceType, DevCardType, MapType, GameState } from './types';
 import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
@@ -1376,7 +1443,7 @@ export default function App() {
 
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const isPortrait = windowSize.width < windowSize.height;
-  const shouldApplyPortraitRotation = isPortrait && !isSpectator;
+  const shouldApplyPortraitRotation = isPortrait;
   const logicalWindowSize = {
     width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
     height: shouldApplyPortraitRotation ? windowSize.width : windowSize.height
@@ -1454,14 +1521,26 @@ export default function App() {
 
       const touch1 = touches[0];
       const touch2 = touches[1];
-      const p1x = touch1.clientX;
-      const p1y = touch1.clientY;
-      const p2x = touch2.clientX;
-      const p2y = touch2.clientY;
+
+      const getTouchPos = (t: any) => {
+        if (stage && stage.content && shouldApplyPortraitRotation) {
+          const rect = stage.content.getBoundingClientRect();
+          const scaleX = rect.height / stage.content.clientWidth || 1;
+          const scaleY = rect.width / stage.content.clientHeight || 1;
+          return {
+            x: (t.clientY - rect.top) / scaleX,
+            y: (rect.right - t.clientX) / scaleY,
+          };
+        }
+        return { x: t.clientX, y: t.clientY };
+      };
+
+      const p1 = getTouchPos(touch1);
+      const p2 = getTouchPos(touch2);
       
-      const dist = Math.sqrt((p2x - p1x)**2 + (p2y - p1y)**2);
-      const centerX = (p1x + p2x) / 2;
-      const centerY = (p1y + p2y) / 2;
+      const dist = Math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2);
+      const centerX = (p1.x + p2.x) / 2;
+      const centerY = (p1.y + p2.y) / 2;
 
       if (!lastDist.current) {
         lastDist.current = dist;
@@ -1888,6 +1967,14 @@ export default function App() {
   }, [showSailingScreen, gameStarted, centerMap]);
 
   useEffect(() => {
+    const tryLockOrientation = () => {
+      try {
+        if (window.screen && window.screen.orientation && typeof (window.screen.orientation as any).lock === 'function') {
+          (window.screen.orientation as any).lock('landscape').catch(() => {});
+        }
+      } catch (e) {}
+    };
+
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -1900,6 +1987,10 @@ export default function App() {
       // Center map on screen resize
       hasManuallyInteractedRef.current = false;
       centerMap(true);
+
+      if (gameStarted) {
+        tryLockOrientation();
+      }
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
@@ -1908,6 +1999,7 @@ export default function App() {
     if (gameStarted) {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
+      tryLockOrientation();
     }
 
     return () => {
@@ -3836,8 +3928,8 @@ export default function App() {
       </button>
     )} */}
     <div style={lockedLandscapeStyle}>
-      {shouldApplyPortraitRotation && <PortraitOverlay />}
       <div 
+        data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
         style={shouldApplyPortraitRotation ? {
           width: windowSize.height,
           height: windowSize.width,
