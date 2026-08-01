@@ -34,6 +34,7 @@ import {
   Maximize,
   Minimize,
   RotateCw,
+  RotateCcw,
   RefreshCw,
   Lock,
   Loader2,
@@ -333,111 +334,110 @@ const seededRandom = (seed: number) => {
   };
 };
 
-function SailingLoadingScreen({ onComplete, text = "正在驶入海域......" }: { onComplete: () => void, text?: string }) {
-  const [wavePaths, setWavePaths] = useState({ line: '', fill: '', framesCss: '' });
-  const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
-  const [boatSize, setBoatSize] = useState(window.innerHeight / 6);
+function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false }: { onComplete: () => void, text?: string, loop?: boolean }) {
+  const calculatePaths = (w: number, h: number) => {
+    const isPortrait = w < h;
+    const baseY = h / 2 - h * 0.05;
+    const wavelength = isPortrait ? w / 2.0 : w / 3.5;
+    const amplitude = isPortrait ? wavelength * 0.05 : wavelength * 0.03;
+    const finalAmplitude = Math.min(amplitude, isPortrait ? h * 0.02 : h * 0.03);
+    const currentBoatSize = isPortrait ? w / 8 : h / 6;
+
+    let pts = [];
+    const startX = -300;
+    const endX = w + currentBoatSize * 0.6;
+
+    for(let x = startX; x <= w + currentBoatSize + 100; x += 10) {
+       const y = Math.sin((x / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
+       pts.push(x + "," + y);
+    }
+
+    let framesArr = [];
+    const steps = 100;
+    for (let i = 0; i <= steps; i++) {
+        const progress = i / steps;
+        const currentX = startX + (endX - startX) * progress;
+        const currentY = Math.sin((currentX / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
+        const dy = Math.cos((currentX / wavelength) * Math.PI * 2) * finalAmplitude * (Math.PI * 2 / wavelength);
+        
+        let angleRad = Math.atan(dy) * (isPortrait ? 0.2 : 0.12); 
+        let angleDeg = angleRad * (180 / Math.PI); 
+        framesArr.push(`${i}% { transform: translate3d(${currentX}px, ${currentY}px, 0) rotate(${angleDeg}deg); }`);
+    }
+    const framesCss = `@keyframes sailBoatAnim {\n${framesArr.join('\n')}\n}`;
+
+    return {
+        line: "M " + pts.join(" L "),
+        fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + h + " L " + startX + "," + h + " Z",
+        framesCss,
+        boatSize: currentBoatSize
+    };
+  };
+
+  const [paths, setPaths] = useState(() => calculatePaths(window.innerWidth, window.innerHeight));
+  
+  // Use a ref for loop to avoid re-triggering the main effect and resetting animation
+  const loopRef = useRef(loop);
+  useEffect(() => {
+    loopRef.current = loop;
+  }, [loop]);
 
   useEffect(() => {
      let isMounted = true;
      const upds = () => {
          const w = window.innerWidth;
          const h = window.innerHeight;
-         setWinSize({ w, h });
-
-         const isPortrait = w < h;
-         const baseY = h / 2 - h * 0.05;
-         
-         // Proportional wavelength and amplitude
-         const wavelength = isPortrait ? w / 2.0 : w / 3.5;
-         const amplitude = isPortrait ? wavelength * 0.05 : wavelength * 0.03;
-         const finalAmplitude = Math.min(amplitude, isPortrait ? h * 0.02 : h * 0.03); // Cap amplitude for portrait/landscape
-         
-         const currentBoatSize = isPortrait ? w / 8 : h / 6;
-         if (isMounted) setBoatSize(currentBoatSize);
-
-         let pts = [];
-         const startX = -300;
-         const endX = w + currentBoatSize * 0.6;
-
-         for(let x = startX; x <= w + currentBoatSize + 100; x += 10) {
-            const y = Math.sin((x / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-            pts.push(x + "," + y);
-         }
-
-         let framesArr = [];
-         const steps = 100;
-         for (let i = 0; i <= steps; i++) {
-             const progress = i / steps;
-             const currentX = startX + (endX - startX) * progress;
-             const currentY = Math.sin((currentX / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-             const dy = Math.cos((currentX / wavelength) * Math.PI * 2) * finalAmplitude * (Math.PI * 2 / wavelength);
-             
-             let angleRad = Math.atan(dy) * (isPortrait ? 0.2 : 0.12); 
-             let angleDeg = angleRad * (180 / Math.PI); 
-             framesArr.push(`${i}% { transform: translate3d(${currentX}px, ${currentY}px, 0) rotate(${angleDeg}deg); }`);
-         }
-         const framesCss = `@keyframes sailBoatAnim {\n${framesArr.join('\n')}\n}`;
-
-         if (isMounted) {
-            setWavePaths({
-                line: "M " + pts.join(" L "),
-                fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + h + " L " + startX + "," + h + " Z",
-                framesCss
-            });
-         }
+         const newPaths = calculatePaths(w, h);
+         if (isMounted) setPaths(newPaths);
      };
-     upds();
      window.addEventListener('resize', upds);
-
-     const timer = setTimeout(() => {
-        if (isMounted) onComplete();
-     }, 2600);
 
      return () => {
          isMounted = false;
          window.removeEventListener('resize', upds);
-         clearTimeout(timer);
      };
-  }, []);
+  }, []); // Only run once on mount
 
   return (
     <motion.div 
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5 }}
       className="fixed inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto"
     >
         <div className="w-full h-full relative">
             <style>{`
-              ${wavePaths.framesCss}
+              ${paths.framesCss}
             `}</style>
             
-            {wavePaths.line && (
-                <>
-                <div 
-                    onAnimationEnd={() => onComplete()}
-                    style={{
-                    animation: 'sailBoatAnim 2.0s linear forwards',
-                    position: 'absolute', left: 0, top: 0, zIndex: 10
-                }} className="will-change-transform pointer-events-none">
-                    <div style={{ transform: 'translate(-50%, -95%)', width: boatSize, height: boatSize }} className="drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                        <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png" alt="Sailing Boat" className="w-full h-full object-contain" />
-                    </div>
+            <div 
+                onAnimationIteration={() => {
+                  // Check the ref to see if we should stop at the end of this cycle
+                  if (!loopRef.current) {
+                    onComplete();
+                  }
+                }}
+                style={{
+                animation: 'sailBoatAnim 2.0s linear infinite', // Always infinite to prevent restart flicker
+                position: 'absolute', left: 0, top: 0, zIndex: 10
+            }} className="will-change-transform pointer-events-none">
+                <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
+                    <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png" alt="Sailing Boat" className="w-full h-full object-contain" />
                 </div>
+            </div>
 
-                <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
-                    <defs>
-                        <linearGradient id="sailingWaveGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#38bdf8" stopOpacity="1" />
-                            <stop offset="100%" stopColor="#0369a1" stopOpacity="1" />
-                        </linearGradient>
-                    </defs>
-                    <path d={wavePaths.fill} fill="url(#sailingWaveGradient)" />
-                    <path d={wavePaths.line} stroke="#bae6fd" strokeWidth="4" fill="none" />
-                    <path d={wavePaths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
-                </svg>
-                </>
-            )}
+            <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
+                <defs>
+                    <linearGradient id="sailingWaveGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#38bdf8" stopOpacity="1" />
+                        <stop offset="100%" stopColor="#0369a1" stopOpacity="1" />
+                    </linearGradient>
+                </defs>
+                <path d={paths.fill} fill="url(#sailingWaveGradient)" />
+                <path d={paths.line} stroke="#bae6fd" strokeWidth="4" fill="none" />
+                <path d={paths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
+            </svg>
 
             <div className="absolute top-[80%] w-full text-center z-[10000]">
                 <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)] px-4">
@@ -446,14 +446,19 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......" }:
             </div>
         </div>
     </motion.div>
-  )
+  );
 }
 
 export default function App() {
   const [showSoundModal, setShowSoundModal] = useState(false);
 
   useEffect(() => {
+    let audioUnlocked = false;
     const handleGlobalClick = (e: MouseEvent) => {
+      if (!audioUnlocked) {
+        audioService.unlockAll();
+        audioUnlocked = true;
+      }
       const target = e.target as HTMLElement;
       if (target.closest('.no-click-sound')) return;
       // Check if it's a button or inside a button
@@ -492,20 +497,6 @@ export default function App() {
         audioService.setEqualizer(settings);
       }
     });
-  }, []);
-
-  useEffect(() => {
-    const startBgmOnGesture = () => {
-      audioService.playBgm();
-      document.removeEventListener('click', startBgmOnGesture);
-      document.removeEventListener('keydown', startBgmOnGesture);
-    };
-    document.addEventListener('click', startBgmOnGesture);
-    document.addEventListener('keydown', startBgmOnGesture);
-    return () => {
-      document.removeEventListener('click', startBgmOnGesture);
-      document.removeEventListener('keydown', startBgmOnGesture);
-    };
   }, []);
 
   const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
@@ -573,10 +564,20 @@ export default function App() {
   const [hasResolvedGameOver, setHasResolvedGameOver] = useState(false);
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const [isJoinSpectator, setIsJoinSpectator] = useState(() => localStorage.getItem('catan_is_spectator') === 'true');
   const isSpectator = useMemo(() => {
-    if (!roomState) return false;
-    return roomState.spectators?.some(s => s.id === socketService.playerId);
-  }, [roomState, socketService.playerId]);
+    if (isJoinSpectator) return true;
+    if (gameState && gameState.players && gameState.players.length > 0) {
+      const isPlayerInGame = gameState.players.some(p => p.sessionId === socketService.playerId);
+      if (!isPlayerInGame) return true;
+    }
+    if (roomState) {
+      const isPlayerInRoom = roomState.players?.some(p => p.id === socketService.playerId);
+      if (!isPlayerInRoom) return true;
+      if (roomState.spectators?.some(s => s.id === socketService.playerId)) return true;
+    }
+    return false;
+  }, [gameState, roomState, isJoinSpectator, socketService.playerId]);
 
   // Dice rolling animation states
   const [isDiceRolling, setIsDiceRolling] = useState(false);
@@ -610,7 +611,7 @@ export default function App() {
     }
 
     // Build sound logic
-    const currentBuildCount = (gameState.settlements?.length || 0) + (gameState.cities?.length || 0) + (gameState.roads?.length || 0) + (gameState.ships?.length || 0);
+    const currentBuildCount = (gameState.settlements?.length || 0) + (gameState.settlements?.filter(s => s.isCity).length || 0) + (gameState.roads?.length || 0) + (gameState.ships?.length || 0);
     if (prevBuildCountRef.current !== -1 && currentBuildCount > prevBuildCountRef.current) {
       audioService.play('build');
     }
@@ -712,51 +713,101 @@ export default function App() {
     e?.preventDefault();
     e?.stopPropagation();
     
+    // Instantly interrupt and stop all audio/SFX
+    audioService.stopAllSfx();
     setShowSailingScreen(false);
     
     const roomId = roomState?.roomId || inputRoomId;
-    let shouldClearRoom = true;
+    let clearRoom = false;
+    let lockRoom = false;
+    let keepGameActive = false;
     
+    // Determine the state based on the current context
     if (gameState?.winnerId !== null && gameState?.winnerId !== undefined) {
-      shouldClearRoom = true;
+      // Game ended: Refresh room code
+      clearRoom = true;
       socketService.resetGame(roomId);
-    } else {
-      if (!isSpectator) {
-        shouldClearRoom = false; // Keep the active room locked so they can reconnect
+    } else if (isSpectator || isJoinSpectator) {
+      // Spectator leaves: Refresh room code UNLESS they have a real room locked
+      const stickyRoomId = localStorage.getItem('catan_active_room');
+      const wasLocked = localStorage.getItem('catan_has_created_room') === 'true';
+      
+      // If they had a locked room before spectating (and it wasn't the one they spectated), keep it
+      if (wasLocked && stickyRoomId && stickyRoomId !== roomId) {
+        clearRoom = false;
+        lockRoom = true;
+        keepGameActive = false;
+      } else {
+        clearRoom = true;
       }
-      socketService.leaveRoom(roomId);
+    } else if (gameStarted) {
+      // Mid-game player: Keep room code and LOCK it
+      clearRoom = false;
+      lockRoom = true;
+      keepGameActive = true;
+    } else if (isJoinedLobby && roomState) {
+      // In lobby/matching interface: Keep room code but DO NOT lock it
+      clearRoom = false;
+      lockRoom = false;
+      keepGameActive = false;
+    } else {
+      // Default: Refresh room code
+      clearRoom = true;
     }
     
-    if (shouldClearRoom) {
+    if (clearRoom) {
       localStorage.removeItem('catan_active_room');
+      localStorage.removeItem('catan_has_created_room');
       localStorage.removeItem('catan_game_active');
+      localStorage.removeItem('catan_map_preview_seed');
+      setIsRoomLocked(false);
+      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+      
       try {
         const newUrl = new URL(window.location.href);
         newUrl.searchParams.delete('room');
         window.history.replaceState({}, '', newUrl.pathname);
-      } catch (err) {
-        console.warn('history.replaceState failed:', err);
-      }
-      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+      } catch (err) {}
     } else {
+      // Keep existing room code
       setInputRoomId(roomId);
       localStorage.setItem('catan_active_room', roomId);
+      localStorage.setItem('catan_has_created_room', lockRoom ? 'true' : 'false');
+      setIsRoomLocked(lockRoom);
+      
+      if (keepGameActive) {
+        localStorage.setItem('catan_game_active', 'true');
+      } else {
+        localStorage.removeItem('catan_game_active');
+      }
+      
       try {
         const newUrl = new URL(window.location.href);
-        newUrl.searchParams.set('room', roomId);
+        if (lockRoom) {
+          newUrl.searchParams.set('room', roomId);
+        } else {
+          newUrl.searchParams.delete('room');
+        }
         window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
       } catch (err) {}
     }
     
-    // Completely wipe React states to drop to Lobby locally and perfectly
+    socketService.leaveRoom(roomId);
+    
+    // Completely wipe React states to return to Main Menu (Main Interface)
+    audioService.roomActive = false;
+    localStorage.removeItem('catan_is_spectator');
+    setIsJoinSpectator(false);
     setRoomState(null);
     setGameStarted(false);
     setShowGameOver(false);
     setHasResolvedGameOver(false);
-    setIsJoinedLobby(false);
+    setIsJoinedLobby(false); // Jump to Main Menu
+    setActiveLobbyTab('lobby'); // Force jump to the code input screen (Main Interface)
     setShowSailingScreen(false);
     syncGameState(null as any);
     resetGame();
+    audioService.stopAllSfx();
     setIsStartingGame(false);
   };
 
@@ -773,6 +824,7 @@ export default function App() {
   
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isAuthAnimFinished, setIsAuthAnimFinished] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -808,23 +860,83 @@ export default function App() {
     checkAuth();
   }, []);
 
+  useEffect(() => {
+    if (isAuthLoading) return;
+
+    if (!currentUser) {
+      audioService.stopBgm(true);
+      return;
+    }
+
+    const resumeBgm = () => {
+      if (!currentUser) return;
+      if (!audioService.enabled) return;
+
+      if (!audioService.isBgmPlaying) {
+        audioService.playBgm();
+      }
+    };
+
+    // Try to play immediately (in case autoplay is permitted or we are already active)
+    resumeBgm();
+
+    // Set up robust gesture listeners to start/resume BGM on any user interaction
+    const handleUserGesture = () => {
+      resumeBgm();
+    };
+
+    document.addEventListener('click', handleUserGesture);
+    document.addEventListener('keydown', handleUserGesture);
+    document.addEventListener('mousedown', handleUserGesture);
+    document.addEventListener('touchstart', handleUserGesture);
+    window.addEventListener('focus', resumeBgm);
+    document.addEventListener('visibilitychange', resumeBgm);
+
+    return () => {
+      document.removeEventListener('click', handleUserGesture);
+      document.removeEventListener('keydown', handleUserGesture);
+      document.removeEventListener('mousedown', handleUserGesture);
+      document.removeEventListener('touchstart', handleUserGesture);
+      window.removeEventListener('focus', resumeBgm);
+      document.removeEventListener('visibilitychange', resumeBgm);
+    };
+  }, [currentUser, isAuthLoading]);
+
   const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
   
   const [showCopyToast, setShowCopyToast] = useState(false);
   const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
   const [inputRoomId, setInputRoomId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('room') || localStorage.getItem('catan_active_room') || Math.random().toString().slice(2, 8);
+    const activeRoom = localStorage.getItem('catan_active_room');
+    if (params.get('room')) return params.get('room')!;
+    if (activeRoom) return activeRoom;
+    return Math.floor(100000 + Math.random() * 900000).toString();
   });
+  
+  const [isRoomLocked, setIsRoomLocked] = useState(() => {
+    return !!localStorage.getItem('catan_active_room') && localStorage.getItem('catan_has_created_room') === 'true';
+  });
+  
   const [isJoinedLobby, setIsJoinedLobby] = useState(() => {
     const params = new URLSearchParams(window.location.search);
+    const gameActive = localStorage.getItem('catan_game_active') === 'true';
     const activeRoom = localStorage.getItem('catan_active_room');
-    return !!params.get('room') || !!activeRoom;
+    
+    // Requirement: On refresh, if game was not active, return to main menu
+    // If game was active, auto-enter game. If URL has room, auto-enter lobby/game.
+    if (params.get('room')) return true;
+    return gameActive && !!activeRoom;
   });
+
+  useEffect(() => {
+    // We no longer remove catan_active_room here to ensure it's "locked" on the main interface
+  }, [isJoinedLobby, activeLobbyTab]);
   const [gameStarted, setGameStarted] = useState(() => {
     return localStorage.getItem('catan_game_active') === 'true';
   });
-  const isAutoReconnectingRef = useRef(!!localStorage.getItem('catan_active_room'));
+  const isAutoReconnectingRef = useRef(!!localStorage.getItem('catan_active_room') && localStorage.getItem('catan_has_created_room') === 'true');
+  const hasCreatedRoomRef = useRef(localStorage.getItem('catan_has_created_room') === 'true');
   const [spectatorFocusId, setSpectatorFocusId] = useState<number | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
@@ -879,11 +991,23 @@ export default function App() {
       setMapType(state.settings.mapType as MapType);
       setBotConfig(state.settings.botConfig);
       
-      if (!state.gameState) {
-        // If we were auto-reconnecting but the game isn't there, reveal lobby
-        localStorage.removeItem('catan_game_active');
-      } else {
+      setIsJoinedLobby(true); // Always set isJoinedLobby when room state is received
+      
+      if (state.gameState) {
+        console.log('[Socket] Game is active, syncing game state and entering game directly');
+        isRemoteUpdateRef.current = true;
+        syncGameState(state.gameState);
+        setGameStarted(true);
         localStorage.setItem('catan_game_active', 'true');
+        
+        // Show sailing screen if it is not already visible/animating
+        if (!showSailingScreen) {
+          setSailingText("重新驶入海域......");
+          setShowSailingScreen(true);
+        }
+      } else {
+        localStorage.removeItem('catan_game_active');
+        setGameStarted(false);
       }
     });
 
@@ -909,6 +1033,8 @@ export default function App() {
       
       localStorage.removeItem('catan_active_room');
       localStorage.removeItem('catan_game_active');
+      localStorage.removeItem('catan_has_created_room');
+      setIsRoomLocked(false);
       setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
       setRoomState(prevRoom => {
         const isSelfReset = prevRoom?.hostId === socketService.playerId;
@@ -920,12 +1046,14 @@ export default function App() {
 
       // 1. Clear local game state first to prevent re-sync
       syncGameState(null as any);
+      audioService.stopAllSfx();
       
       // 3. Reset UI flags
       setGameStarted(false);
       setShowGameOver(false);
       setHasResolvedGameOver(false);
       setIsJoinedLobby(false); // Force back to room search screen
+      setActiveLobbyTab('lobby');
       setIsStartingGame(false);
       setShowSailingScreen(false);
       
@@ -940,19 +1068,41 @@ export default function App() {
       setShowGameOver(false);
       setHasResolvedGameOver(false);
       setIsStartingGame(false);
+      setIsJoinedLobby(false);
+      setActiveLobbyTab('lobby');
     });
 
     socketService.onPlayerKicked((kickedPlayerId: string) => {
        if (kickedPlayerId === socketService.playerId) {
          // Silently return to menu to avoid exiting full screen with alert
-         setIsJoinedLobby(false);
-         setRoomState(null);
-         syncGameState(null as any);
-         setGameStarted(false);
-         setShowSailingScreen(false);
-         localStorage.removeItem('catan_active_room');
-         localStorage.removeItem('catan_game_active');
+          setIsJoinedLobby(false);
+          setActiveLobbyTab('lobby');
+          setIsRoomLocked(false);
+          setRoomState(null);
+          syncGameState(null as any);
+          setGameStarted(false);
+          setShowSailingScreen(false);
+          audioService.stopAllSfx();
+          localStorage.removeItem('catan_active_room');
+          localStorage.removeItem('catan_has_created_room');
+          localStorage.removeItem('catan_game_active');
+          setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
        }
+    });
+
+    socketService.onRoomDeleted(() => {
+      setIsJoinedLobby(false);
+      setActiveLobbyTab('lobby');
+      setIsRoomLocked(false);
+      setRoomState(null);
+      syncGameState(null as any);
+      setGameStarted(false);
+      setShowSailingScreen(false);
+      audioService.stopAllSfx();
+      localStorage.removeItem('catan_active_room');
+      localStorage.removeItem('catan_has_created_room');
+      localStorage.removeItem('catan_game_active');
+      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
     });
 
     return () => {
@@ -967,6 +1117,9 @@ export default function App() {
 
   useEffect(() => {
     if (gameState) {
+      if (isSpectator) {
+        return;
+      }
       if (isRemoteUpdateRef.current) {
         isRemoteUpdateRef.current = false;
       } else {
@@ -975,7 +1128,43 @@ export default function App() {
         }
       }
     }
-  }, [gameState]);
+  }, [gameState, isSpectator]);
+
+  // Background check for user's active room to ensure sticky lock even after fresh login
+  useEffect(() => {
+    if (!currentUser || isAuthLoading) return;
+    
+    const checkUserRoom = () => {
+      // Don't interrupt if we are already in a room or currently in the game view
+      if (roomState || gameStarted || isJoinedLobby) return;
+      
+      const isAdmin = currentUser.isAdmin || currentUser.role === 'admin';
+      socketService.getActiveRooms(isAdmin, (rooms) => {
+        if (!rooms) return;
+        const myId = currentUser.id;
+        const myName = currentUser.username;
+        
+        const userRoom = rooms.find((r: any) => 
+          r.status !== 'finished' && 
+          r.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName))
+        );
+        
+        if (userRoom && (!isRoomLocked || inputRoomId !== userRoom.roomId)) {
+          setInputRoomId(userRoom.roomId);
+          setIsRoomLocked(true);
+          localStorage.setItem('catan_active_room', userRoom.roomId);
+          localStorage.setItem('catan_has_created_room', 'true');
+        }
+      });
+    };
+
+    // Run once on load/auth
+    checkUserRoom();
+    
+    // Then periodically
+    const interval = setInterval(checkUserRoom, 10000);
+    return () => clearInterval(interval);
+  }, [currentUser, isAuthLoading, roomState, gameStarted, isJoinedLobby, isRoomLocked, inputRoomId]);
 
   useEffect(() => {
     if (isAuthLoading || !currentUser) return;
@@ -999,8 +1188,8 @@ export default function App() {
       }
       // Wait a tiny bit for UI state to settle before joining, so socket uses correct ID
       setTimeout(() => {
-        socketService.joinRoom(roomIdToJoin, playerName);
-        setIsJoinedLobby(true);
+        const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
+        socketService.joinRoom(roomIdToJoin, playerName, asSpec);
         isAutoReconnectingRef.current = false;
       }, 50);
     } else {
@@ -1009,6 +1198,7 @@ export default function App() {
   }, [isAuthLoading, currentUser, playerName]);
 
   const handleJoinRoom = () => {
+    hasCreatedRoomRef.current = true;
     let finalRoomId = inputRoomId.trim();
     if (!finalRoomId || finalRoomId.length < 1) {
       finalRoomId = Math.floor(100000 + Math.random() * 900000).toString();
@@ -1017,11 +1207,17 @@ export default function App() {
     
     localStorage.setItem('catan_player_name', playerName);
     localStorage.setItem('catan_active_room', finalRoomId);
+    localStorage.setItem('catan_has_created_room', 'true');
+    setIsRoomLocked(true);
+    localStorage.removeItem('catan_is_spectator');
+    setIsJoinSpectator(false);
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', finalRoomId);
     window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
 
     socketService.joinRoom(finalRoomId, playerName);
+    setSailingText("正在驶入海域......");
+    setShowSailingScreen(true);
     setIsJoinedLobby(true);
   };
 
@@ -1328,19 +1524,21 @@ export default function App() {
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isStartingGame, setIsStartingGame] = useState(false);
   const [showSailingScreen, setShowSailingScreen] = useState(() => {
-    // Check if we should show the sailing screen immediately on initial mount
-    const params = new URLSearchParams(window.location.search);
-    const activeRoom = localStorage.getItem('catan_active_room');
     const wasInGame = localStorage.getItem('catan_game_active') === 'true';
-    return !!params.get('room') || !!activeRoom;
+    return wasInGame;
   });
-  const [sailingText, setSailingText] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const activeRoom = localStorage.getItem('catan_active_room');
-    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
-    if (wasInGame || params.get('room') || activeRoom) return "重新驶入海域......";
-    return "正在驶入海域......";
-  });
+  const [sailingText, setSailingText] = useState("正在驶入海域......");
+  
+  useEffect(() => {
+    audioService.tempMuteSfx = showSailingScreen;
+    if (showSailingScreen) {
+      audioService.stopAllSfx();
+      audioService.roomActive = false;
+    } else if (isJoinedLobby) {
+      audioService.roomActive = true;
+    }
+  }, [showSailingScreen, isJoinedLobby]);
+
   const sailingStartTimeRef = useRef(0);
   const [showDebugConsole, setShowDebugConsole] = useState(false);
   const [showDebugButton, setShowDebugButton] = useState(false);
@@ -1438,7 +1636,8 @@ export default function App() {
         const roomId = roomState?.roomId || inputRoomId;
         if (roomId) {
           console.log('[App] Reconnected, rejoining room:', roomId);
-          socketService.joinRoom(roomId, playerName);
+          const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
+          socketService.joinRoom(roomId, playerName, asSpec);
         }
       }
     });
@@ -1526,7 +1725,7 @@ export default function App() {
   const [tradeReceive, setTradeReceive] = useState<ResourceType | null>(null);
   const [tradeQuantity, setTradeQuantity] = useState(1);
   const buildMode = gameState?.activeBuildMode ?? null;
-  const isHost = roomState?.hostId === socketService.playerId;
+  const isHost = !isSpectator && roomState?.hostId === socketService.playerId;
 
   const handleSetBuildMode = useCallback((mode: typeof buildMode) => {
     if (isMyHumanTurn) {
@@ -1641,6 +1840,24 @@ export default function App() {
   }, [hexCoords]);
 
   useEffect(() => {
+    if (gameState && gameStarted) {
+      const t4 = setTimeout(() => setIsBoardReady(true), 150);
+      return () => {
+        clearTimeout(t4);
+      };
+    }
+  }, [gameState, gameStarted]);
+
+  const prevShowSailingScreen = useRef(showSailingScreen);
+  useEffect(() => {
+    if (prevShowSailingScreen.current && !showSailingScreen && gameStarted) {
+      hasManuallyInteractedRef.current = false;
+      centerMap(true);
+    }
+    prevShowSailingScreen.current = showSailingScreen;
+  }, [showSailingScreen, gameStarted, centerMap]);
+
+  useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -1650,27 +1867,24 @@ export default function App() {
       setShowLeftPanel(true);
       setShowRightPanel(true);
       
-      setTimeout(() => centerMap(true), 50);
-      setTimeout(() => centerMap(true), 150);
-      setTimeout(() => centerMap(true), 400);
+      // Center map on screen resize
+      hasManuallyInteractedRef.current = false;
+      centerMap(true);
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
-    
-    // Recenter when the window is resized or the map data changes.
-    // Use multiple timeouts to ensure layout has settled
-    const t1 = setTimeout(() => centerMap(), 100);
-    const t2 = setTimeout(() => centerMap(), 300);
-    const t3 = setTimeout(() => centerMap(), 800);
+
+    // Initial enter game center
+    if (gameStarted) {
+      hasManuallyInteractedRef.current = false;
+      centerMap(true);
+    }
 
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
     };
-  }, [centerMap, gameStarted, isInitializingGame, assetsLoaded]);
+  }, [centerMap, gameStarted]);
 
   const zoomEndTimeoutRef = useRef<any>(null);
 
@@ -2735,7 +2949,7 @@ export default function App() {
     }
   };
 
-  const isHostInLobby = roomState?.hostId === socketService.playerId;
+  const isHostInLobby = !isSpectator && roomState?.hostId === socketService.playerId;
 
   const standard2PlayerMap = useMemo(() => {
     const originalMathRandom = Math.random;
@@ -2777,16 +2991,36 @@ export default function App() {
     overflow: 'hidden'
   };
 
-  if (isAuthLoading) {
+  if (isAuthLoading || !isAuthAnimFinished) {
     return (
-      <div className="flex w-full h-screen items-center justify-center bg-slate-50">
-         <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-      </div>
+      <SailingLoadingScreen 
+        key="auth-loading-sailing" 
+        onComplete={() => {
+          if (!isAuthLoading) setIsAuthAnimFinished(true);
+        }} 
+        text="正在驶入海域......" 
+        loop={isAuthLoading} 
+      />
     );
   }
 
   if (!currentUser) {
     return <LoginScreen onLoginSuccess={user => setCurrentUser(user)} />;
+  }
+
+  if (showSailingScreen) {
+    return (
+      <SailingLoadingScreen 
+        key="sailing-loader" 
+        onComplete={() => {
+          if (roomState) {
+            setShowSailingScreen(false);
+          }
+        }} 
+        text={sailingText} 
+        loop={!roomState} 
+      />
+    );
   }
 
   if (showAdminDashboard && currentUser.role === 'admin') {
@@ -2804,10 +3038,6 @@ export default function App() {
 
   if (!isJoinedLobby) {
     return (
-      <>
-      {showSailingScreen && (
-        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
-      )}
       <div style={flexibleContainerStyle}>
         <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative selection:bg-indigo-600 selection:text-white overflow-hidden">
           {/* Decorative elements without CSS blurs to prevent hardware-accelerated color banding/uneven blocks */}
@@ -2843,29 +3073,58 @@ export default function App() {
                     <input 
                       type="text" 
                       value={inputRoomId}
-                      onChange={e => setInputRoomId(e.target.value)}
+                      readOnly={isRoomLocked}
+                      onChange={e => {
+                        if (isRoomLocked) return;
+                        const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                        setInputRoomId(val);
+                      }}
                       placeholder="6位房间代码"
-                      disabled={!!localStorage.getItem('catan_active_room')}
-                      className="w-full bg-slate-50 border border-slate-100 px-4 py-3 rounded-xl outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 focus:bg-white text-sm disabled:bg-slate-100 disabled:opacity-70 disabled:cursor-not-allowed"
+                      className={`w-full ${isRoomLocked ? 'bg-slate-100 text-slate-400 cursor-not-allowed opacity-80' : 'bg-slate-50 focus:bg-white'} border border-slate-100 px-4 py-3 rounded-xl outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 text-sm`}
                     />
-                    {!!localStorage.getItem('catan_active_room') && (
-                      <Lock size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                    )}
                   </div>
                 </div>
                 
                 <button 
                   id="join-room-button"
-                  onClick={handleJoinRoom}
+                  onClick={() => {
+                    const activeRoom = localStorage.getItem('catan_active_room');
+                    const hasCreatedRoom = localStorage.getItem('catan_has_created_room') === 'true';
+                    const enteredCode = inputRoomId.trim();
+                    const isGameActive = localStorage.getItem('catan_game_active') === 'true';
+                    
+                    if (isRoomLocked && activeRoom) {
+                      // Return to self-created active game (locked room) - with animation
+                      setSailingText("重新驶入海域......");
+                      setShowSailingScreen(true);
+                      socketService.joinRoom(activeRoom, playerName);
+                    } else {
+                      // Directly enter matching interface (rooms list) - as requested
+                      setActiveLobbyTab('rooms');
+                      setIsJoinedLobby(true);
+                      // Pre-fill inputRoomId as active room in storage if they entered something
+                      if (enteredCode) {
+                        localStorage.setItem('catan_active_room', enteredCode);
+                      }
+                    }
+                  }}
                   className="w-full bg-indigo-600 text-white py-3 sm:py-4 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all mt-2 relative overflow-hidden group text-xs shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
                 >
-                  <span className="relative z-10 flex items-center justify-center gap-2"><Swords size={16} /> 进入海域</span>
+                  <span className="relative z-10 flex items-center justify-center gap-2">
+                    {isRoomLocked ? <RotateCcw size={16} /> : <Swords size={16} />}
+                    {isRoomLocked ? "返回游戏" : "进入海域"}
+                  </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                 </button>
-                {localStorage.getItem('catan_active_room') && (
+
+                {isRoomLocked && (
                   <button 
                     onClick={() => {
                       localStorage.removeItem('catan_active_room');
+                      localStorage.removeItem('catan_has_created_room');
+                      localStorage.removeItem('catan_game_active');
+                      localStorage.removeItem('catan_map_preview_seed');
+                      setIsRoomLocked(false);
                       setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
                       setRoomState(null);
                     }}
@@ -2881,26 +3140,45 @@ export default function App() {
              <div className="w-full h-full max-w-[90vw] sm:max-w-[800px] pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
                <GameRoomsTab 
                  currentUser={currentUser} 
-                 onJoinRoom={(roomId) => {
+                 isRoomLocked={isRoomLocked}
+                 activeRoomId={localStorage.getItem('catan_active_room')}
+                 onUserFoundInRoom={(roomId) => {
+                   // Sticky lock: if user is found in an active room, lock it
                    setInputRoomId(roomId);
-                   setActiveLobbyTab('lobby');
-                   setTimeout(() => document.getElementById('join-room-button')?.click(), 100);
-                 }}
-                 onSpectateRoom={(roomId) => {
-                   setInputRoomId(roomId);
-                   localStorage.setItem('catan_player_name', playerName);
+                   setIsRoomLocked(true);
                    localStorage.setItem('catan_active_room', roomId);
-                   try {
-                     const newUrl = new URL(window.location.href);
-                     newUrl.searchParams.set('room', roomId);
-                     window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
-                   } catch (e) {}
-
-                   setSailingText("正在驶入海域......");
-                   setShowSailingScreen(true);
-                   socketService.joinRoom(roomId, playerName);
-                   setIsJoinedLobby(true);
+                   localStorage.setItem('catan_has_created_room', 'true');
                  }}
+                 onReturnToGame={(roomId) => {
+                  const activeRoom = roomId || localStorage.getItem('catan_active_room');
+                  if (activeRoom) {
+                    setInputRoomId(activeRoom);
+                    setSailingText("重新驶入海域......");
+                    setShowSailingScreen(true);
+                    socketService.joinRoom(activeRoom, playerName);
+                  } else {
+                    setActiveLobbyTab('lobby');
+                  }
+                }}
+                onJoinRoom={(roomId) => {
+                  setInputRoomId(roomId);
+                  localStorage.setItem('catan_active_room', roomId);
+                  socketService.joinRoom(roomId, playerName);
+                }}
+                onSpectateRoom={(roomId) => {
+                  setInputRoomId(roomId);
+                  localStorage.setItem('catan_player_name', playerName);
+                  localStorage.setItem('catan_active_room', roomId);
+                  localStorage.setItem('catan_is_spectator', 'true');
+                  setIsJoinSpectator(true);
+                  try {
+                    const newUrl = new URL(window.location.href);
+                    newUrl.searchParams.set('room', roomId);
+                    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                  } catch (e) {}
+
+                  socketService.joinRoom(roomId, playerName, true);
+                }}
                />
              </div>
           ) : activeLobbyTab === 'rules' ? (
@@ -2990,16 +3268,16 @@ export default function App() {
         isAdmin={currentUser?.role === 'admin'}
       />
     </div>
-    </>
     );
+  }
+
+  if (!roomState) {
+    return null;
   }
 
   if (!gameStarted) {
     return (
       <>
-        {showSailingScreen && (
-          <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
-        )}
       <MapAlbumModal
         isOpen={showMapAlbum}
         onClose={() => setShowMapAlbum(false)}
@@ -3428,19 +3706,7 @@ export default function App() {
             
             <div className="pt-2 sm:pt-4 flex flex-col items-center gap-2 border-t border-slate-100">
                <button 
-                 onClick={(e) => {
-                   e.preventDefault();
-                   e.stopPropagation();
-                   const roomId = roomState?.roomId || inputRoomId;
-                   if (roomId) {
-                     socketService.leaveRoom(roomId);
-                   }
-                   localStorage.removeItem('catan_active_room');
-                   setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
-                   setRoomState(null);
-                   setIsJoinedLobby(false);
-                   try { window.history.replaceState({}, '', window.location.pathname); } catch (err) {}
-                 }}
+                 onClick={handleReturnToLobby}
                  className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-2"
                >
                  <LogOut size={12} className="scale-x-[-1]" />
@@ -3503,30 +3769,11 @@ export default function App() {
     );
   }
 
-  if (!roomState) {
-    return (
-      <>
-      {showSailingScreen && (
-        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
-      )}
-      <div style={flexibleContainerStyle}>
-        <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e]" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
-          <div className="w-16 h-16 bg-white/80 rounded-2xl shadow-xl shadow-sky-200 border border-white/50 flex items-center justify-center mb-6 animate-pulse">
-            <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan" className="w-10 h-10 object-contain opacity-70" />
-          </div>
-          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-[#0c4a6e] animate-pulse">正在进入海域......</p>
-        </div>
-      </div>
-      </>
-    );
-  }
+
 
   if (!gameState) {
     return (
       <>
-        {showSailingScreen && (
-          <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
-        )}
         <div style={lockedLandscapeStyle}>
         <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
       {/* Ocean atmosphere */}
@@ -3617,9 +3864,6 @@ export default function App() {
 
   return (
     <>
-      {showSailingScreen && (
-        <SailingLoadingScreen key="sailing-loader" onComplete={() => setShowSailingScreen(false)} text={sailingText} />
-      )}
     {/* {isSpectator && roomState && (
       <button 
         onClick={handleReturnToLobby}
@@ -3766,7 +4010,7 @@ export default function App() {
                       {((gameState.phase === 'initial_dice_roll' || gameState.phase === 'order_determination' || (gameState.phase === 'setup' && gameState.settlements.length < gameState.players.length)) && gameState.initialDiceRolls[i]) ? (
                         <div className="flex items-center gap-0.5 px-1 rounded-sm bg-orange-500/10 border border-orange-500/20">
                           <span className="text-[8px] font-black text-orange-600">
-                            {isDiceRolling ? "?" : String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
+                            {(isDiceRolling && i === activePlayerId) ? "?" : String(gameState.initialDiceRolls[i][gameState.initialDiceRolls[i].length - 1] || 0)}
                           </span>
                         </div>
                       ) : null}
@@ -3798,10 +4042,7 @@ export default function App() {
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Spectator interaction blocker - Adjusted to not cover the top bar (h-16) */}
-        {isSpectator && (
-          <div className="fixed top-16 inset-x-0 bottom-0 z-[80] pointer-events-auto bg-transparent select-none cursor-default" />
-        )}
+
         {/* Left Panel */}
         <AnimatePresence>
           {showLeftPanel && (
@@ -3836,7 +4077,6 @@ export default function App() {
               <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">
                 {isSpectator ? `${visiblePlayer?.name || '玩家'}的资源卡` : (gameState.phase === 'discard' && gameState.pendingDiscards.some(p => p.playerId === myPlayerIndex) ? '弃牌阶段' : '我的资源卡')}
               </h3>
-              <Info size={12} className="opacity-20" />
             </div>
             {/* Action panels removed from here, now in Central overlay */}
             <div className="grid grid-cols-1 gap-1">
@@ -3848,7 +4088,9 @@ export default function App() {
 
           <section className="pt-2 border-t border-black/5">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">我的发展卡</h3>
+              <h3 className="text-[10px] uppercase tracking-[0.2em] font-black opacity-30">
+                {isSpectator ? `${visiblePlayer?.name || '玩家'}的发展卡` : '我的发展卡'}
+              </h3>
             </div>
             <div className="space-y-1.5">
               {visiblePlayer?.devCards.length === 0 && (!visiblePlayer?.devCardsBoughtThisTurn || visiblePlayer?.devCardsBoughtThisTurn.length === 0) && (!visiblePlayer?.playedDevCards || visiblePlayer?.playedDevCards.length === 0) ? (
@@ -4434,23 +4676,34 @@ export default function App() {
                 transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
                 className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
-                <div className={`bg-white ${isMobile ? 'p-2' : 'p-3'} rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center gap-3 overflow-visible`}>
-                  <div className="flex gap-1.5 overflow-visible">
+                <div 
+                  className="bg-white rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center overflow-visible"
+                  style={{
+                    padding: `${(isMobile ? 24 : 44) * 0.3}px ${(isMobile ? 24 : 44) * 0.4}px`,
+                    gap: `${(isMobile ? 24 : 44) / 2}px`
+                  }}
+                >
+                  <div className="flex overflow-visible" style={{ gap: `${(isMobile ? 24 : 44) / 4}px` }}>
                     <DiceFace 
                       key={`dice1-${diceAnimId}`} 
                       value={gameState.dice?.[0] || 1} 
                       isRolling={isDiceRolling}
                       diceIndex={1}
+                      size={isMobile ? 24 : 44}
                     />
                     <DiceFace 
                       key={`dice2-${diceAnimId}`} 
                       value={gameState.dice?.[1] || 1} 
                       isRolling={isDiceRolling}
                       diceIndex={2}
+                      size={isMobile ? 24 : 44}
                     />
                   </div>
-                  <div className="flex items-center justify-center min-w-[2.5rem] h-full text-center">
-                    <p className={`${isMobile ? 'text-xl' : 'text-3xl'} font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}>
+                  <div className="flex items-center justify-center text-center">
+                    <p 
+                      className={`font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}
+                      style={{ fontSize: `${(isMobile ? 24 : 44) * 0.8}px` }}
+                    >
                       {diceSum}
                     </p>
                   </div>
@@ -4486,7 +4739,7 @@ export default function App() {
                   }}
                   className="w-full py-3 bg-stone-100 text-stone-700 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center gap-2"
                 >
-                  <LogOutIcon size={16} />
+                  <LogOutIcon size={16} className="scale-x-[-1]" />
                   <span>中途离开</span>
                 </button>
 
@@ -6067,7 +6320,7 @@ function DiceFacePips({ value }: { value: number }) {
   );
 }
 
-function DiceFace({ value, isRolling, diceIndex }: { value: number, isRolling?: boolean, diceIndex: 1 | 2 }) {
+function DiceFace({ value, isRolling, diceIndex, size = 44 }: { value: number, isRolling?: boolean, diceIndex: 1 | 2, size?: number }) {
   const getTargetAngles = (val: number) => {
     switch (val) {
       case 1: return { x: 0, y: 0 };
@@ -6086,7 +6339,6 @@ function DiceFace({ value, isRolling, diceIndex }: { value: number, isRolling?: 
   });
   const [isAnimating, setIsAnimating] = useState(false);
   const wasRollingRef = useRef(false);
-  const size = 44; // Slightly smaller size
   const halfSize = size / 2;
 
   useEffect(() => {
@@ -6123,7 +6375,7 @@ function DiceFace({ value, isRolling, diceIndex }: { value: number, isRolling?: 
   }, [value, isRolling, diceIndex]);
 
   return (
-    <div className="relative select-none overflow-visible md:scale-100 scale-[0.75] origin-center" style={{ width: size, height: size, perspective: '300px' }}>
+    <div className="relative select-none overflow-visible origin-center" style={{ width: size, height: size, perspective: '300px' }}>
       <style>{`
         @keyframes diceBounce {
           0% { transform: translateY(0) scale(0.8); }

@@ -393,19 +393,19 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
             </motion.div>
           </AnimatePresence>
         )}
-        
-        {/* Logout Button */}
-        {!isEditing && onLogout && !currentUser?.isViewingAsAdmin && (
-           <div className="pt-2 pb-6">
-             <button
-               onClick={onLogout}
-               className="w-full flex items-center justify-center gap-2 text-sm font-black text-red-500 bg-red-50 hover:bg-red-100 py-3.5 rounded-2xl transition-colors border border-red-100/50"
-             >
-               <LogOut size={16} /> 退出账号
-             </button>
-           </div>
-        )}
       </div>
+      
+      {/* Logout Button */}
+      {!isEditing && onLogout && !currentUser?.isViewingAsAdmin && (
+         <div className="pt-3 pb-4 px-4 shrink-0 bg-white border-t border-slate-100">
+           <button
+             onClick={onLogout}
+             className="w-full flex items-center justify-center gap-2 text-sm font-black text-red-500 bg-red-50 hover:bg-red-100 py-3 rounded-2xl transition-colors border border-red-100/50"
+           >
+             <LogOut size={16} /> 退出账号
+           </button>
+         </div>
+      )}
     </motion.div>
   );
 

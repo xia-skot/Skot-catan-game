@@ -125,8 +125,8 @@ class SocketService {
     }
   }
 
-  joinRoom(roomId: string, playerName: string) {
-    this.emit('join_room', roomId, this.playerId, playerName);
+  joinRoom(roomId: string, playerName: string, asSpectator: boolean = false) {
+    this.emit('join_room', roomId, this.playerId, playerName, asSpectator);
   }
 
   getActiveRooms(isAdmin: boolean, callback: (rooms: RoomState[]) => void) {
@@ -197,6 +197,14 @@ class SocketService {
 
   promoteToPlayer(roomId: string, targetPlayerId: string) {
     this.emit('promote_to_player', roomId, this.playerId, targetPlayerId);
+  }
+
+  deleteRoom(roomId: string) {
+    this.emit('admin_delete_room', roomId);
+  }
+
+  onRoomDeleted(callback: () => void) {
+    this.registerCallback('room_deleted', callback);
   }
 
   onPlayerKicked(callback: (kickedPlayerId: string) => void) {

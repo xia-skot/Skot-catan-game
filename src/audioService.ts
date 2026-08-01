@@ -13,9 +13,9 @@ export const DEFAULT_EQUALIZER: SoundEqualizer = {
   dice: 100,
   resource: 100,
   pirate: 100,
-  click: 100,
+  click: 130,
   build: 100,
-  bgm: 100,
+  bgm: 55,
 };
 
 const AUDIO_URLS: Record<SoundType, string> = {
@@ -31,18 +31,22 @@ class AudioService {
   private audios: Record<string, HTMLAudioElement> = {};
   private activeLoops: Partial<Record<SoundType, HTMLAudioElement>> = {};
   
+  public roomActive: boolean = false;
+  
   private _sfxVolume: number = 0.5;
-  private _bgmVolume: number = 0.3;
+  private _bgmVolume: number = 0.16;
   private _enabled: boolean = true;
   private _bgmPlaying: boolean = false;
   private _sfxEqualizer: SoundEqualizer = { ...DEFAULT_EQUALIZER };
+  private _tempMuteSfx: boolean = false;
+  private activeSfxClones: Set<HTMLAudioElement> = new Set();
 
   constructor() {
     const savedSfx = localStorage.getItem('catan_sfx_volume');
     const savedBgm = localStorage.getItem('catan_bgm_volume');
     
     this._sfxVolume = savedSfx ? Number(savedSfx) : 0.5;
-    this._bgmVolume = savedBgm ? Number(savedBgm) : 0.3;
+    this._bgmVolume = savedBgm ? Number(savedBgm) : 0.16;
     
     if (isNaN(this._sfxVolume)) this._sfxVolume = 0.5;
     if (isNaN(this._bgmVolume)) this._bgmVolume = 0.3;
@@ -80,6 +84,11 @@ class AudioService {
     });
   }
 
+  get isBgmPlaying(): boolean {
+    const active = this.activeLoops['bgm'];
+    return !!active && !active.paused;
+  }
+
   get sfxEqualizer() {
     return { ...this._sfxEqualizer };
   }
@@ -111,6 +120,18 @@ class AudioService {
     }
   }
 
+  get tempMuteSfx() { return this._tempMuteSfx; }
+  set tempMuteSfx(val: boolean) {
+    this._tempMuteSfx = val;
+    if (val) {
+      this.stopAllSfx();
+    } else {
+      if (this._bgmPlaying && this._enabled) {
+        this.playBgm();
+      }
+    }
+  }
+
   get enabled() { return this._enabled; }
   set enabled(val: boolean) {
     this._enabled = val;
@@ -127,29 +148,57 @@ class AudioService {
   playBgm() {
     this._bgmPlaying = true;
     if (!this._enabled) return;
-    if (!this.activeLoops['bgm']) {
-      const audio = this.audios['bgm'];
-      if (audio) {
-        const clone = audio.cloneNode() as HTMLAudioElement;
-        const eqValue = Number(this._sfxEqualizer.bgm);
-        const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
-        clone.volume = Math.min(1, Math.max(0, this._bgmVolume * eqRatio));
-        clone.loop = true;
-        clone.play().catch(e => console.warn('BGM play prevented:', e));
-        this.activeLoops['bgm'] = clone;
+
+    const activeBgm = this.activeLoops['bgm'];
+    if (activeBgm) {
+      if (activeBgm.paused) {
+        activeBgm.play().catch(e => {
+          console.warn('BGM resume prevented:', e);
+          if (this.activeLoops['bgm'] === activeBgm) {
+            delete this.activeLoops['bgm'];
+          }
+        });
       }
+      return;
+    }
+
+    const audio = this.audios['bgm'];
+    if (audio) {
+      const clone = audio.cloneNode() as HTMLAudioElement;
+      const eqValue = Number(this._sfxEqualizer.bgm);
+      const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
+      clone.volume = Math.min(1, Math.max(0, this._bgmVolume * eqRatio));
+      clone.loop = true;
+
+      this.activeLoops['bgm'] = clone;
+      clone.play().catch(e => {
+        console.warn('BGM play prevented:', e);
+        if (this.activeLoops['bgm'] === clone) {
+          delete this.activeLoops['bgm'];
+        }
+      });
     }
   }
 
-  stopBgm() {
-    this._bgmPlaying = false;
+  stopBgm(permanent: boolean = false) {
+    if (permanent) {
+      this._bgmPlaying = false;
+    }
     this.stop('bgm');
   }
 
   play(type: SoundType, loop: boolean = false) {
     if (!this._enabled) return;
+
     if (type === 'bgm') {
       this.playBgm();
+      return;
+    }
+
+    if (this._tempMuteSfx) return;
+    
+    // Game-specific sound effects cannot play when we are not in an active room
+    if (type !== 'click' && !this.roomActive) {
       return;
     }
     
@@ -166,6 +215,12 @@ class AudioService {
       const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
       clone.volume = Math.min(1, Math.max(0, this._sfxVolume * eqRatio));
       clone.loop = loop;
+
+      this.activeSfxClones.add(clone);
+      const removeClone = () => { this.activeSfxClones.delete(clone); };
+      clone.addEventListener('ended', removeClone);
+      clone.addEventListener('pause', removeClone);
+
       clone.play().catch(e => console.warn('Audio play prevented:', e));
       
       if (loop) {
@@ -184,15 +239,47 @@ class AudioService {
   
   stop(type: SoundType) {
       if (this.activeLoops[type]) {
-          this.activeLoops[type].pause();
-          this.activeLoops[type].currentTime = 0;
+          try {
+            this.activeLoops[type].pause();
+            this.activeLoops[type].currentTime = 0;
+          } catch(e) {}
           delete this.activeLoops[type];
       }
   }
 
-  stopAll() {
+  stopAllSfx() {
+    this.activeSfxClones.forEach(audio => {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (e) {}
+    });
+    this.activeSfxClones.clear();
+
+    Object.keys(this.activeLoops).forEach(type => {
+      if (type !== 'bgm') {
+        this.stop(type as SoundType);
+      }
+    });
+  }
+
+  unlockAll() {
+    Object.values(this.audios).forEach(audio => {
+      audio.play().then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+      }).catch(() => {});
+    });
+  }
+
+  stopAll(permanentBgm: boolean = false) {
+    this.stopAllSfx();
+    this.stopBgm(permanentBgm);
     Object.values(this.activeLoops).forEach(audio => {
-        audio?.pause();
+        try {
+          audio?.pause();
+          if (audio) audio.currentTime = 0;
+        } catch (e) {}
     });
     this.activeLoops = {};
   }

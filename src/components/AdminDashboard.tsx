@@ -256,7 +256,7 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="space-y-8">
               <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
                 <h3 className="text-lg font-black text-slate-800 mb-6 flex flex-wrap gap-2 items-center">
                   <span className="w-2 h-6 bg-indigo-500 rounded-full" /> 最近注册用户

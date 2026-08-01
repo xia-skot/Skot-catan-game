@@ -754,9 +754,9 @@ async function startServer() {
       }
     });
 
-    socket.on('join_room', (roomId: string, playerId: string, playerName: string) => {
+    socket.on('join_room', (roomId: string, playerId: string, playerName: string, asSpectator?: boolean) => {
       touchRoom(roomId);
-      console.log('User joining room:', roomId, playerId);
+      console.log('User joining room:', roomId, playerId, 'asSpectator:', asSpectator);
       socket.join(roomId);
       
       let room = rooms.get(roomId);
@@ -780,9 +780,11 @@ async function startServer() {
       
       const existingPlayer = room.players.find((p: any) => p.id === playerId);
       if (!existingPlayer) {
-        // If game started or room full, join as spectator
+        // If they explicitly want to spectate, are already a spectator, game has started, or room is full
         const botCount = room.settings?.botConfig?.filter((b: boolean) => b).length || 0;
-        if (room.gameState || (room.players.length + botCount >= (room.settings?.playerCount || 4))) {
+        const alreadySpectator = room.spectators && room.spectators.some((s: any) => s.id === playerId);
+        
+        if (room.gameState || asSpectator || alreadySpectator || (room.players.length + botCount >= (room.settings?.playerCount || 4))) {
           if (!room.spectators) room.spectators = [];
           const existingSpectator = room.spectators.find((s: any) => s.id === playerId);
           if (!existingSpectator) {
@@ -806,7 +808,10 @@ async function startServer() {
       // Fallback: if server thinks current host is a bot or missing
       const currentHost = room.players.find((p: any) => p.id === room.hostId);
       if (!currentHost || currentHost.isBot) {
-        room.hostId = playerId;
+        const firstHumanPlayer = room.players.find((p: any) => !p.isBot && !p.disconnected);
+        if (firstHumanPlayer) {
+          room.hostId = firstHumanPlayer.id;
+        }
       }
       
       io.to(roomId).emit('room_state', room);
@@ -939,6 +944,13 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room) {
         touchRoom(roomId);
+
+        // Ignore update_game_state from spectators
+        const isSpectatorSocket = room.spectators?.some((s: any) => s.socketId === socket.id || s.id === socket.id);
+        if (isSpectatorSocket) {
+          console.log(`[Server] Ignored update_game_state from spectator socket ${socket.id}`);
+          return;
+        }
         // If a winner is just declared, save game using gamesCollection
         if (gameState && gameState.winnerId !== undefined && gameState.winnerId !== null && 
             (!room.gameState || room.gameState.winnerId === undefined || room.gameState.winnerId === null)) {
@@ -1123,14 +1135,19 @@ async function startServer() {
         }))
         .filter(r => {
           if (r.settings?.isPrivate) return false;
-          const hasOnlinePlayers = r.players && r.players.some((p: any) => !p.disconnected);
-          if (!hasOnlinePlayers) return false;
           return r.status === 'waiting' || r.status === 'playing';
         });
       if (!isAdmin) {
         activeRooms = activeRooms.slice(0, globalSettings.maxVisibleRooms);
       }
       socket.emit('active_rooms_list', activeRooms);
+    });
+
+    socket.on('admin_delete_room', (roomId: string) => {
+      if (rooms.has(roomId)) {
+        rooms.delete(roomId);
+        io.to(roomId).emit('room_deleted');
+      }
     });
 
     socket.emit('sound_settings_updated', globalSoundSettings);

@@ -193,7 +193,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSe
           </div>
 
           {/* ADMIN EQUALIZER SECTION */}
-          {isAdmin ? (
+          {isAdmin && (
             <div className="pt-4 border-t border-stone-100 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -245,10 +245,6 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSe
                   );
                 })}
               </div>
-            </div>
-          ) : (
-            <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 text-[11px] text-indigo-700 font-medium leading-relaxed">
-              💡 提示：全局单项音效比例由管理员均衡器统一设定，您可自行调节主音效与背景音乐大小。
             </div>
           )}
 
