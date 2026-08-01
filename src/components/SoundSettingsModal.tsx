@@ -8,6 +8,7 @@ interface SoundSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   isAdmin?: boolean;
+  inline?: boolean;
 }
 
 const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = [
@@ -19,7 +20,7 @@ const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = 
   { key: 'bgm', label: '背景音乐', icon: '🎵' },
 ];
 
-export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSettingsModalProps) {
+export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = false }: SoundSettingsModalProps) {
   const [enabled, setEnabled] = useState(audioService.enabled);
   const [bgmVol, setBgmVol] = useState(Math.round(audioService.bgmVolume * 100));
   const [sfxVol, setSfxVol] = useState(Math.round(audioService.sfxVolume * 100));
@@ -99,24 +100,18 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSe
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onClick={onClose} />
-      
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className={`bg-white rounded-3xl p-6 sm:p-8 w-full shadow-2xl relative z-10 border border-stone-100 max-h-[90vh] overflow-y-auto ${
-          isAdmin ? 'max-w-md' : 'max-w-sm'
-        }`}
-      >
+  const content = (
+    <>
+      {!inline && (
         <button 
           onClick={onClose}
           className="absolute top-4 right-4 p-2 text-stone-400 hover:bg-stone-100 rounded-full transition-colors z-20"
         >
           <X size={20} />
         </button>
+      )}
 
+      {!inline && (
         <h2 className="text-xl font-black text-stone-800 mb-6 flex items-center gap-2">
           <BellRing size={20} className="text-indigo-600" /> 声音设置
           {isAdmin && (
@@ -125,8 +120,20 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSe
             </span>
           )}
         </h2>
+      )}
 
-        <div className="space-y-6">
+      {inline && (
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+           <BellRing size={16} /> 声音设置
+           {isAdmin && (
+              <span className="ml-auto text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-200">
+                <Shield size={12} /> 管理员权限
+              </span>
+           )}
+        </h3>
+      )}
+
+      <div className="space-y-6">
           {/* Main Switch */}
           <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-100">
             <div className="flex items-center gap-3">
@@ -248,13 +255,34 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false }: SoundSe
             </div>
           )}
 
-          <button 
-            onClick={onClose}
-            className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] transition-all flex items-center justify-center gap-2 text-sm"
-          >
-            确定
-          </button>
+          {!inline && (
+            <button 
+              onClick={onClose}
+              className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] transition-all flex items-center justify-center gap-2 text-sm"
+            >
+              确定
+            </button>
+          )}
         </div>
+    </>
+  );
+
+  if (inline) {
+    return <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">{content}</div>;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onClick={onClose} />
+      
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className={`bg-white rounded-3xl p-6 sm:p-8 w-full shadow-2xl relative z-10 border border-stone-100 max-h-[90vh] overflow-y-auto ${
+          isAdmin ? 'max-w-md' : 'max-w-sm'
+        }`}
+      >
+        {content}
       </motion.div>
     </div>
   );

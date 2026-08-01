@@ -93,18 +93,9 @@ export const GameRoomsTab: React.FC<GameRoomsTabProps> = ({
   });
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-50">
-      <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
+    <div className="w-full h-full flex flex-col">
+      <div className="px-4 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <button 
-            onClick={() => onReturnToGame && onReturnToGame()}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-all border border-slate-100"
-            title="返回主界面"
-          >
-            <div className="scale-x-[-1] flex items-center justify-center">
-              <RefreshCw size={16} className="rotate-45" />
-            </div>
-          </button>
           <h2 className="text-xl font-serif font-black italic text-slate-800 flex items-center gap-2">
             <Swords size={24} className="text-indigo-600" />
             游戏大厅

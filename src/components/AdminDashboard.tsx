@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings, Loader2 } from 'lucide-react';
 import { UserProfileModal } from './UserProfileModal';
 
-export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, onClose: () => void }) {
+export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout: () => void, onClose: () => void, inline?: boolean }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -158,6 +158,159 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
     );
   }
 
+  if (inline) {
+    if (loading && !data) {
+      return (
+        <div className="flex items-center justify-center py-20 text-indigo-400">
+          <RotateCw size={24} className="animate-spin" />
+        </div>
+      );
+    }
+    
+    if (error) {
+      return (
+        <div className="p-4 bg-red-50 text-red-600 rounded-3xl text-sm border border-red-100">
+          {error}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="flex gap-4 p-4 bg-white rounded-3xl shadow-sm border border-slate-100">
+          <div className="flex-1 flex flex-col items-center">
+            <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">注册用户</span>
+            <span className="text-xl font-black text-slate-800 mt-1">{data?.stats?.users || 0}</span>
+          </div>
+          <div className="flex-1 flex flex-col items-center border-l border-r border-slate-100">
+            <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600/70">游客</span>
+            <span className="text-xl font-black text-emerald-600 mt-1">{data?.stats?.guests || 0}</span>
+          </div>
+          <div className="flex-1 flex flex-col items-center">
+            <span className="text-[10px] uppercase font-black tracking-widest text-purple-600/70">对局数</span>
+            <span className="text-xl font-black text-purple-600 mt-1">{data?.stats?.games || 0}</span>
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <Settings size={16} /> 系统设置
+          </h3>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold text-slate-700">大厅显示房间上限</span>
+            <input
+              type="number"
+              className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-center outline-none focus:border-indigo-500 bg-slate-50"
+              defaultValue={data?.settings?.maxVisibleRooms || 10}
+              onBlur={async (e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val)) {
+                  try {
+                    await fetch('/api/admin/settings', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
+                      },
+                      body: JSON.stringify({ maxVisibleRooms: val })
+                    });
+                  } catch (err) {
+                    console.error('Failed to update setting', err);
+                  }
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2 justify-between">
+            <div className="flex items-center gap-2">
+              <Users size={16} /> 所有玩家战绩
+            </div>
+            <button onClick={fetchStats} className="text-indigo-500 hover:bg-indigo-50 p-1 rounded-md transition-colors">
+              <RotateCw size={14} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </h3>
+          
+          <div className="flex flex-col">
+            {(data?.allUsers || data?.latestUsers)?.map((u: any) => {
+              const isEditing = editingUsers[u._id] !== undefined;
+              return (
+                <div key={u._id} className="py-3 border-b border-slate-100 last:border-b-0 flex items-center justify-between group">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center shrink-0 border border-indigo-100/50">
+                      <span className="text-sm font-black text-indigo-600">{u.username.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <div className="min-w-0 flex flex-col justify-center">
+                      <p className="text-sm font-bold text-slate-800 truncate flex items-center gap-2">
+                        {isEditing ? (
+                          <input 
+                            type="text"
+                            value={editingUsers[u._id]}
+                            onChange={(e) => handleEditChange(u._id, e.target.value)}
+                            className="border border-indigo-200 rounded px-1.5 py-0.5 text-xs outline-none w-24 focus:border-indigo-400"
+                            autoFocus
+                          />
+                        ) : (
+                          <span 
+                            className="cursor-pointer hover:text-indigo-600 transition-colors"
+                            onClick={() => handleOpenUserProfile(u.username)}
+                          >
+                            {u.username}
+                          </span>
+                        )}
+                        {u.role === 'admin' && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full font-bold">管理员</span>}
+                      </p>
+                      <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-2 font-medium">
+                        <span className="bg-slate-50 px-1.5 py-0.5 rounded">场次: <span className="font-bold text-slate-600">{u.totalGames || 0}</span></span>
+                        <span className="bg-slate-50 px-1.5 py-0.5 rounded">胜率: <span className="font-bold text-emerald-600">{u.winRate || 0}%</span></span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-1 shrink-0 ml-2">
+                    {isEditing ? (
+                      <button onClick={() => handleSaveUser(u._id)} disabled={savingId === u._id} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors bg-slate-50">
+                        {savingId === u._id ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                      </button>
+                    ) : (
+                      <button onClick={() => setEditingUsers(prev => ({ ...prev, [u._id]: u.username }))} className="p-2 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-xl transition-colors bg-slate-50">
+                        <Edit2 size={16} />
+                      </button>
+                    )}
+                    
+                    {confirmDeleteId === u._id ? (
+                      <div className="flex gap-1 bg-red-50 p-1 rounded-xl border border-red-100">
+                        <button onClick={() => handleDeleteUser(u._id)} className="px-2 py-1 text-[10px] font-bold text-white bg-red-500 rounded-lg hover:bg-red-600">确认</button>
+                        <button onClick={() => setConfirmDeleteId(null)} className="px-2 py-1 text-[10px] font-bold text-slate-500 bg-white rounded-lg hover:bg-slate-100">取消</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDeleteId(u._id)} disabled={deletingId === u._id} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors bg-slate-50">
+                        {deletingId === u._id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {inspectingUser && (
+          <UserProfileModal 
+            currentUser={inspectingUser} 
+            onClose={() => setInspectingUser(null)} 
+            onUpdateSuccess={(updatedUser) => {
+              setInspectingUser({ ...updatedUser, isViewingAsAdmin: true });
+              fetchStats();
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -259,20 +412,21 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
             <div className="space-y-8">
               <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
                 <h3 className="text-lg font-black text-slate-800 mb-6 flex flex-wrap gap-2 items-center">
-                  <span className="w-2 h-6 bg-indigo-500 rounded-full" /> 最近注册用户
+                  <span className="w-2 h-6 bg-indigo-500 rounded-full" /> 所有玩家战绩
                 </h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">用户名</th>
-                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">邮箱</th>
+                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-center">场次</th>
+                        <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-center">胜率</th>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">注册时间</th>
                         <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 text-right">操作</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {data.latestUsers.map((u: any) => {
+                      {(data?.allUsers || data?.latestUsers)?.map((u: any) => {
                         const isEditing = editingUsers[u._id] !== undefined;
                         return (
                         <tr key={u._id} className="hover:bg-slate-50 transition-colors">
@@ -295,7 +449,8 @@ export function AdminDashboard({ onLogout, onClose }: { onLogout: () => void, on
                             )}
                             {u.role === 'admin' && <span className="ml-2 text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full relative -top-0.5">管理员</span>}
                           </td>
-                          <td className="py-4 px-4 text-sm text-slate-500">{u.email}</td>
+                          <td className="py-4 px-4 text-sm text-slate-600 font-bold text-center">{u.totalGames || 0}</td>
+                          <td className="py-4 px-4 text-sm text-emerald-600 font-bold text-center">{u.winRate || 0}%</td>
                           <td className="py-4 px-4 text-xs font-mono text-slate-400">{new Date(u.createdAt).toLocaleString()}</td>
                           <td className="py-4 px-4 text-right flex justify-end gap-1">
                             {isEditing ? (

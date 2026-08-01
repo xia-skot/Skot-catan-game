@@ -2,20 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
+import { AdminDashboard } from './AdminDashboard';
 
 interface UserProfileModalProps {
   currentUser: any;
   onClose: () => void;
   onUpdateSuccess: (user: any) => void;
   onLogout?: () => void;
-  onAdminDashboard?: () => void;
   inline?: boolean;
   onPlayerClick?: (username: string) => void;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, onAdminDashboard, inline = false, onPlayerClick }: UserProfileModalProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [showSoundSettings, setShowSoundSettings] = useState(false);
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick }: UserProfileModalProps) {
+  const [activeView, setActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin'>('menu');
   const [username, setUsername] = useState(currentUser?.username || '');
   const [oldPassword, setOldPassword] = useState('');
   const [password, setPassword] = useState('');
@@ -92,7 +91,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       
       setTimeout(() => {
         onUpdateSuccess(data.user);
-        setIsEditing(false);
+        setActiveView('menu');
         setSuccessText('');
       }, 1000);
     } catch (err: any) {
@@ -110,72 +109,53 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`bg-slate-50 relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full' : 'rounded-3xl w-full max-w-md shadow-2xl max-h-[90vh]'}`}
+      className={`bg-slate-50 relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200/50' : 'rounded-3xl w-full shadow-2xl max-h-[90vh]'}`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-6 pb-6 shadow-sm z-10 shrink-0 relative ${inline ? 'pt-8' : 'pt-6'}`}>
-        {!inline && (
-          <button 
-            onClick={onClose}
-            className="absolute top-4 right-4 p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors z-20"
-          >
-            <X size={20} />
-          </button>
-        )}
-        <div className="flex items-center justify-between mb-2">
-          {isEditing ? (
-             <button onClick={() => setIsEditing(false)} className="flex items-center text-slate-500 hover:text-indigo-600 text-xs font-bold transition-colors">
-               <ArrowLeft size={16} className="mr-1" /> 返回
-             </button>
-          ) : (
-             <h2 className={`font-black text-slate-800 tracking-tight ${inline ? 'text-xl' : 'text-2xl'}`}>
-               {currentUser?.isViewingAsAdmin ? '玩家战绩' : '我的'}
-             </h2>
-          )}
-          
-          {!isEditing && !currentUser?.isViewingAsAdmin && (
-             <div className="flex items-center gap-2">
-               {currentUser?.role === 'admin' && onAdminDashboard && (
-                 <button onClick={onAdminDashboard} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="管理面板">
-                   <Settings size={18} />
-                 </button>
-               )}
-               <button onClick={() => setShowSoundSettings(true)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="声音设置">
-                 <BellRing size={18} />
-               </button>
-               <button onClick={() => setIsEditing(true)} disabled={currentUser.isGuest} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed" title="修改资料">
-                 <Edit3 size={18} />
-               </button>
-             </div>
-          )}
+      <div className={`bg-white px-6 pb-4 shadow-sm z-10 shrink-0 relative flex justify-between items-center ${inline ? 'pt-2' : 'pt-4'}`}>
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden">
+            <User size={24} />
+            {currentUser?.role === 'admin' && (
+              <div className="absolute bottom-0 left-0 w-full bg-indigo-500 text-white text-[8px] font-black text-center py-0.5 uppercase tracking-widest">Admin</div>
+            )}
+          </div>
+          <div>
+            <div className="text-lg font-black text-slate-800">{currentUser.isGuest ? '游客' : currentUser.username}</div>
+            <div className="text-[10px] text-slate-400 font-medium">{currentUser.isGuest ? '未绑定邮箱' : currentUser.email}</div>
+          </div>
         </div>
-
-        {/* User Card */}
-        <div className="flex items-center gap-4 mt-4">
-           <div className="w-16 h-16 bg-indigo-100 text-indigo-500 rounded-2xl flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden">
-             <User size={32} />
-             {currentUser?.role === 'admin' && (
-                <div className="absolute bottom-0 left-0 w-full bg-indigo-500 text-white text-[8px] font-black text-center py-0.5 uppercase tracking-widest">
-                  Admin
-                </div>
-             )}
-           </div>
-           <div className="flex-1 min-w-0">
-             <div className="text-xl font-black text-slate-800 truncate">{currentUser.isGuest ? '游客' : currentUser.username}</div>
-             <div className="text-xs text-slate-400 font-medium truncate mt-0.5">{currentUser.isGuest ? '未绑定邮箱' : currentUser.email}</div>
-           </div>
+        
+        <div className="flex items-center gap-1">
+            {activeView !== 'menu' && (
+              <button 
+                onClick={() => setActiveView('menu')}
+                className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
+                title="返回"
+              >
+                <ArrowLeft size={20} />
+              </button>
+            )}
+            {!inline && (
+              <button 
+                onClick={onClose}
+                className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors ml-2"
+              >
+                <X size={20} />
+              </button>
+            )}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar relative p-4 space-y-4">
-        {isEditing ? (
+        {activeView === 'edit' && (
           <AnimatePresence mode="wait">
             <motion.div
               key="edit"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100"
+              className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100"
             >
               <h3 className="text-sm font-black text-slate-800 mb-4 flex items-center gap-2">
                  <Edit3 size={16} className="text-indigo-500" /> 编辑资料
@@ -264,40 +244,75 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               </form>
             </motion.div>
           </AnimatePresence>
-        ) : (
+        )}
+        {activeView === 'sound' && (
+          <AnimatePresence>
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <SoundSettingsModal 
+                isOpen={true} 
+                onClose={() => {}} 
+                isAdmin={currentUser?.role === 'admin'}
+                inline={true}
+              />
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {activeView === 'admin' && (
+          <AnimatePresence>
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <AdminDashboard 
+                onClose={() => {}} 
+                onLogout={() => {}}
+                inline={true}
+              />
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {activeView === 'history' && (
           <AnimatePresence mode="wait">
             <motion.div
               key="stats"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="space-y-4"
+              className="space-y-6"
             >
-              {/* Stats Box */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <div className="flex gap-3">
-                  <div className="flex-1 bg-slate-50 rounded-xl p-3 flex flex-col items-center justify-center border border-slate-100/50">
+              
+              {/* Stats Box (moved to top) */}
+              <div className="flex gap-4 p-4 bg-white rounded-3xl shadow-sm border border-slate-100">
+                  <div className="flex-1 flex flex-col items-center">
                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">场次</span>
                     <span className="text-xl font-black text-slate-800 mt-1">{totalGames}</span>
                   </div>
-                  <div className="flex-1 bg-yellow-50 rounded-xl p-3 flex flex-col items-center justify-center border border-yellow-100/50">
+                  <div className="flex-1 flex flex-col items-center border-l border-r border-slate-100">
                     <span className="text-[10px] uppercase font-black tracking-widest text-yellow-600/70">胜场</span>
                     <span className="text-xl font-black text-yellow-600 mt-1">{wins}</span>
                   </div>
-                  <div className="flex-1 bg-emerald-50 rounded-xl p-3 flex flex-col items-center justify-center border border-emerald-100/50">
+                  <div className="flex-1 flex flex-col items-center">
                     <span className="text-[10px] uppercase font-black tracking-widest text-emerald-600/70">胜率</span>
                     <span className="text-xl font-black text-emerald-600 mt-1">{winRate}%</span>
                   </div>
-                </div>
               </div>
 
-              {/* Match History */}
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                <h3 className="text-sm font-black text-slate-800 mb-4 flex items-center gap-2">
-                   <Clock size={16} className="text-slate-400" /> 历史战绩
+              {/* Match History (moved below) */}
+              <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                   <Clock size={16} /> 历史战绩明细
                 </h3>
                   
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col">
                   {currentUser.isGuest ? (
                     <div className="py-8 text-center text-slate-400 text-xs font-medium">
                       游客无法查阅战绩，请注册正式账号。
@@ -315,69 +330,51 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                       const sortedPlayers = [...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
                       const isWin = g.winnerId && g.players?.find((p: any) => p.name === currentUser.username)?.id === g.winnerId;
                       return (
-                        <div key={i} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group">
+                        <div key={i} className="py-4 border-b border-slate-100 last:border-b-0 flex flex-col gap-2 relative group">
                           {isWin && (
-                            <div className="absolute top-0 right-0 w-16 h-16 bg-yellow-400/10 rounded-bl-full flex items-start justify-end p-2 pointer-events-none">
-                              <Trophy size={16} className="text-yellow-500" />
+                            <div className="absolute top-0 right-0 w-12 h-12 bg-yellow-400/10 rounded-bl-full flex items-start justify-end p-2 pointer-events-none">
+                              <Trophy size={14} className="text-yellow-500" />
                             </div>
                           )}
-                          <div className="flex items-center justify-between text-xs font-medium text-slate-500 border-b border-slate-100/80 pb-2">
-                            <span className="text-slate-800 font-bold">房间: {g.roomId}</span>
-                            <span className="font-mono text-[10px]">{new Date(g.completedAt).toLocaleString()}</span>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                            <span className="font-bold text-slate-600">ID: {g.roomId}</span>
+                            <span className="font-mono">{new Date(g.completedAt).toLocaleDateString()}</span>
                           </div>
-                          <div className="overflow-x-auto">
+                          
+                          {/* Scrolling Table */}
+                          <div className="overflow-x-auto pb-2 -mx-2 px-2">
                             <table className="w-full text-left border-collapse text-xs">
                               <thead>
                                 <tr className="text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                                  <th className="py-2 px-1 text-center w-8">排名</th>
-                                  <th className="py-2 px-1">玩家</th>
-                                  <th className="py-2 px-1 text-center w-12">总分</th>
-                                  <th className="py-2 px-1 text-center w-8">村</th>
-                                  <th className="py-2 px-1 text-center w-8">城</th>
-                                  <th className="py-2 px-1 text-center w-8">路</th>
-                                  <th className="py-2 px-1 text-center w-8">骑</th>
-                                  <th className="py-2 px-1 text-center w-8">卡</th>
-                                  <th className="py-2 px-1 text-center w-8">探</th>
+                                  <th className="py-2 px-2 text-center w-8">排名</th>
+                                  <th className="py-2 px-2 min-w-[80px]">玩家</th>
+                                  <th className="py-2 px-2 text-center">总分</th>
+                                  <th className="py-2 px-2 text-center">村</th>
+                                  <th className="py-2 px-2 text-center">城</th>
+                                  <th className="py-2 px-2 text-center">路</th>
+                                  <th className="py-2 px-2 text-center">骑</th>
+                                  <th className="py-2 px-2 text-center">卡</th>
+                                  <th className="py-2 px-2 text-center">探</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-100/50">
+                              <tbody className="divide-y divide-slate-50">
                                 {sortedPlayers.map((p, idx) => {
                                   const isWinner = p.id === g.winnerId;
-                                  const isRealPlayer = !p.isBot;
                                   return (
-                                    <tr key={idx} className={`hover:bg-slate-100/50 transition-colors ${isWinner ? 'bg-yellow-50/20' : ''}`}>
-                                      <td className="py-2 px-1 text-center">
-                                        <span className={`inline-flex w-5 h-5 items-center justify-center rounded-full text-[10px] font-black ${idx === 0 ? 'bg-yellow-100 text-yellow-700' : idx === 1 ? 'bg-slate-200 text-slate-600' : idx === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-400'}`}>
-                                          {idx + 1}
-                                        </span>
+                                    <tr key={idx} className={`${isWinner ? 'bg-yellow-50/30' : ''}`}>
+                                      <td className="py-2 px-2 text-center font-black text-slate-400">
+                                        {idx + 1}
                                       </td>
-                                      <td className="py-2 px-1 font-semibold text-slate-700">
-                                        <span 
-                                          className={`inline-flex items-center gap-1 ${isWinner ? 'text-yellow-700 font-bold' : ''} ${isRealPlayer && onPlayerClick ? 'cursor-pointer hover:text-indigo-600 hover:underline' : ''}`}
-                                          onClick={() => isRealPlayer && onPlayerClick && onPlayerClick(p.name)}
-                                        >
-                                          {p.name} {isWinner && '👑'}
-                                        </span>
+                                      <td className="py-2 px-2 font-bold text-slate-700 whitespace-nowrap">
+                                        {p.name} {isWinner && '👑'}
                                       </td>
-                                      <td className="py-2 px-1 text-center font-mono font-black text-indigo-600">{p.score || 0}</td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.settlements ? 'text-slate-700 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.settlements || "-"}
-                                      </td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.cities ? 'text-indigo-600 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.cities ? p.breakdown.cities * 2 : "-"}
-                                      </td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.longestRoad ? 'text-orange-600 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.longestRoad ? 2 : "-"}
-                                      </td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.largestArmy ? 'text-red-600 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.largestArmy ? 2 : "-"}
-                                      </td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.vpCards ? 'text-emerald-600 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.vpCards || "-"}
-                                      </td>
-                                      <td className={`py-2 px-1 text-center font-mono ${p.breakdown?.islandBonus ? 'text-sky-600 font-bold' : 'text-slate-300'}`}>
-                                        {p.breakdown?.islandBonus || "-"}
-                                      </td>
+                                      <td className="py-2 px-2 text-center font-black text-indigo-600">{p.score || 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.settlements || 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.cities ? p.breakdown.cities * 2 : 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.longestRoad ? 2 : 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.largestArmy ? 2 : 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.vpCards || 0}</td>
+                                      <td className="py-2 px-2 text-center">{p.breakdown?.islandBonus || 0}</td>
                                     </tr>
                                   );
                                 })}
@@ -393,16 +390,83 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
             </motion.div>
           </AnimatePresence>
         )}
+        
+        {activeView === 'menu' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="menu"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-3"
+            >
+              <button 
+                onClick={() => setActiveView('history')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Clock size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h3 className="font-bold text-slate-700 text-sm">历史战绩</h3>
+                </div>
+                <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => setActiveView('edit')} 
+                disabled={currentUser.isGuest}
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors disabled:opacity-50 disabled:hover:border-slate-100"
+              >
+                <div className="flex items-center gap-3">
+                  <Edit3 size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h3 className="font-bold text-slate-700 text-sm">修改资料</h3>
+                </div>
+                <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </button>
+
+              <button 
+                onClick={() => setActiveView('sound')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <BellRing size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h3 className="font-bold text-slate-700 text-sm">声音设置</h3>
+                </div>
+                <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </button>
+
+              {currentUser?.role === 'admin' && (
+                <button 
+                  onClick={() => setActiveView('admin')} 
+                  className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <Settings size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                    <h3 className="font-bold text-slate-700 text-sm">管理中心</h3>
+                  </div>
+                  <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </button>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        )}
       </div>
       
       {/* Logout Button */}
-      {!isEditing && onLogout && !currentUser?.isViewingAsAdmin && (
-         <div className="pt-3 pb-4 px-4 shrink-0 bg-white border-t border-slate-100">
+      {activeView === 'menu' && onLogout && !currentUser?.isViewingAsAdmin && (
+         <div className="pb-2 pt-2 px-6 shrink-0 z-10 mt-auto">
            <button
              onClick={onLogout}
              className="w-full flex items-center justify-center gap-2 text-sm font-black text-red-500 bg-red-50 hover:bg-red-100 py-3 rounded-2xl transition-colors border border-red-100/50"
            >
-             <LogOut size={16} /> 退出账号
+             <LogOut size={16} /> 退出登录
            </button>
          </div>
       )}
@@ -413,11 +477,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     return (
       <>
         {content}
-        <SoundSettingsModal 
-          isOpen={showSoundSettings} 
-          onClose={() => setShowSoundSettings(false)} 
-          isAdmin={currentUser?.role === 'admin'}
-        />
       </>
     );
   }
@@ -430,11 +489,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         onClick={onClose}
       />
       {content}
-      <SoundSettingsModal 
-        isOpen={showSoundSettings} 
-        onClose={() => setShowSoundSettings(false)} 
-        isAdmin={currentUser?.role === 'admin'}
-      />
     </div>
   );
 }

@@ -819,7 +819,6 @@ export default function App() {
   const isRemoteUpdateRef = useRef(false);
   const playerBarRef = useRef<HTMLDivElement>(null);
   
-  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
   
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -2126,24 +2125,26 @@ export default function App() {
 
   const uploadMapToCloud = async (map: any) => {
     if (currentUser?.role !== 'admin') return;
-    if (!window.confirm(`确定要将本地地图 "${map.name}" 上传到官方云图册吗？`)) return;
-
-    const token = localStorage.getItem('catan_auth_token');
-    try {
-      const res = await fetch('/api/maps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: map.name, mapData: map })
-      });
-      if (res.ok) {
-        fetch('/api/maps')
-          .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
-          .then(d => d && setDbMaps(d.maps || []));
-        alert('地图已成功上传到官方云图册！');
+    setConfirmAction({
+      message: `确定要将本地地图 "${map.name}" 上传到官方云图册吗？`,
+      onConfirm: async () => {
+        const token = localStorage.getItem('catan_auth_token');
+        try {
+          const res = await fetch('/api/maps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ name: map.name, mapData: map })
+          });
+          if (res.ok) {
+            fetch('/api/maps')
+              .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
+              .then(d => d && setDbMaps(d.maps || []));
+          }
+        } catch (e) {
+          console.error(e);
+        }
       }
-    } catch (e) {
-      console.error(e);
-    }
+    });
   };
 
   // Auto-select build mode during setup phase
@@ -3023,52 +3024,25 @@ export default function App() {
     );
   }
 
-  if (showAdminDashboard && currentUser.role === 'admin') {
-    return (
-      <AdminDashboard 
-        onClose={() => setShowAdminDashboard(false)} 
-        onLogout={() => {
-          localStorage.removeItem('catan_auth_token');
-          setCurrentUser(null);
-          setShowAdminDashboard(false);
-        }} 
-      />
-    );
-  }
-
   if (!isJoinedLobby) {
     return (
-      <div style={flexibleContainerStyle}>
-        <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative selection:bg-indigo-600 selection:text-white overflow-hidden">
-          {/* Decorative elements without CSS blurs to prevent hardware-accelerated color banding/uneven blocks */}
-          <div className="absolute inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_0%_0%,rgba(199,210,254,0.25),rgba(199,210,254,0)_45%),radial-gradient(circle_at_100%_70%,rgba(209,250,229,0.3),rgba(209,250,229,0)_50%)] bg-slate-50" />
-
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
-        </div>
-
-        {/* Content Area */}
-        <div className="flex-1 w-full flex flex-col items-center justify-center p-4 pb-28 min-h-0 relative z-10 overflow-y-auto no-scrollbar">
-          {activeLobbyTab === 'lobby' ? (
-            <motion.div 
-              initial={{ opacity: 0, y: 20, scale: 0.95 }} 
-              animate={{ opacity: 1, y: 0, scale: 1 }} 
-              className="bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] shadow-2xl shadow-indigo-100/50 border border-slate-200 max-w-[90vw] sm:max-w-md w-full text-center flex flex-col items-center"
-            >
-              <div className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-2 bg-slate-50 rounded-2xl flex items-center justify-center shadow-inner border border-slate-100 relative" onClick={handleLogoClick}>
-                {isSpectator && (
-                  <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default rounded-2xl" title="观战模式" />
-                )}
-                <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-8 h-8 sm:w-12 sm:h-12 object-contain drop-shadow-lg" />
-              </div>
-              <h1 className="text-xl sm:text-2xl font-serif font-black italic mb-0.5 text-slate-800 tracking-tight leading-none">CATAN</h1>
-              <p className="text-[7px] sm:text-[9px] uppercase tracking-[0.4em] opacity-40 font-black mb-6 text-indigo-900">Professional Online Edition</p>
-              
-              <div className="flex flex-col gap-3 text-left w-full">
-                <div className="group text-center mb-2">
-                   <p className="text-sm font-bold text-slate-700">欢迎, {playerName}</p>
-                </div>
+      <div className="flex flex-col h-screen w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
+        
+        {activeLobbyTab === 'lobby' && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }} 
+            animate={{ opacity: 1, y: 0 }}
+            className="relative z-10 flex flex-col items-center h-full w-full px-6 max-w-sm mx-auto pt-[15vh]"
+          >
+            {isSpectator && (
+                <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default rounded-2xl" title="观战模式" />
+            )}
+            <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4" onClick={handleLogoClick} />
+            <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
+            
+            <div className="flex flex-col gap-4 text-left w-full">
                 <div className="group">
-                  <label className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-1 block group-focus-within:text-indigo-500 transition-colors">房间代码</label>
+                  <label className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-0.5 block group-focus-within:text-indigo-600 transition-colors">房间代码</label>
                   <div className="relative">
                     <input 
                       type="text" 
@@ -3080,7 +3054,7 @@ export default function App() {
                         setInputRoomId(val);
                       }}
                       placeholder="6位房间代码"
-                      className={`w-full ${isRoomLocked ? 'bg-slate-100 text-slate-400 cursor-not-allowed opacity-80' : 'bg-slate-50 focus:bg-white'} border border-slate-100 px-4 py-3 rounded-xl outline-none font-bold font-mono tracking-[0.2em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 text-sm`}
+                      className={`w-full ${isRoomLocked ? 'bg-slate-100 text-slate-500 cursor-not-allowed opacity-80' : 'bg-white focus:bg-white'} border-2 border-slate-200 px-4 py-3 rounded-xl outline-none font-black font-mono tracking-[0.3em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-600 text-sm shadow-sm`}
                     />
                   </div>
                 </div>
@@ -3089,26 +3063,21 @@ export default function App() {
                   id="join-room-button"
                   onClick={() => {
                     const activeRoom = localStorage.getItem('catan_active_room');
-                    const hasCreatedRoom = localStorage.getItem('catan_has_created_room') === 'true';
                     const enteredCode = inputRoomId.trim();
-                    const isGameActive = localStorage.getItem('catan_game_active') === 'true';
                     
                     if (isRoomLocked && activeRoom) {
-                      // Return to self-created active game (locked room) - with animation
                       setSailingText("重新驶入海域......");
                       setShowSailingScreen(true);
                       socketService.joinRoom(activeRoom, playerName);
                     } else {
-                      // Directly enter matching interface (rooms list) - as requested
                       setActiveLobbyTab('rooms');
                       setIsJoinedLobby(true);
-                      // Pre-fill inputRoomId as active room in storage if they entered something
                       if (enteredCode) {
                         localStorage.setItem('catan_active_room', enteredCode);
                       }
                     }
                   }}
-                  className="w-full bg-indigo-600 text-white py-3 sm:py-4 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all mt-2 relative overflow-hidden group text-xs shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
+                  className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
                 >
                   <span className="relative z-10 flex items-center justify-center gap-2">
                     {isRoomLocked ? <RotateCcw size={16} /> : <Swords size={16} />}
@@ -3116,158 +3085,128 @@ export default function App() {
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                 </button>
+            </div>
+          </motion.div>
+        )}
 
-                {isRoomLocked && (
-                  <button 
-                    onClick={() => {
-                      localStorage.removeItem('catan_active_room');
-                      localStorage.removeItem('catan_has_created_room');
-                      localStorage.removeItem('catan_game_active');
-                      localStorage.removeItem('catan_map_preview_seed');
-                      setIsRoomLocked(false);
-                      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
-                      setRoomState(null);
-                    }}
-                    className="w-full mt-2 text-center text-slate-400 hover:text-red-500 text-[10px] uppercase font-black tracking-widest transition-colors py-2 flex items-center justify-center gap-1.5 group rounded-lg hover:bg-red-50"
-                  >
-                    <Trash2 size={12} className="opacity-50 group-hover:opacity-100 transition-opacity" />
-                    放弃重连，离开海域
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          ) : activeLobbyTab === 'rooms' ? (
-             <div className="w-full h-full max-w-[90vw] sm:max-w-[800px] pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
-               <GameRoomsTab 
-                 currentUser={currentUser} 
-                 isRoomLocked={isRoomLocked}
-                 activeRoomId={localStorage.getItem('catan_active_room')}
-                 onUserFoundInRoom={(roomId) => {
-                   // Sticky lock: if user is found in an active room, lock it
-                   setInputRoomId(roomId);
-                   setIsRoomLocked(true);
-                   localStorage.setItem('catan_active_room', roomId);
-                   localStorage.setItem('catan_has_created_room', 'true');
-                 }}
-                 onReturnToGame={(roomId) => {
-                  const activeRoom = roomId || localStorage.getItem('catan_active_room');
-                  if (activeRoom) {
-                    setInputRoomId(activeRoom);
-                    setSailingText("重新驶入海域......");
-                    setShowSailingScreen(true);
-                    socketService.joinRoom(activeRoom, playerName);
-                  } else {
-                    setActiveLobbyTab('lobby');
-                  }
-                }}
-                onJoinRoom={(roomId) => {
-                  setInputRoomId(roomId);
-                  localStorage.setItem('catan_active_room', roomId);
-                  socketService.joinRoom(roomId, playerName);
-                }}
-                onSpectateRoom={(roomId) => {
-                  setInputRoomId(roomId);
-                  localStorage.setItem('catan_player_name', playerName);
-                  localStorage.setItem('catan_active_room', roomId);
-                  localStorage.setItem('catan_is_spectator', 'true');
-                  setIsJoinSpectator(true);
-                  try {
-                    const newUrl = new URL(window.location.href);
-                    newUrl.searchParams.set('room', roomId);
-                    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
-                  } catch (e) {}
+        {activeLobbyTab === 'rooms' && (
+           <div className="w-full h-full flex flex-col items-center justify-center p-6">
+             <GameRoomsTab 
+               currentUser={currentUser} 
+               isRoomLocked={isRoomLocked}
+               activeRoomId={localStorage.getItem('catan_active_room')}
+               onUserFoundInRoom={(roomId) => {
+                 setInputRoomId(roomId);
+                 setIsRoomLocked(true);
+                 localStorage.setItem('catan_active_room', roomId);
+                 localStorage.setItem('catan_has_created_room', 'true');
+               }}
+               onReturnToGame={(roomId) => {
+                const activeRoom = roomId || localStorage.getItem('catan_active_room');
+                if (activeRoom) {
+                  setInputRoomId(activeRoom);
+                  setSailingText("重新驶入海域......");
+                  setShowSailingScreen(true);
+                  socketService.joinRoom(activeRoom, playerName);
+                } else {
+                  setActiveLobbyTab('lobby');
+                }
+              }}
+              onJoinRoom={(roomId) => {
+                setInputRoomId(roomId);
+                localStorage.setItem('catan_active_room', roomId);
+                socketService.joinRoom(roomId, playerName);
+              }}
+              onSpectateRoom={(roomId) => {
+                setInputRoomId(roomId);
+                localStorage.setItem('catan_player_name', playerName);
+                localStorage.setItem('catan_is_spectator', 'true');
+                setIsJoinSpectator(true);
+                socketService.joinRoom(roomId, playerName, true);
+              }}
+             />
+             <button 
+               onClick={() => setActiveLobbyTab('lobby')}
+               className="mt-6 text-stone-500 hover:text-stone-900 transition-colors"
+             >
+               返回主页
+             </button>
+           </div>
+        )}
 
-                  socketService.joinRoom(roomId, playerName, true);
-                }}
-               />
-             </div>
-          ) : activeLobbyTab === 'rules' ? (
-             <div className="w-full h-full max-w-[90vw] sm:max-w-[800px] pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
-               <RulesModal inline={true} />
-             </div>
-          ) : (
-             <div className="w-full h-full max-w-[90vw] sm:max-w-md pt-0 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden flex shadow-2xl bg-white border border-slate-100 relative">
-               <UserProfileModal
-                 currentUser={currentUser}
-                 onClose={() => {}}
-                 onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
-                 onLogout={() => {
-                   localStorage.removeItem('catan_auth_token');
-                   localStorage.removeItem('catan_player_name');
-                   setCurrentUser(null);
-                   setRoomState(null);
-                   setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
-                   setActiveLobbyTab('lobby');
-                 }}
-                 onAdminDashboard={() => setShowAdminDashboard(true)}
-                 inline={true}
-               />
-             </div>
-          )}
-        </div>
+        {activeLobbyTab === 'rules' && (
+          <div className="w-full h-full flex relative pb-16 pt-2 px-2 sm:pt-4 sm:px-4">
+            <RulesModal isOpen={true} onClose={() => {}} inline={true} />
+          </div>
+        )}
 
+        {activeLobbyTab === 'profile' && (
+          <div className="w-full h-full flex relative pb-16 pt-2 px-2 sm:pt-4 sm:px-4">
+            <UserProfileModal
+              currentUser={currentUser}
+              onClose={() => {}}
+              onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
+              onLogout={() => {
+                localStorage.removeItem('catan_auth_token');
+                localStorage.removeItem('catan_player_name');
+                setCurrentUser(null);
+                setRoomState(null);
+                setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                setActiveLobbyTab('lobby');
+              }}
+              inline={true}
+            />
+          </div>
+        )}
         {/* Bottom Tab Bar */}
-        <div className="absolute bottom-0 left-0 w-full bg-white/70 backdrop-blur-xl border-t border-white/50 pt-3 pb-6 px-4 flex justify-center gap-8 sm:gap-12 shadow-[0_-10px_40px_rgba(0,0,0,0.03)] z-50">
+        <div className="absolute bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-100 pt-1 pb-1 px-4 flex justify-center gap-4 sm:gap-8 z-50">
            <button
              onClick={() => setActiveLobbyTab('lobby')}
-             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+             className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'lobby' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
-               <Swords size={22} />
+             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'lobby' ? '' : ''}`}>
+               <Swords size={18} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">好友约战</span>
+             <span className="text-[9px] font-bold tracking-widest">约战</span>
            </button>
 
            <button
              onClick={() => setActiveLobbyTab('rooms')}
-             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'rooms' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+             className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'rooms' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'rooms' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
-               <Home size={22} />
+             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'rooms' ? '' : ''}`}>
+               <Home size={18} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">游戏大厅</span>
+             <span className="text-[9px] font-bold tracking-widest">大厅</span>
            </button>
 
            <button
              onClick={() => setActiveLobbyTab('profile')}
-             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'profile' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+             className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'profile' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'profile' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
-               <User size={22} />
+             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'profile' ? '' : ''}`}>
+               <User size={18} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">我的</span>
+             <span className="text-[9px] font-bold tracking-widest">我的</span>
            </button>
 
            <button
              onClick={() => setActiveLobbyTab('rules')}
-             className={`flex flex-col items-center gap-1 transition-all ${activeLobbyTab === 'rules' ? 'text-indigo-600 scale-110' : 'text-slate-400 hover:text-slate-600 scale-100'}`}
+             className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'rules' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-2.5 rounded-2xl transition-all ${activeLobbyTab === 'rules' ? 'bg-indigo-50 shadow-inner' : 'hover:bg-slate-100'}`}>
-               <BookOpen size={22} />
+             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'rules' ? '' : ''}`}>
+               <BookOpen size={18} />
              </div>
-             <span className="text-[10px] font-black tracking-widest">游戏规则</span>
+             <span className="text-[9px] font-bold tracking-widest">规则</span>
            </button>
         </div>
+        <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+        <SoundSettingsModal 
+          isOpen={showSoundModal} 
+          onClose={() => setShowSoundModal(false)} 
+          isAdmin={currentUser?.role === 'admin'}
+        />
       </div>
-      {showDebugButton && (
-        <button 
-          onClick={() => {
-            const newMode = !debugModeEnabled;
-            setDebugModeEnabled(newMode);
-            setShowDebugConsole(newMode);
-          }}
-          className="fixed bottom-4 left-4 z-50 bg-indigo-600 text-white p-3 rounded-full shadow-lg"
-        >
-          调试
-        </button>
-      )}
-      <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
-      <SoundSettingsModal 
-        isOpen={showSoundModal} 
-        onClose={() => setShowSoundModal(false)} 
-        isAdmin={currentUser?.role === 'admin'}
-      />
-    </div>
     );
   }
 
@@ -3318,14 +3257,17 @@ export default function App() {
       />
 
       {confirmAction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-6 shadow-2xl max-w-sm w-full mx-auto animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-black text-slate-800 mb-2">操作确认</h3>
-            <p className="text-sm font-medium text-slate-600 mb-6">{confirmAction.message}</p>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/10 transition-all">
+          <div className="bg-white/95 border border-slate-200/90 rounded-xl p-4 shadow-xl max-w-[280px] sm:max-w-xs w-full mx-auto animate-in fade-in zoom-in-95 duration-150">
+            <h3 className="text-xs sm:text-sm font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block shrink-0" />
+              操作确认
+            </h3>
+            <p className="text-[11px] sm:text-xs font-medium text-slate-600 leading-relaxed mb-4">{confirmAction.message}</p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setConfirmAction(null)}
-                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
+                className="px-3 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 hover:bg-slate-200 transition-colors"
               >
                 取消
               </button>
@@ -3334,7 +3276,7 @@ export default function App() {
                   confirmAction.onConfirm();
                   setConfirmAction(null);
                 }}
-                className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest bg-indigo-500 text-white hover:bg-indigo-600 shadow-md shadow-indigo-200 transition-colors"
+                className="px-3 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-black uppercase tracking-wider bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors"
               >
                 确定
               </button>
@@ -3345,7 +3287,7 @@ export default function App() {
 
       
       <div style={flexibleContainerStyle}>
-        <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-hidden relative selection:bg-indigo-600 selection:text-white">
+        <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-y-auto sm:overflow-hidden no-scrollbar relative selection:bg-indigo-600 selection:text-white">
         {/* Decorative Background Gradient */}
         <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_rgba(79,70,229,0)_60%)] pointer-events-none z-0" />
         
@@ -3354,33 +3296,29 @@ export default function App() {
           initial={{ opacity: 0, x: -50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
-          className="flex-1 flex flex-col p-4 sm:p-6 lg:p-8 relative z-10 overflow-hidden min-h-0"
+          className="flex-none sm:flex-1 flex flex-col p-3 sm:p-4 lg:p-5 relative z-10 overflow-visible sm:overflow-hidden min-h-[min-content] sm:min-h-0 shrink-0 justify-between"
         >
           {/* Header & Logo Section */}
-          <div className="flex items-center gap-2 sm:gap-4 mb-2 sm:mb-4 px-1 lg:px-2 shrink-0 h-16 sm:h-20 lg:h-24 relative" onClick={handleLogoClick}>
-            <div className="w-10 h-10 sm:w-16 lg:w-20 lg:h-20 bg-white rounded-xl sm:rounded-2xl flex items-center justify-center shrink-0 shadow-xl shadow-indigo-100 border border-slate-100 relative overflow-hidden group">
-              <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-slate-50 to-transparent rounded-b-xl sm:rounded-b-2xl opacity-50" />
+          <div className="flex items-center gap-2.5 px-1 pb-2 relative cursor-pointer shrink-0 border-b border-slate-100/80" onClick={handleLogoClick}>
+            <div className="relative shrink-0 flex items-center justify-center group">
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-6 h-6 sm:w-10 lg:w-12 lg:h-12 object-contain relative z-10 drop-shadow-xl group-hover:scale-110 transition-transform duration-500" />
+              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-8 h-8 sm:w-10 sm:h-10 lg:w-11 lg:h-11 object-contain relative z-10 group-hover:scale-105 transition-transform duration-300" />
             </div>
             <div className="flex flex-col justify-center">
-              <h1 className="text-xl sm:text-3xl lg:text-6xl font-serif font-black italic tracking-tighter text-slate-900 leading-none drop-shadow-sm">CATAN</h1>
-              <p className="text-[6px] sm:text-[9px] lg:text-[11px] uppercase tracking-[0.5em] text-indigo-600 font-black mt-0.5 sm:mt-1">航海家版 · SEAFARERS</p>
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">CATAN</h1>
             </div>
           </div>
 
-          <div className="flex-1" />
-
-          <div className="w-full max-w-lg space-y-2 sm:space-y-4 px-1 lg:px-2 flex flex-col justify-end min-h-0">
+          <div className="w-full max-w-lg space-y-2.5 sm:space-y-3 px-1 flex flex-col justify-end min-h-0 mt-2 sm:mt-0">
             {/* Map Settings */}
             <div className={!isHostInLobby ? 'opacity-70 pointer-events-none' : ''}>
-              <div className="flex items-center justify-between mb-0.5 sm:mb-2 ml-2">
-                <h3 className="text-[8px] font-black uppercase tracking-widest text-slate-400">地图选择</h3>
-                {isHostInLobby && <span className="text-[7px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">配置中</span>}
+              <div className="flex items-center justify-between mb-1.5 ml-1">
+                <h3 className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">地图选择</h3>
+                {isHostInLobby && <span className="text-[8px] font-bold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">配置中</span>}
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+              <div className="grid grid-cols-2 gap-2.5">
                 {[
                   { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆' },
                   { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿' }
@@ -3390,16 +3328,16 @@ export default function App() {
                     <button
                       key={map.id}
                       onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined }); }}
-                      className={`flex flex-col items-center gap-1 sm:gap-2 p-1.5 sm:p-4 rounded-xl lg:rounded-2xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-white/50 border-slate-100 hover:border-indigo-200 text-slate-700'}`}
+                      className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-md shadow-indigo-100 ring-2 ring-indigo-500/10' : 'bg-white/60 border-slate-100 hover:border-indigo-200 hover:bg-white text-slate-700'}`}
                     >
-                      <div className={`w-14 h-10 sm:w-20 sm:h-16 lg:w-28 lg:h-20 relative overflow-hidden flex items-center justify-center transition-transform duration-500 ${isSelected ? 'scale-110' : ''}`}>
+                      <div className={`w-12 h-8 sm:w-16 sm:h-10 relative overflow-hidden flex items-center justify-center transition-transform duration-300 ${isSelected ? 'scale-105' : ''}`}>
                         <div className="absolute inset-x-0 inset-y-[-20%] pointer-events-none">
                           <MapPreview board={map.board} isTopologyOnly={true} isLogo={true} />
                         </div>
                       </div>
                       <div className="flex flex-col items-center">
-                        <span className={`text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] ${isSelected ? 'text-indigo-600' : ''}`}>{map.label}</span>
-                        <span className="text-[6px] sm:text-[8px] opacity-50 font-bold mt-0.5 uppercase tracking-wider">{map.desc}</span>
+                        <span className={`text-[9px] sm:text-[10px] font-black uppercase tracking-[0.15em] ${isSelected ? 'text-indigo-600' : ''}`}>{map.label}</span>
+                        <span className="text-[7px] opacity-50 font-bold mt-0.5 uppercase tracking-wider">{map.desc}</span>
                       </div>
                     </button>
                   );
@@ -3407,19 +3345,19 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex gap-2 items-stretch mt-1">
-              {isHostInLobby && (
+            <div className="grid grid-cols-2 gap-2.5 items-stretch pt-0.5">
+              {isHostInLobby ? (
                 <button
                   onClick={() => setShowMapAlbum(true)}
-                  className={`flex-1 flex flex-col items-center justify-center p-2 rounded-xl transition-all group overflow-hidden relative border ${roomState?.settings?.customBoard ? 'bg-white border-indigo-500 shadow-xl shadow-indigo-100 ring-2 lg:ring-4 ring-indigo-500/5' : 'bg-indigo-50/50 border-indigo-100/50 hover:bg-indigo-100/50'}`}
+                  className={`w-full flex flex-col items-center justify-center p-2 rounded-xl transition-all group overflow-hidden relative border ${roomState?.settings?.customBoard ? 'bg-white border-indigo-500 shadow-md shadow-indigo-100 ring-2 ring-indigo-500/10' : 'bg-indigo-50/60 border-indigo-100/60 hover:bg-indigo-100/50'}`}
                 >
                   {roomState?.settings?.customBoard ? (
-                    <div className="absolute inset-0 opacity-100 group-hover:scale-105 transition-transform duration-500">
+                    <div className="absolute inset-0 opacity-100 group-hover:scale-105 transition-transform duration-300">
                       <MapPreview board={roomState.settings.customBoard} isTopologyOnly={true} isLogo={true} />
                     </div>
                   ) : (
                     <>
-                      <div className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center relative mb-0.5">
+                      <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center relative mb-0.5">
                         {!atlasLogoError ? (
                           <img 
                             src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%9C%B0%E5%9B%BE%E5%86%8C.png" 
@@ -3429,32 +3367,34 @@ export default function App() {
                             onError={() => setAtlasLogoError(true)}
                           />
                         ) : (
-                          <span className="text-xl sm:text-2xl">🗺️</span>
+                          <span className="text-lg">🗺️</span>
                         )}
                       </div>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-900 mt-1 relative z-10 transition-opacity opacity-100">地图收藏册</span>
+                      <span className="text-[8px] font-black uppercase tracking-widest text-indigo-900 mt-0.5 relative z-10">地图收藏册</span>
                     </>
                   )}
                 </button>
+              ) : (
+                <div />
               )}
 
-              <div className={`${isHostInLobby ? 'flex-[2]' : 'w-full'} flex flex-col gap-1.5`}>
+              <div className="w-full flex flex-col gap-1.5 justify-center">
                 {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
                   <button 
                     onClick={handleToggleReady}
                     disabled={isSpectator}
-                    className={`relative z-50 w-full bg-emerald-600 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale ${isSpectator ? 'opacity-50 grayscale' : ''}`}
+                    className={`relative z-50 w-full bg-emerald-600 text-white py-2 sm:py-2.5 rounded-xl font-black uppercase tracking-[0.15em] shadow-md shadow-emerald-200 hover:bg-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale ${isSpectator ? 'opacity-50 grayscale' : ''}`}
                   >
-                    <Play size={isMobile ? 10 : 14} fill="currentColor" />
+                    <Play size={isMobile ? 11 : 13} fill="currentColor" />
                     {isHostInLobby ? '就绪' : '准备游戏'}
                   </button>
                 ) : (
                   <button 
                     onClick={handleToggleReady}
                     disabled={isSpectator}
-                    className={`w-full bg-white text-slate-500 py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] border-2 border-slate-100 hover:bg-slate-50 transition-all flex items-center justify-center gap-2 text-[9px] sm:text-[11px] ${isSpectator ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                    className={`w-full bg-white text-slate-500 py-2 sm:py-2.5 rounded-xl font-black uppercase tracking-[0.15em] border-2 border-slate-100 hover:bg-slate-50 transition-all flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] ${isSpectator ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
                   >
-                    <X size={isMobile ? 10 : 14} />
+                    <X size={isMobile ? 11 : 13} />
                     等待房主开启游戏
                   </button>
                 )}
@@ -3462,9 +3402,9 @@ export default function App() {
                   <button 
                     onClick={handleStartGame}
                     disabled={isStartingGame || !roomState?.players.every(p => p.isReady) || !roomState || (roomState.players.length + (roomState.settings?.botConfig?.filter(b => b).length || 0)) !== roomState.settings?.playerCount}
-                    className="w-full bg-slate-900 text-white py-2.5 sm:py-3.5 rounded-xl font-black uppercase tracking-[0.2em] shadow-lg hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-[9px] sm:text-[10px] relative overflow-hidden"
+                    className="w-full bg-slate-900 text-white py-2 sm:py-2.5 rounded-xl font-black uppercase tracking-[0.15em] shadow-md hover:bg-black active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:grayscale text-[9px] sm:text-[10px] relative overflow-hidden"
                   >
-                    <span className="relative z-10 flex items-center justify-center gap-2">
+                    <span className="relative z-10 flex items-center justify-center gap-1.5">
                       {isStartingGame ? (
                         <>
                           <div className="w-2.5 h-2.5 rounded-full border-2 border-white/20 border-t-white animate-spin" />
@@ -3487,81 +3427,65 @@ export default function App() {
           initial={{ opacity: 0, x: 50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
-          className="w-full sm:h-full flex flex-col p-3 sm:p-4 lg:p-6 bg-white/80 sm:bg-white/60 backdrop-blur-3xl border-l border-slate-200 z-20 sm:w-[320px] md:w-[400px] lg:w-[480px] shrink-0 overflow-hidden min-h-0 shadow-2xl sm:shadow-none"
+          className="w-full sm:h-full flex flex-col p-3 sm:p-4 lg:p-5 bg-white/80 sm:bg-white/60 backdrop-blur-3xl border-l border-slate-200/80 z-20 sm:w-[310px] md:w-[360px] lg:w-[410px] shrink-0 sm:overflow-hidden min-h-[min-content] sm:min-h-0 shadow-none"
         >
-          <div className="flex flex-col gap-2 sm:gap-4 w-full max-w-sm mx-auto h-full">
+          <div className="flex flex-col gap-2.5 sm:gap-3 w-full max-w-sm mx-auto h-full justify-between">
             
             {/* Room Info Section */}
-            <div className="relative">
-              <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-100 shadow-sm flex items-start justify-between gap-4 overflow-x-auto no-scrollbar min-h-[52px]">
-                <div className="flex items-start gap-4">
-                  {/* 1. 在线匹配玩家 and Player count */}
-                  <div className="flex flex-col gap-1 items-center shrink-0 pt-2 pb-1">
-                    <h2 className="text-[11px] sm:text-xs font-black font-serif italic text-emerald-600 tracking-tight leading-none">在线匹配玩家</h2>
-                    <div className={`flex items-center gap-1.5 px-2 py-0.5 mt-1 rounded-full border shadow-sm ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
-                      <div className={`w-1 h-1 rounded-full animate-pulse ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest leading-none">{(roomState?.players.length || 0) + botConfig.filter(b => b).length} / {playerCount}</span>
-                    </div>
+            <div className="relative shrink-0">
+              <div className="bg-white p-2.5 rounded-xl border border-slate-100/90 shadow-2xs grid grid-cols-3 gap-1 items-center">
+                {/* 1. 在线匹配玩家 and Player count */}
+                <div className="flex flex-col items-center justify-center gap-1 pr-1 border-r border-slate-100/80">
+                  <span className="text-[9px] uppercase font-black tracking-widest text-emerald-600 leading-none text-center block w-full truncate">在线匹配</span>
+                  <div className={`flex items-center justify-center gap-1 px-1.5 py-0.5 rounded-full border ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-600 border-emerald-100'}`}>
+                    <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${((roomState?.players.length || 0) + botConfig.filter(b => b).length) > playerCount ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                    <span className="text-[10px] font-mono font-black tracking-tight leading-none">{(roomState?.players.length || 0) + botConfig.filter(b => b).length} / {playerCount}</span>
                   </div>
+                </div>
 
-                  {/* 2. 设定人数 and dropdown */}
-                  <div className="flex flex-col gap-1.5 items-center pl-4 border-l border-slate-100 shrink-0 pt-0.5">
-                    <span className="text-[10px] sm:text-[11px] uppercase font-black tracking-widest text-slate-400 leading-none">设定人数</span>
-                    <div className="relative inline-block mt-1">
-                      <select 
-                        value={playerCount} 
-                        onChange={e => {
-                          const newCount = Number(e.target.value);
-                          setPlayerCount(newCount);
-                          syncSettings({ playerCount: newCount });
-                        }}
-                        disabled={!isHostInLobby}
-                        className="text-[13px] sm:text-sm font-black text-slate-800 outline-none disabled:opacity-50 appearance-none cursor-pointer pr-4 bg-transparent leading-none"
-                      >
-                        {[2, 3, 4, 5, 6].map(num => <option key={num} value={num}>{num} 人</option>)}
-                      </select>
-                      <ChevronDown size={10} className="absolute right-0 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none" />
-                    </div>
+                {/* 2. 设定人数 and dropdown */}
+                <div className="flex flex-col items-center justify-center gap-1 px-1 border-r border-slate-100/80">
+                  <span className="text-[9px] uppercase font-black tracking-widest text-slate-400 leading-none text-center block w-full truncate">设定人数</span>
+                  <div className="relative flex items-center justify-center h-5 w-full">
+                    <select 
+                      value={playerCount} 
+                      onChange={e => {
+                        const newCount = Number(e.target.value);
+                        setPlayerCount(newCount);
+                        syncSettings({ playerCount: newCount });
+                      }}
+                      disabled={!isHostInLobby}
+                      className="text-[11px] sm:text-[12px] font-mono font-black text-slate-800 outline-none disabled:opacity-50 appearance-none cursor-pointer pr-3 bg-transparent leading-none text-center"
+                    >
+                      {[2, 3, 4, 5, 6].map(num => <option key={num} value={num}>{num} 人</option>)}
+                    </select>
+                    <ChevronDown size={9} className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
 
                 {/* 3. 房间代码 and copy */}
-                <div className="flex flex-col gap-1.5 items-start pl-4 border-l border-slate-100 shrink-0 pt-0.5 pr-1 relative overflow-hidden">
-                  {/* Spectator logo mask */}
-                  {isSpectator && (
-                    <div className="absolute inset-0 bg-transparent pointer-events-none z-0" />
-                  )}
-                  <div className="relative z-10 flex flex-col gap-1.5 items-start">
-                    <span className="text-[9px] uppercase font-black tracking-widest text-slate-400 leading-none -ml-1">房间代码</span>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[12px] sm:text-sm font-mono font-black text-slate-800 tracking-tighter leading-none">{roomState?.roomId || inputRoomId}</span>
-                      <div className="flex items-center gap-0.5 ml-1">
-                        <Eye size={10} className="text-stone-500 fill-stone-100/50" />
-                        <span className="text-[9px] font-mono font-black text-stone-500">{roomState?.spectators?.length || 0}</span>
-                        {isSpectator && (
-                          <button 
-                            onClick={handleReturnToLobby}
-                            className="ml-2 text-red-500 hover:text-red-600 transition-all transform active:scale-90 relative z-20"
-                            title="退出观战"
-                          >
-                            <LogOut size={12} className="scale-x-[-1]" />
-                          </button>
-                        )}
-                      </div>
-                      <button 
-                        onClick={handleCopyRoomCode}
-                        className="hover:bg-indigo-50 p-1 rounded-md transition-all border border-transparent -my-1 -mr-1 relative z-20"
-                      >
-                        <Copy size={11} className="text-indigo-400 block" />
-                      </button>
+                <div className="flex flex-col items-center justify-center gap-1 pl-1">
+                  <span className="text-[9px] uppercase font-black tracking-widest text-slate-400 leading-none text-center block w-full truncate">房间代码</span>
+                  <div className="flex items-center justify-center gap-1 h-5 w-full">
+                    <span className="text-[11px] sm:text-[12px] font-mono font-black text-slate-800 tracking-tight leading-none">{roomState?.roomId || inputRoomId}</span>
+                    <div className="flex items-center gap-0.5">
+                      <Eye size={9} className="text-slate-400" />
+                      <span className="text-[9px] font-mono font-black text-slate-500">{roomState?.spectators?.length || 0}</span>
                     </div>
+                    <button 
+                      onClick={handleCopyRoomCode}
+                      className="hover:bg-indigo-50 p-0.5 rounded transition-colors text-indigo-400 hover:text-indigo-600"
+                      title="复制房间代码"
+                    >
+                      <Copy size={9} />
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Players List */}
-            <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-1 no-scrollbar pt-2">
+            <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-0.5 no-scrollbar py-0.5">
               {Array.from({ length: Math.max(playerCount, (roomState?.players.length || 0) + botConfig.filter(b => b).length) }).map((_, globalIndex) => {
                 const paddedBotConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
                 const isBot = paddedBotConfig[globalIndex];
@@ -3570,25 +3494,25 @@ export default function App() {
 
                 if (!isBot && p) {
                   return (
-                    <div key={p.id} className="flex items-center justify-between p-2.5 sm:p-3 rounded-xl bg-white border border-slate-100 shadow-sm transition-all hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-50 group">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 relative bg-slate-50 border border-slate-100 group-hover:scale-105 transition-transform duration-300">
-                          <User size={14} className="text-slate-400" />
+                    <div key={p.id} className="flex items-center justify-between p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-2xs transition-all hover:border-indigo-200 group">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center shrink-0 relative bg-slate-50 border border-slate-100">
+                          <User size={12} className="text-slate-400" />
                           {roomState.hostId === p.id && (
-                            <div className="absolute -top-1 -right-1 bg-indigo-600 border border-white text-white p-0.5 rounded-full text-[5px] shadow-lg" title="房主">👑</div>
+                            <div className="absolute -top-1 -right-1 bg-indigo-600 border border-white text-white p-0.5 rounded-full text-[5px] shadow-xs" title="房主">👑</div>
                           )}
                         </div>
-                        <div>
-                          <span className="font-black text-[11px] sm:text-xs leading-none text-slate-800 tracking-tight flex items-center gap-1">
+                        <div className="min-w-0">
+                          <span className="font-black text-[10px] sm:text-[11px] leading-none text-slate-800 tracking-tight flex items-center gap-1 truncate">
                             {p.name} {p.disconnected && <span className="text-red-500 text-[8px] animate-pulse">(掉线)</span>}
                           </span>
-                          {p.id === socketService.playerId && <span className="text-[6px] font-black uppercase tracking-widest text-indigo-500 mt-0.5 block">这是我</span>}
+                          {p.id === socketService.playerId && <span className="text-[6px] font-black uppercase tracking-widest text-indigo-500 mt-0.5 block leading-none">这是我</span>}
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 shrink-0">
                         {isHostInLobby && p.id !== socketService.playerId && (
-                          <div className="flex flex-col sm:flex-row items-center gap-1">
+                          <div className="flex items-center gap-1">
                             <button
                               onClick={() => {
                                 setConfirmAction({
@@ -3596,7 +3520,7 @@ export default function App() {
                                   onConfirm: () => socketService.demoteToSpectator(roomState.roomId, p.id)
                                 });
                               }}
-                              className="text-[9px] font-black bg-stone-100 text-stone-500 hover:bg-orange-100 hover:text-orange-600 px-2 py-1 rounded transition-colors"
+                              className="text-[8px] font-black bg-slate-100 text-slate-500 hover:bg-orange-100 hover:text-orange-600 px-1.5 py-0.5 rounded transition-colors"
                             >
                               降级
                             </button>
@@ -3607,20 +3531,20 @@ export default function App() {
                                   onConfirm: () => socketService.kickPlayer(roomState.roomId, p.id)
                                 });
                               }}
-                              className="text-[9px] font-black bg-stone-100 text-stone-500 hover:bg-red-100 hover:text-red-600 px-2 py-1 rounded transition-colors"
+                              className="text-[8px] font-black bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 px-1.5 py-0.5 rounded transition-colors"
                             >
                               踢出
                             </button>
                           </div>
                         )}
                         {p.isReady ? (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
                             <Check size={8} className="text-emerald-600" />
                             <span className="text-[7px] font-black uppercase tracking-widest text-emerald-600">已就绪</span>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 border border-slate-200">
-                            <div className="w-0.5 h-0.5 rounded-full bg-slate-300 animate-pulse" />
+                          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 border border-slate-200">
+                            <div className="w-1 h-1 rounded-full bg-slate-300 animate-pulse" />
                             <span className="text-[7px] font-black uppercase tracking-widest text-slate-400">筹备中</span>
                           </div>
                         )}
@@ -3630,14 +3554,14 @@ export default function App() {
                 }
 
                 return (
-                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-2.5 sm:p-3 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100 shadow-lg shadow-indigo-50/50' : 'border-dashed border-slate-200 opacity-40 hover:opacity-100 hover:border-indigo-200 group'}`}>
-                    <div className="flex items-center gap-2.5">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200 group-hover:bg-slate-50'}`}>
-                        {isBot ? <Bot size={14} className="text-indigo-600" /> : <Users size={12} className="text-slate-300" />}
+                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-1.5 sm:p-2 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100/80 shadow-2xs' : 'bg-slate-50/50 border-dashed border-slate-200/80 hover:border-indigo-200 group'}`}>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200/80 bg-white group-hover:bg-indigo-50/50'}`}>
+                        {isBot ? <Bot size={12} className="text-indigo-600" /> : <Users size={10} className="text-slate-300" />}
                       </div>
                       <div className="flex flex-col">
-                        <span className={`text-[11px] font-black transition-colors ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
-                        {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest">高级AI</span>}
+                        <span className={`text-[10px] sm:text-[11px] font-black leading-tight ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
+                        {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest leading-none mt-0.5">高级AI</span>}
                       </div>
                     </div>
                     {isHostInLobby && (
@@ -3648,7 +3572,7 @@ export default function App() {
                           setBotConfig(newConfig);
                           syncSettings({ botConfig: newConfig });
                         }}
-                        className={`text-[7px] font-black uppercase tracking-widest px-2 py-1 rounded-md transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
+                        className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
                       >
                         {isBot ? '撤防' : '配置AI玩家'}
                       </button>
@@ -3659,20 +3583,20 @@ export default function App() {
             </div>
 
             {roomState?.spectators && roomState.spectators.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-slate-100/50">
-                <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2 px-1 flex items-center gap-1.5"><Eye size={10} /> 观众席 ({roomState.spectators.length})</h3>
-                <div className="flex flex-col gap-1 overflow-y-auto max-h-24 pr-1 no-scrollbar">
+              <div className="pt-1.5 border-t border-slate-100">
+                <h3 className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 px-1 flex items-center gap-1.5"><Eye size={9} /> 观众席 ({roomState.spectators.length})</h3>
+                <div className="flex flex-col gap-1 overflow-y-auto max-h-20 pr-1 no-scrollbar">
                   {roomState.spectators.map((s) => (
-                    <div key={s.id} className="flex items-center justify-between p-2 rounded-lg bg-stone-50 border border-stone-100 group">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded flex items-center justify-center bg-stone-200 text-stone-400">
-                          <Eye size={10} />
+                    <div key={s.id} className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50 border border-slate-100 group">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded flex items-center justify-center bg-slate-200 text-slate-400">
+                          <Eye size={9} />
                         </div>
-                        <span className="font-black text-[10px] text-stone-600 truncate max-w-[100px]">{s.name} {s.disconnected && <span className="text-red-500 text-[8px] animate-pulse">(掉线)</span>}</span>
+                        <span className="font-black text-[9px] text-slate-600 truncate max-w-[90px]">{s.name} {s.disconnected && <span className="text-red-500 text-[7px] animate-pulse">(掉线)</span>}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         {isHostInLobby && (
-                          <div className="flex flex-col sm:flex-row items-center gap-1">
+                          <div className="flex items-center gap-1">
                             <button
                               onClick={() => {
                                 setConfirmAction({
@@ -3680,7 +3604,7 @@ export default function App() {
                                   onConfirm: () => socketService.promoteToPlayer(roomState.roomId, s.id)
                                 });
                               }}
-                              className="text-[8px] font-black bg-stone-200 text-stone-600 hover:bg-emerald-100 hover:text-emerald-700 px-1.5 py-0.5 rounded transition-colors"
+                              className="text-[8px] font-black bg-slate-200 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 px-1 py-0.5 rounded transition-colors"
                             >
                               上船
                             </button>
@@ -3691,7 +3615,7 @@ export default function App() {
                                   onConfirm: () => socketService.kickPlayer(roomState.roomId, s.id)
                                 });
                               }}
-                              className="text-[8px] font-black bg-stone-200 text-stone-600 hover:bg-red-100 hover:text-red-600 px-1.5 py-0.5 rounded transition-colors"
+                              className="text-[8px] font-black bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 px-1 py-0.5 rounded transition-colors"
                             >
                               踢出
                             </button>
@@ -3704,35 +3628,36 @@ export default function App() {
               </div>
             )}
             
-            <div className="pt-2 sm:pt-4 flex flex-col items-center gap-2 border-t border-slate-100">
+            <div className="pt-1.5 pb-0.5 flex items-center justify-center gap-3 border-t border-slate-100 shrink-0">
                <button 
                  onClick={handleReturnToLobby}
-                 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-2"
+                 className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1 py-0.5"
                >
-                 <LogOut size={12} className="scale-x-[-1]" />
+                 <LogOut size={11} className="scale-x-[-1]" />
                  离开房间
                </button>
                
-               {isSpectator && (
-                 <div className="mt-2">
-                 </div>
-               )}
-               
                {isHostInLobby && !isSpectator && (
-                 <button 
-                   onClick={() => {
-                     if (confirm('确定要解散此房间吗？所有玩家将被移出。')) {
+                 <>
+                   <div className="w-1 h-1 rounded-full bg-slate-200" />
+                   <button 
+                     onClick={() => {
                        const roomId = roomState?.roomId || inputRoomId;
                        if (roomId) {
-                         socketService.resetGame(roomId);
+                         setConfirmAction({
+                           message: '确定要解散此房间吗？所有玩家将被移出。',
+                           onConfirm: () => {
+                             socketService.resetGame(roomId);
+                           }
+                         });
                        }
-                     }
-                   }}
-                   className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500 hover:text-red-700 transition-colors flex items-center gap-2 mt-2"
-                 >
-                   <Trash2 size={12} />
-                   解散房间
-                 </button>
+                     }}
+                     className="text-[10px] font-black uppercase tracking-[0.15em] text-red-400 hover:text-red-600 transition-colors flex items-center gap-1 py-0.5"
+                   >
+                     <Trash2 size={10} />
+                     解散房间
+                   </button>
+                 </>
                )}
             </div>
           </div>

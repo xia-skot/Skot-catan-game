@@ -413,13 +413,25 @@ async function startServer() {
       const guestCount = usersCollection ? await usersCollection.countDocuments({ isGuest: true }) : 0;
       const gameCount = gamesCollection ? await gamesCollection.countDocuments() : 0;
       
-      const latestUsers = usersCollection ? await usersCollection.find({ isGuest: false }).sort({ createdAt: -1 }).limit(10).project({ password: 0 }).toArray() : [];
+      let allUsers = usersCollection ? await usersCollection.find({ isGuest: false }).sort({ createdAt: -1 }).project({ password: 0 }).toArray() : [];
+      const allGames = gamesCollection ? await gamesCollection.find().toArray() : [];
+      
+      allUsers = allUsers.map(u => {
+        const userGames = allGames.filter(g => g.players?.some((p: any) => p.name === u.username));
+        const totalGames = userGames.length;
+        const wins = userGames.filter(g => g.winnerId && g.players?.find((p: any) => p.name === u.username)?.id === g.winnerId).length;
+        const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
+        return { ...u, totalGames, wins, winRate };
+      });
+      
+      const latestUsers = allUsers.slice(0, 10);
       const latestGames = gamesCollection ? await gamesCollection.find().sort({ completedAt: -1 }).limit(10).toArray() : [];
 
       res.json({
         stats: { users: userCount, guests: guestCount, games: gameCount },
         settings: globalSettings,
         latestUsers,
+        allUsers,
         latestGames
       });
     } catch (error) {
