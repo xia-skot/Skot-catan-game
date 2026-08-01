@@ -68,7 +68,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 lg:p-8 bg-stone-500/10 backdrop-blur-xl"
+      className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 lg:p-8 bg-transparent"
     >
       <motion.div 
         initial={{ scale: 0.95, y: 40 }}

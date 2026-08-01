@@ -62,12 +62,42 @@ class AudioService {
       this._sfxEqualizer = { ...DEFAULT_EQUALIZER };
     }
 
-    // Preload audios
+    // Initial Audio fallback elements
     Object.entries(AUDIO_URLS).forEach(([key, url]) => {
       const audio = new Audio(url);
       audio.preload = 'auto';
       this.audios[key] = audio;
     });
+  }
+
+  // Preload audios into blobs for instant low-latency playback
+  public async preloadAllAudio(onProgress?: (loaded: number, total: number) => void): Promise<void> {
+    const entries = Object.entries(AUDIO_URLS);
+    let loaded = 0;
+    
+    const promises = entries.map(async ([key, url]) => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const audio = new Audio(blobUrl);
+        audio.preload = 'auto';
+        this.audios[key] = audio;
+      } catch (err) {
+        console.warn(`[AudioService] Blob preload failed for ${key}, using fallback:`, err);
+        if (!this.audios[key]) {
+          const audio = new Audio(url);
+          audio.preload = 'auto';
+          this.audios[key] = audio;
+        }
+      } finally {
+        loaded++;
+        if (onProgress) onProgress(loaded, entries.length);
+      }
+    });
+
+    await Promise.allSettled(promises);
   }
 
   get sfxVolume() { return this._sfxVolume; }

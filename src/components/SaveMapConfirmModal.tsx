@@ -26,7 +26,7 @@ export function SaveMapConfirmModal({ isOpen, onClose, defaultName, isAdmin, onS
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-transparent" onClick={onClose} />
       
       <motion.div 
         initial={{ opacity: 0, scale: 0.95, y: 20 }}

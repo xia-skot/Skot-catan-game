@@ -78,16 +78,17 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`bg-slate-50 relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200/50' : 'rounded-3xl w-full max-w-lg shadow-2xl max-h-[90vh]'}`}
+      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full max-w-lg shadow-2xl max-h-[90vh]'}`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-6 pb-4 shadow-sm z-10 shrink-0 relative flex justify-between items-center ${inline ? 'pt-2' : 'pt-4'}`}>
+      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-4 shadow-sm'}`}>
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden">
-            <BookOpen size={24} />
+          <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
+            <BookOpen size={22} />
           </div>
           <div>
-            <div className="text-lg font-black text-slate-800">游戏规则与指南</div>
+            <div className="text-base font-black text-slate-800 leading-tight">游戏规则与指南</div>
+            <div className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5">新手指南与玩法介绍</div>
           </div>
         </div>
         
@@ -98,7 +99,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                 className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
                 title="返回"
               >
-                <ArrowLeft size={20} />
+                <ArrowLeft size={18} />
               </button>
             )}
             {!inline && onClose && (
@@ -113,7 +114,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto no-scrollbar relative">
+      <div className="flex-1 overflow-y-auto no-scrollbar relative max-w-2xl w-full mx-auto">
         {activeView === 'menu' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -708,9 +709,9 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
 
   if (inline) {
     return (
-      <div className="w-full h-full flex flex-col bg-white items-center justify-center">
+      <>
         {content}
-      </div>
+      </>
     );
   }
 
@@ -722,7 +723,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+          className="absolute inset-0 bg-transparent"
         />
         {content}
       </div>

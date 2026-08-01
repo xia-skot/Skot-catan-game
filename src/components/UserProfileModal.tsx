@@ -109,20 +109,20 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`bg-slate-50 relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200/50' : 'rounded-3xl w-full shadow-2xl max-h-[90vh]'}`}
+      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90vh]'}`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-6 pb-4 shadow-sm z-10 shrink-0 relative flex justify-between items-center ${inline ? 'pt-2' : 'pt-4'}`}>
+      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-4 shadow-sm'}`}>
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden">
-            <User size={24} />
+          <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
+            <User size={22} />
             {currentUser?.role === 'admin' && (
               <div className="absolute bottom-0 left-0 w-full bg-indigo-500 text-white text-[8px] font-black text-center py-0.5 uppercase tracking-widest">Admin</div>
             )}
           </div>
           <div>
-            <div className="text-lg font-black text-slate-800">{currentUser.isGuest ? '游客' : currentUser.username}</div>
-            <div className="text-[10px] text-slate-400 font-medium">{currentUser.isGuest ? '未绑定邮箱' : currentUser.email}</div>
+            <div className="text-base font-black text-slate-800 leading-tight">{currentUser.isGuest ? '游客' : currentUser.username}</div>
+            <div className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5">{currentUser.isGuest ? '未绑定邮箱' : currentUser.email}</div>
           </div>
         </div>
         
@@ -133,7 +133,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
                 title="返回"
               >
-                <ArrowLeft size={20} />
+                <ArrowLeft size={18} />
               </button>
             )}
             {!inline && (
@@ -147,7 +147,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto no-scrollbar relative p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto no-scrollbar relative p-4 space-y-4 max-w-2xl w-full mx-auto">
         {activeView === 'edit' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -461,12 +461,12 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       
       {/* Logout Button */}
       {activeView === 'menu' && onLogout && !currentUser?.isViewingAsAdmin && (
-         <div className="pb-2 pt-2 px-6 shrink-0 z-10 mt-auto">
+         <div className="shrink-0 z-10 mt-auto pt-8 pb-3 px-4 flex justify-center">
            <button
              onClick={onLogout}
-             className="w-full flex items-center justify-center gap-2 text-sm font-black text-red-500 bg-red-50 hover:bg-red-100 py-3 rounded-2xl transition-colors border border-red-100/50"
+             className="w-full max-w-[220px] flex items-center justify-center gap-2 text-xs font-black text-red-500 bg-red-50 hover:bg-red-100 py-2.5 px-4 rounded-xl transition-all border border-red-100/80 shadow-2xs hover:shadow-xs active:scale-95"
            >
-             <LogOut size={16} /> 退出登录
+             <LogOut size={15} /> 退出登录
            </button>
          </div>
       )}
@@ -485,7 +485,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+        className="absolute inset-0 bg-transparent"
         onClick={onClose}
       />
       {content}

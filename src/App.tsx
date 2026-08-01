@@ -6,6 +6,7 @@ import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLOR
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { audioService } from './audioService';
+import { preloadAllAssets } from './assetPreloader';
 import { 
   Dices, 
   User, 
@@ -335,6 +336,25 @@ const seededRandom = (seed: number) => {
 };
 
 function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false }: { onComplete: () => void, text?: string, loop?: boolean }) {
+  const [preloadProgress, setPreloadProgress] = useState(0);
+  const [preloadStatusText, setPreloadStatusText] = useState('正在缓冲资源...');
+  const [preloadFinished, setPreloadFinished] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    preloadAllAssets((percent, label) => {
+      if (isMounted) {
+        setPreloadProgress(percent);
+        if (label) setPreloadStatusText(label);
+      }
+    }).then(() => {
+      if (isMounted) {
+        setPreloadFinished(true);
+      }
+    });
+    return () => { isMounted = false; };
+  }, []);
+
   const calculatePaths = (w: number, h: number) => {
     const isPortrait = w < h;
     const baseY = h / 2 - h * 0.05;
@@ -413,8 +433,8 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
             
             <div 
                 onAnimationIteration={() => {
-                  // Check the ref to see if we should stop at the end of this cycle
-                  if (!loopRef.current) {
+                  // Check the ref to see if we should stop at the end of this cycle (and assets are preloaded)
+                  if (!loopRef.current && preloadFinished) {
                     onComplete();
                   }
                 }}
@@ -439,10 +459,17 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
                 <path d={paths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
             </svg>
 
-            <div className="absolute top-[80%] w-full text-center z-[10000]">
-                <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)] px-4">
+            <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4">
+                <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
                     {text}
                 </span>
+                {!preloadFinished && (
+                    <div className="flex items-center gap-2 bg-white/80 backdrop-blur-md px-3.5 py-1 rounded-full border border-sky-200/80 shadow-xs">
+                        <span className="text-xs font-bold text-[#0284c7]">
+                          {preloadStatusText} {preloadProgress}%
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     </motion.div>
@@ -503,18 +530,8 @@ export default function App() {
   const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
   
   useEffect(() => {
-    // Preload images
-    const imagesToPreload = [
-      FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
-      ...Object.values(RESOURCE_ICONS),
-      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png",
-      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catanships.jpg",
-      "https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/sea_bg.jpg",
-    ];
-    imagesToPreload.forEach(src => {
-      const img = new window.Image();
-      img.src = src;
-    });
+    // Preload all game textures and audio into browser cache
+    preloadAllAssets().catch(err => console.warn('[App] Preload error:', err));
 
     const timer = setTimeout(() => {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -846,12 +863,13 @@ export default function App() {
               localStorage.removeItem('catan_auth_token');
             }
           } else {
-            console.warn('[App] Auth check failed:', res.status);
-            localStorage.removeItem('catan_auth_token');
+            console.warn('[App] Auth check status:', res.status);
+            if (res.status === 401 || res.status === 403) {
+              localStorage.removeItem('catan_auth_token');
+            }
           }
         } catch (err) {
-          console.error('[App] Auth check error:', err);
-          localStorage.removeItem('catan_auth_token');
+          console.warn('[App] Auth check failed:', err);
         }
       }
       setIsAuthLoading(false);
@@ -934,6 +952,10 @@ export default function App() {
   const [gameStarted, setGameStarted] = useState(() => {
     return localStorage.getItem('catan_game_active') === 'true';
   });
+  const gameStartedRef = useRef(gameStarted);
+  useEffect(() => {
+    gameStartedRef.current = gameStarted;
+  }, [gameStarted]);
   const isAutoReconnectingRef = useRef(!!localStorage.getItem('catan_active_room') && localStorage.getItem('catan_has_created_room') === 'true');
   const hasCreatedRoomRef = useRef(localStorage.getItem('catan_has_created_room') === 'true');
   const [spectatorFocusId, setSpectatorFocusId] = useState<number | null>(null);
@@ -993,16 +1015,19 @@ export default function App() {
       setIsJoinedLobby(true); // Always set isJoinedLobby when room state is received
       
       if (state.gameState) {
-        console.log('[Socket] Game is active, syncing game state and entering game directly');
+        console.log('[Socket] Game is active, syncing game state');
         isRemoteUpdateRef.current = true;
         syncGameState(state.gameState);
-        setGameStarted(true);
         localStorage.setItem('catan_game_active', 'true');
         
-        // Show sailing screen if it is not already visible/animating
-        if (!showSailingScreen) {
-          setSailingText("重新驶入海域......");
+        // Show sailing screen ONLY if player was not already in game
+        if (!gameStartedRef.current) {
+          setGameStarted(true);
+          const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+          setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
           setShowSailingScreen(true);
+        } else {
+          setGameStarted(true);
         }
       } else {
         localStorage.removeItem('catan_game_active');
@@ -1180,9 +1205,10 @@ export default function App() {
     const roomIdToJoin = roomFromUrl || activeRoom;
 
     if (roomIdToJoin) {
+      const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
       if (wasInGame || roomFromUrl) {
         // Reconnect directly to game with loading screen
-        setSailingText("重新驶入海域......");
+        setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
         setShowSailingScreen(true);
       }
       // Wait a tiny bit for UI state to settle before joining, so socket uses correct ID
@@ -1526,7 +1552,11 @@ export default function App() {
     const wasInGame = localStorage.getItem('catan_game_active') === 'true';
     return wasInGame;
   });
-  const [sailingText, setSailingText] = useState("正在驶入海域......");
+  const [sailingText, setSailingText] = useState(() => {
+    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
+    const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
+    return (wasInGame && !asSpec) ? "重新驶入海域......" : "正在驶入海域......";
+  });
   
   useEffect(() => {
     audioService.tempMuteSfx = showSailingScreen;
@@ -1774,8 +1804,9 @@ export default function App() {
   }, [gameState?.phase, hasResolvedGameOver, showGameOver]);
 
   const hexCoords = useMemo(() => {
-    if (!gameState) return [];
-    return gameState.board.map(hex => {
+    if (!gameState || !gameState.board) return [];
+    const hexes = Array.isArray(gameState.board) ? gameState.board : [];
+    return hexes.map(hex => {
       const x = HEX_WIDTH * (hex.q + hex.r / 2);
       const y = HEX_HEIGHT * 0.75 * hex.r;
       return { ...hex, x, y, radius: HEX_RADIUS };
@@ -1947,7 +1978,7 @@ export default function App() {
       .then(data => {
          if (data?.maps) setDbMaps(data.maps);
       })
-      .catch(console.error);
+      .catch(err => console.warn('[App] Fetch maps error:', err));
   }, []);
 
   const savedMaps = useMemo(() => {
@@ -3066,9 +3097,10 @@ export default function App() {
                     const enteredCode = inputRoomId.trim();
                     
                     if (isRoomLocked && activeRoom) {
-                      setSailingText("重新驶入海域......");
+                      const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                      setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
                       setShowSailingScreen(true);
-                      socketService.joinRoom(activeRoom, playerName);
+                      socketService.joinRoom(activeRoom, playerName, asSpec);
                     } else {
                       setActiveLobbyTab('rooms');
                       setIsJoinedLobby(true);
@@ -3105,9 +3137,10 @@ export default function App() {
                 const activeRoom = roomId || localStorage.getItem('catan_active_room');
                 if (activeRoom) {
                   setInputRoomId(activeRoom);
-                  setSailingText("重新驶入海域......");
+                  const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                  setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
                   setShowSailingScreen(true);
-                  socketService.joinRoom(activeRoom, playerName);
+                  socketService.joinRoom(activeRoom, playerName, asSpec);
                 } else {
                   setActiveLobbyTab('lobby');
                 }
@@ -3115,6 +3148,8 @@ export default function App() {
               onJoinRoom={(roomId) => {
                 setInputRoomId(roomId);
                 localStorage.setItem('catan_active_room', roomId);
+                setSailingText("正在驶入海域......");
+                setShowSailingScreen(true);
                 socketService.joinRoom(roomId, playerName);
               }}
               onSpectateRoom={(roomId) => {
@@ -3122,6 +3157,8 @@ export default function App() {
                 localStorage.setItem('catan_player_name', playerName);
                 localStorage.setItem('catan_is_spectator', 'true');
                 setIsJoinSpectator(true);
+                setSailingText("正在驶入海域......");
+                setShowSailingScreen(true);
                 socketService.joinRoom(roomId, playerName, true);
               }}
              />
@@ -3135,13 +3172,13 @@ export default function App() {
         )}
 
         {activeLobbyTab === 'rules' && (
-          <div className="w-full h-full flex relative pb-16 pt-2 px-2 sm:pt-4 sm:px-4">
+          <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
             <RulesModal isOpen={true} onClose={() => {}} inline={true} />
           </div>
         )}
 
         {activeLobbyTab === 'profile' && (
-          <div className="w-full h-full flex relative pb-16 pt-2 px-2 sm:pt-4 sm:px-4">
+          <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
             <UserProfileModal
               currentUser={currentUser}
               onClose={() => {}}
@@ -3159,7 +3196,7 @@ export default function App() {
           </div>
         )}
         {/* Bottom Tab Bar */}
-        <div className="absolute bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-100 pt-1 pb-1 px-4 flex justify-center gap-4 sm:gap-8 z-50">
+        <div className="absolute bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-1.5 px-6 flex justify-center gap-10 sm:gap-16 z-50">
            <button
              onClick={() => setActiveLobbyTab('lobby')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
@@ -3257,7 +3294,7 @@ export default function App() {
       />
 
       {confirmAction && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/10 transition-all">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-transparent transition-all">
           <div className="bg-white/95 border border-slate-200/90 rounded-xl p-4 shadow-xl max-w-[280px] sm:max-w-xs w-full mx-auto animate-in fade-in zoom-in-95 duration-150">
             <h3 className="text-xs sm:text-sm font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block shrink-0" />
@@ -3726,10 +3763,10 @@ export default function App() {
   );
 }
 
-  const actingPlayer = gameState?.players[activePlayerId];
-  const settlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
-  const roadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
-  const shipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
+  const actingPlayer = gameState?.players ? gameState.players[activePlayerId] : undefined;
+  const settlementsCount = (gameState?.settlements || []).filter(s => s.playerId === activePlayerId).length;
+  const roadsCount = (gameState?.roads || []).filter(r => r.playerId === activePlayerId).length;
+  const shipsCount = (gameState?.ships || []).filter(s => s.playerId === activePlayerId).length;
   const totalRoadsAndShips = roadsCount + shipsCount;
   
   const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
@@ -3738,7 +3775,7 @@ export default function App() {
   const leftWidth = isMobile ? Math.max(logicalWindowSize.width * 0.18, 160) : 280;
   const rightWidth = isMobile ? Math.max(logicalWindowSize.width * 0.20, 180) : 280;
   const stageWidth = logicalWindowSize.width - leftWidth - rightWidth;
-  const headerHeight = isMobile ? 40 : 54;
+  const headerHeight = isMobile ? 48 : 58;
 
   const nextAction = (() => {
     if (!gameState) return null;
@@ -3816,64 +3853,86 @@ export default function App() {
         className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
       >
 
-      <header className="w-full flex items-center bg-white border-b border-black/5 px-2 z-50 overflow-hidden" style={{ height: headerHeight }}>
-        {/* Left: Logo & Room Code */}
-        <div className="flex items-center gap-2 lg:gap-3 shrink-0 cursor-default lg:absolute lg:left-2">
-          <div className="flex items-center gap-2 lg:gap-3 relative" onClick={handleLogoClick}>
-            <div className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center relative">
+      <header className="w-full flex items-center bg-white border-b border-black/5 z-50 overflow-hidden" style={{ height: headerHeight }}>
+        {/* Left: Logo & Room Code & 4 Action Buttons - Width aligned with left resource panel */}
+        <div 
+          style={{ width: leftWidth }} 
+          className="flex items-center justify-between px-1 sm:px-2 h-full border-r border-black/5 shrink-0 bg-white overflow-hidden relative z-10"
+        >
+          <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1 cursor-default" onClick={handleLogoClick}>
+            <div className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center shrink-0 relative">
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-full h-full object-contain drop-shadow-md" />
+              <img src="https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png" alt="Catan Logo" className="w-full h-full object-contain drop-shadow-sm" />
             </div>
-            <div className="flex items-center pr-4 border-r border-black/5 relative gap-2 h-full">
-              {/* Spectator logo mask */}
-              {isSpectator && (
-                <div className="absolute inset-0 bg-transparent pointer-events-none z-0" />
-              )}
-              <div className="relative z-10 flex flex-col items-center justify-center font-sans">
-                <span className="text-[8px] lg:text-[9px] uppercase font-black tracking-[0.2em] opacity-40 leading-[1.2]">海域代码</span>
-                <span className="text-[13px] uppercase font-black tracking-tighter opacity-90 leading-[1.2]">{roomState?.roomId || 'OFFLINE'}</span>
-              </div>
-              <div className="relative z-10 flex flex-col items-center justify-center gap-1 ml-1.5 h-full">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setShowRulesModal(true); }}
-                  className="text-stone-400 hover:text-stone-600 transition-colors flex items-center justify-center"
-                  title="游戏规则"
+            <div className="flex flex-col justify-center font-sans min-w-0">
+              <span className="text-[8px] sm:text-[9px] uppercase font-black tracking-wider text-stone-400 leading-none whitespace-nowrap mb-0.5">海域代码</span>
+              <span className="text-[11px] sm:text-[13px] font-black tracking-tight text-stone-800 leading-none whitespace-nowrap">{roomState?.roomId || 'OFFLINE'}</span>
+            </div>
+          </div>
+
+          {/* 4 Logo Buttons Grid: Compact 2x2 */}
+          <div className="grid grid-cols-2 gap-x-2.5 gap-y-0.5 shrink-0 ml-1 items-center justify-items-center">
+            {/* Top-Left: Rules (Yellow line & fill) */}
+            <button 
+              onClick={(e) => { e.stopPropagation(); setShowRulesModal(true); }}
+              className="text-amber-500 hover:text-amber-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
+              title="游戏规则"
+            >
+              <BookOpen size={13} strokeWidth={2.2} className="fill-amber-400/30" />
+            </button>
+
+            {/* Top-Right: Sound (Yellow line & fill) */}
+            <button 
+              onClick={(e) => { e.stopPropagation(); setShowSoundModal(true); }}
+              className="text-amber-500 hover:text-amber-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
+              title="声音设置"
+            >
+              <Bell size={13} strokeWidth={2.2} className="fill-amber-400/30" />
+            </button>
+
+            {/* Bottom-Left: Spectator Eye (Red lines; Eye icon aligned with Book icon above) */}
+            {(() => {
+              const specCount = roomState?.spectators?.length || 0;
+              const hasSpectators = specCount > 0;
+              return (
+                <div 
+                  className={`p-0.5 relative flex items-center justify-center transition-all ${
+                    hasSpectators 
+                      ? 'text-red-500' 
+                      : 'text-stone-400 hover:text-stone-500'
+                  }`}
+                  title={`观战人数: ${specCount}`}
                 >
-                  <BookOpen size={14} strokeWidth={2} />
-                </button>
-                <div className="flex items-center justify-center text-stone-400 relative" title="观战人数">
-                  <Eye size={14} strokeWidth={2} className="fill-transparent" />
-                  <span className="absolute left-full ml-1 text-[9px] font-mono font-black leading-none">{roomState?.spectators?.length || 0}</span>
+                  <Eye size={13} strokeWidth={2.2} className={hasSpectators ? 'text-red-500 fill-red-500/20' : 'text-stone-400'} />
+                  <span className="absolute left-full ml-0.5 text-[9px] font-mono font-black leading-none">{specCount}</span>
                 </div>
-              </div>
-              <div className="relative z-10 flex flex-col items-center justify-center gap-1 ml-1.5 h-full">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setShowSoundModal(true); }}
-                  className="text-stone-400 hover:text-stone-600 transition-colors flex items-center justify-center"
-                  title="声音设置"
-                >
-                  <Bell size={14} strokeWidth={2} />
-                </button>
-              </div>
-              {isSpectator && (
-                <button 
-                  onClick={handleReturnToLobby}
-                  className="ml-3 text-red-400 hover:text-red-600 transition-all transform active:scale-90 relative z-20 flex items-center"
-                  title="退出观战"
-                >
-                  <LogOut size={13} strokeWidth={2.5} className="scale-x-[-1]" />
-                </button>
-              )}
-            </div>
+              );
+            })()}
+
+            {/* Bottom-Right: Exit button (Red line icon) */}
+            <button 
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                if (isHost && gameStarted) {
+                  setShowExitOptions(true);
+                } else {
+                  handleReturnToLobby();
+                }
+              }}
+              className="text-red-500 hover:text-red-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
+              title={isSpectator ? "退出观战" : "离开房间"}
+            >
+              <LogOut size={13} strokeWidth={2.2} className="scale-x-[-1]" />
+            </button>
           </div>
         </div>
 
         {/* Center: Player Cards */}
         <div 
           ref={playerBarRef}
-          className="flex-1 flex justify-start lg:justify-center overflow-x-auto no-scrollbar py-1 lg:ml-32 lg:mr-32"
+          className="flex-1 flex justify-start sm:justify-center overflow-x-auto no-scrollbar py-1 px-2"
         >
           <div className="flex items-center gap-2 lg:gap-4 px-4 lg:px-0">
             {gameState.players.map((p, i) => {
@@ -4195,23 +4254,6 @@ export default function App() {
           
           {gameStarted && (
             <div className={`absolute top-1 left-1 z-[50] flex flex-col gap-0.5 pointer-events-auto ${isMobile ? 'scale-90 origin-top-left' : ''}`}>
-              {!isSpectator && (
-                <button 
-                  onClick={() => {
-                    if (isHost) {
-                      setShowExitOptions(true);
-                    } else {
-                      handleReturnToLobby();
-                    }
-                  }}
-                  className={`flex items-center justify-center ${isMobile ? 'w-8 h-8 rounded-md' : 'w-10 h-10 rounded-lg'} bg-white/90 backdrop-blur-xl border border-black/5 text-stone-600 shadow-xl hover:bg-stone-100 transition-all transform active:scale-95 group pointer-events-auto`}
-                  style={{ cursor: 'pointer' }}
-                  title={isHost ? "退出选项" : "中途离开"}
-                >
-                  <LogOutIcon size={isMobile ? 12 : 18} className="group-hover:-translate-x-0.5 transition-transform scale-x-[-1]" />
-                </button>
-              )}
-
               {isHost && !isSpectator && (
                 <button 
                   onClick={() => setShowReserveRoomModal(true)}
@@ -4646,7 +4688,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowExitOptions(false)}
-              className="absolute inset-0 bg-stone-900/40"
+              className="absolute inset-0 bg-transparent"
             />
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -4694,73 +4736,112 @@ export default function App() {
       {/* Reserve Room Modal */}
       <AnimatePresence>
         {showReserveRoomModal && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowReserveRoomModal(false)}
-              className="absolute inset-0 bg-stone-900/40"
+              className="absolute inset-0 bg-transparent"
             />
             <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              initial={{ scale: 0.94, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-white rounded-2xl shadow-2xl p-5 max-w-sm w-full flex flex-col max-h-[85vh]"
+              exit={{ scale: 0.94, opacity: 0, y: 10 }}
+              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-[310px] w-full flex flex-col overflow-hidden border border-stone-100"
             >
-              <div className="mb-4">
-                <h3 className="text-lg font-black text-stone-800 flex items-center gap-2">
-                  <Clock size={20} className="text-emerald-500" />
+              {/* Close X Button */}
+              <button
+                onClick={() => setShowReserveRoomModal(false)}
+                className="absolute top-3 right-3 w-7 h-7 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 hover:text-stone-800 flex items-center justify-center transition-colors"
+                title="关闭"
+              >
+                <X size={15} strokeWidth={2.5} />
+              </button>
+
+              {/* Header */}
+              <div className="flex items-center gap-2.5 mb-3.5 pr-6">
+                <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100 shadow-2xs">
+                  <Clock size={18} strokeWidth={2.2} />
+                </div>
+                <h3 className="text-base font-black text-stone-900 tracking-tight leading-none">
                   保留房间
                 </h3>
-                <p className="text-stone-500 text-[10px] mt-1 leading-relaxed">
-                  在保留时间内，即使所有玩家退出该房间，房间也<strong className="text-stone-700">不会被自动解散</strong>。
-                </p>
-                {roomState?.reservedUntil && (
-                  <p className="text-emerald-600 text-[10px] mt-2 font-bold bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-100">
-                    当前保留至: {new Date(roomState.reservedUntil).toLocaleTimeString()}
-                  </p>
-                )}
               </div>
-              
-              <div className="flex flex-col gap-2 mb-6">
-                <button 
-                  onClick={() => {
-                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 30 * 60 * 1000);
-                    setShowReserveRoomModal(false);
-                  }}
-                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
-                >
-                  保留 30 分钟
-                </button>
-                <button 
-                  onClick={() => {
-                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 60 * 60 * 1000);
-                    setShowReserveRoomModal(false);
-                  }}
-                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
-                >
-                  保留 1 小时
-                </button>
-                <button 
-                  onClick={() => {
-                    socketService.reserveRoom(roomState?.roomId || inputRoomId, 3 * 60 * 60 * 1000);
-                    setShowReserveRoomModal(false);
-                  }}
-                  className="w-full py-2.5 bg-stone-50 text-stone-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-200 hover:text-emerald-700 font-bold text-xs rounded-xl transition-all"
-                >
-                  保留 3 小时
-                </button>
-                
-                <div className="flex items-center gap-2 mt-2 border-t border-stone-100 pt-4">
-                  <input 
-                    type="number" 
-                    value={reserveCustomMinutes}
-                    onChange={(e) => setReserveCustomMinutes(e.target.value)}
-                    className="flex-grow min-w-0 bg-stone-50 border border-stone-200 py-2.5 px-3 rounded-xl text-xs font-mono outline-emerald-500 text-stone-700"
-                    placeholder="自定义(分钟)"
-                    min="1"
-                  />
+
+              {/* Active Reservation Info Card */}
+              {roomState?.reservedUntil && (
+                <div className="mb-3.5 p-2.5 bg-emerald-50/90 border border-emerald-200/80 rounded-xl flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      正在保留中
+                    </span>
+                    <span className="text-xs font-mono font-black text-emerald-700">
+                      至 {new Date(roomState.reservedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      socketService.reserveRoom(roomState?.roomId || inputRoomId, null);
+                      setShowReserveRoomModal(false);
+                    }}
+                    className="w-full py-1 bg-white hover:bg-red-50 text-red-600 font-bold text-[11px] rounded-lg transition-all border border-emerald-200/60 hover:border-red-200 shadow-2xs active:scale-95"
+                  >
+                    取消保留状态
+                  </button>
+                </div>
+              )}
+
+              {/* Presets Grid */}
+              <div className="space-y-1.5 mb-3">
+                <span className="text-[10px] font-black uppercase tracking-wider text-stone-400 block px-0.5">快速选择</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button 
+                    onClick={() => {
+                      socketService.reserveRoom(roomState?.roomId || inputRoomId, 30 * 60 * 1000);
+                      setShowReserveRoomModal(false);
+                    }}
+                    className="py-2 px-1 bg-stone-50 hover:bg-emerald-500 hover:text-white border border-stone-200/80 hover:border-emerald-500 text-stone-700 font-bold text-xs rounded-xl transition-all active:scale-95 text-center"
+                  >
+                    30 分钟
+                  </button>
+                  <button 
+                    onClick={() => {
+                      socketService.reserveRoom(roomState?.roomId || inputRoomId, 60 * 60 * 1000);
+                      setShowReserveRoomModal(false);
+                    }}
+                    className="py-2 px-1 bg-stone-50 hover:bg-emerald-500 hover:text-white border border-stone-200/80 hover:border-emerald-500 text-stone-700 font-bold text-xs rounded-xl transition-all active:scale-95 text-center"
+                  >
+                    1 小时
+                  </button>
+                  <button 
+                    onClick={() => {
+                      socketService.reserveRoom(roomState?.roomId || inputRoomId, 3 * 60 * 60 * 1000);
+                      setShowReserveRoomModal(false);
+                    }}
+                    className="py-2 px-1 bg-stone-50 hover:bg-emerald-500 hover:text-white border border-stone-200/80 hover:border-emerald-500 text-stone-700 font-bold text-xs rounded-xl transition-all active:scale-95 text-center"
+                  >
+                    3 小时
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Input */}
+              <div className="space-y-1.5 mb-3.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-stone-400 block px-0.5">自定义时长</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-grow flex items-center bg-stone-50 border border-stone-200 focus-within:border-emerald-500 focus-within:bg-white rounded-xl px-2.5 py-1.5 transition-all">
+                    <input 
+                      type="number" 
+                      value={reserveCustomMinutes}
+                      onChange={(e) => setReserveCustomMinutes(e.target.value)}
+                      className="w-full bg-transparent text-xs font-mono font-bold outline-hidden text-stone-800 placeholder-stone-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      placeholder="时长"
+                      min="1"
+                    />
+                    <span className="text-xs font-bold text-stone-400 shrink-0 ml-1">分钟</span>
+                  </div>
                   <button 
                     onClick={() => {
                       const mins = parseInt(reserveCustomMinutes, 10);
@@ -4769,28 +4850,17 @@ export default function App() {
                         setShowReserveRoomModal(false);
                       }
                     }}
-                    className="py-2.5 px-4 bg-emerald-500 text-white font-bold text-xs rounded-xl shrink-0 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                    className="py-1.5 px-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs rounded-xl shrink-0 shadow-xs active:scale-95 transition-all"
                   >
                     确认
                   </button>
                 </div>
-
-                {roomState?.reservedUntil && (
-                  <button 
-                    onClick={() => {
-                      socketService.reserveRoom(roomState?.roomId || inputRoomId, null);
-                      setShowReserveRoomModal(false);
-                    }}
-                    className="w-full py-2.5 bg-red-50 text-red-600 font-bold text-xs rounded-xl mt-4 active:scale-95 transition-all border border-red-100 uppercase tracking-wider"
-                  >
-                    取消保留
-                  </button>
-                )}
               </div>
 
+              {/* Close button */}
               <button 
                 onClick={() => setShowReserveRoomModal(false)}
-                className="w-full py-2 bg-stone-100 text-stone-500 font-bold text-[10px] rounded-lg hover:bg-stone-200 transition-colors uppercase tracking-widest"
+                className="w-full py-2 bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold text-xs rounded-xl transition-colors"
               >
                 关闭
               </button>
@@ -4808,7 +4878,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowDissolveRoomConfirm(false)}
-              className="absolute inset-0 bg-stone-900/40"
+              className="absolute inset-0 bg-transparent"
             />
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}

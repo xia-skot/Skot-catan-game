@@ -271,7 +271,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                   
                   <div className="flex gap-1 shrink-0 ml-2">
                     {isEditing ? (
-                      <button onClick={() => handleSaveUser(u._id)} disabled={savingId === u._id} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors bg-slate-50">
+                      <button onClick={() => saveEdit(u._id)} disabled={savingId === u._id} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors bg-slate-50">
                         {savingId === u._id ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                       </button>
                     ) : (

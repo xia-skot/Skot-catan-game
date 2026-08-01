@@ -20,3 +20,44 @@ export const RESOURCE_ICONS: Record<ResourceType, string> = {
   [ResourceType.Grain]: GRAIN_ICON,
   [ResourceType.Ore]: ORE_ICON,
 };
+
+export const HILLS_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E4%B8%98%E9%99%B5.jpg';
+export const GOLD_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%87%91%E7%9F%BF.jpg';
+export const SEA_HEX_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E6%B4%8B.png';
+export const ROBBER_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%BC%BA%E7%9B%972.png';
+export const PIRATE_SHIP_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E7%9B%97%E8%88%B9.png';
+export const SAILING_BOAT_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png';
+export const CATAN_LOGO_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png';
+export const DEV_CARD_ICON = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png';
+export const RES_CARD_ICON = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png';
+export const ROAD_ICON = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png';
+export const MAP_ALBUM_ICON = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%9C%B0%E5%9B%BE%E5%86%8C.png';
+export const CATAN_SHIPS_BG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catanships.jpg';
+export const SEA_BG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/sea_bg.jpg';
+
+export const ALL_GAME_IMAGES: string[] = [
+  FOREST_IMG,
+  FIELDS_IMG,
+  PASTURE_IMG,
+  Desert_IMG,
+  Mountains_IMG,
+  HILLS_IMG,
+  GOLD_IMG,
+  SEA_HEX_IMG,
+  LUMBER_ICON,
+  BRICK_ICON,
+  WOOL_ICON,
+  GRAIN_ICON,
+  ORE_ICON,
+  ROBBER_IMG,
+  PIRATE_SHIP_IMG,
+  SAILING_BOAT_IMG,
+  CATAN_LOGO_IMG,
+  DEV_CARD_ICON,
+  RES_CARD_ICON,
+  ROAD_ICON,
+  MAP_ALBUM_ICON,
+  CATAN_SHIPS_BG,
+  SEA_BG,
+];
+

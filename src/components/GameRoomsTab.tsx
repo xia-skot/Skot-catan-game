@@ -144,7 +144,7 @@ export const GameRoomsTab: React.FC<GameRoomsTabProps> = ({
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-slate-500 font-bold">
                     玩家: <span className="text-slate-800">
-                      {room.players?.length || 0} / {room.settings?.playerCount || 4}
+                      {room.settings?.playerCount || 4}人
                     </span>
                   </span>
                   <span className="text-xs text-slate-500 font-bold">
