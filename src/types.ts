@@ -58,6 +58,7 @@ export interface Player {
   longestRoadLength: number;
   vpCardsCount: number;
   islandBonusPoints: number;
+  discoveredIslandIds: number[];
   sessionId?: string;
 }
 

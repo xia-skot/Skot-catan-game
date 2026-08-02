@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ResourceType } from '../types';
-import { RESOURCE_NAMES } from '../constants';
 import { RESOURCE_ICONS } from '../images';
+import { RESOURCE_NAMES } from '../constants';
 
 interface GoldSelectionPanelProps {
   bankResources: Record<ResourceType, number>;
@@ -18,7 +18,7 @@ export const GoldSelectionPanel: React.FC<GoldSelectionPanelProps> = ({ bankReso
     [ResourceType.Ore]: 0,
   });
 
-  const totalSelected = Object.values(selections).reduce((a, b) => a + b, 0);
+  const totalSelected = Object.values(selections).reduce((sum, count) => sum + count, 0);
 
   const handleAdjust = (res: ResourceType, delta: number) => {
     const newVal = selections[res] + delta;
@@ -27,48 +27,43 @@ export const GoldSelectionPanel: React.FC<GoldSelectionPanelProps> = ({ bankReso
     }
   };
 
+  const isComplete = totalSelected === amount;
+
   return (
     <div className="flex flex-col w-full h-full">
-      <h3 className="text-lg lg:text-xl font-serif font-black italic text-orange-600 mb-1 lg:mb-2 text-center">淘金热！</h3>
-      <p className="text-[9px] lg:text-[10px] text-stone-500 uppercase tracking-widest mb-4 lg:mb-6 text-center">请选择 {amount} 份资源 (已选 {totalSelected}/{amount})</p>
-      
-      <div className="space-y-1.5 lg:space-y-2 mb-4 lg:mb-6">
-        {Object.values(ResourceType).map(res => (
-          <div key={res} className="flex items-center justify-between p-2 lg:p-3 rounded-xl border border-black/5 bg-stone-50/50">
-            <div className="flex items-center gap-2 lg:gap-3">
-              <img src={RESOURCE_ICONS[res]} className="w-5 h-5 lg:w-6 lg:h-6 object-contain" alt={RESOURCE_NAMES[res]} referrerPolicy="no-referrer" />
-              <span className="text-[10px] lg:text-xs font-bold font-serif">{RESOURCE_NAMES[res]}</span>
-              <span className="text-[8px] lg:text-[9px] opacity-30 font-mono">库存: {bankResources[res]}</span>
+      <div className="mb-4">
+        <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">请选择资源</h3>
+        <p className="text-[9px] text-slate-500 mb-2">还需选择: {amount - totalSelected} 份</p>
+        <div className="grid grid-cols-5 gap-1">
+          {Object.values(ResourceType).map(res => (
+            <div key={`gold-${res}`} className="p-0.5 sm:p-1 py-1 border border-slate-200/80 rounded-xl bg-slate-50/50 flex flex-col items-center justify-between gap-0.5">
+              <img src={RESOURCE_ICONS[res]} className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 object-contain mb-0.5" alt={RESOURCE_NAMES[res]} referrerPolicy="no-referrer" />
+              <div className="flex items-center gap-0.5 w-full justify-between px-0.5">
+                <button 
+                  disabled={selections[res] <= 0}
+                  onClick={() => handleAdjust(res, -1)}
+                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 disabled:opacity-30 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                >-</button>
+                <span className="font-bold text-[10px] sm:text-xs text-slate-800">{selections[res]}</span>
+                <button 
+                  disabled={totalSelected >= amount || selections[res] >= bankResources[res]}
+                  onClick={() => handleAdjust(res, 1)}
+                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 disabled:opacity-30 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                >+</button>
+              </div>
             </div>
-            
-            <div className="flex items-center gap-2 lg:gap-3">
-              <button 
-                onClick={() => handleAdjust(res, -1)}
-                disabled={selections[res] <= 0}
-                className="w-6 h-6 lg:w-8 lg:h-8 rounded-full bg-white border border-black/10 flex items-center justify-center hover:bg-stone-100 disabled:opacity-20 transition-all font-bold text-[10px] lg:text-base"
-              >
-                -
-              </button>
-              <span className="w-3 lg:w-4 text-center font-mono font-bold text-xs lg:text-sm">{selections[res]}</span>
-              <button 
-                onClick={() => handleAdjust(res, 1)}
-                disabled={totalSelected >= amount || selections[res] >= bankResources[res]}
-                className="w-6 h-6 lg:w-8 lg:h-8 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:opacity-20 transition-all font-bold text-[10px] lg:text-base"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-
-      <button 
-        disabled={totalSelected !== amount}
-        onClick={() => onSelect(selections)}
-        className="w-full py-3 lg:py-4 bg-orange-600 text-white rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[11px] shadow-xl shadow-orange-200 hover:bg-orange-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95"
-      >
-        确认领取资源
-      </button>
+      <div className="flex gap-2 pt-1 mt-auto">
+        <button 
+          disabled={!isComplete}
+          onClick={() => onSelect(selections)}
+          className="w-full py-3 sm:py-3.5 bg-slate-900 text-white rounded-xl text-xs sm:text-sm font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+        >
+          确认领取
+        </button>
+      </div>
     </div>
   );
 };

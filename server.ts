@@ -51,6 +51,9 @@ async function startServer() {
 
   const httpServer = createHttpServer(app);
 
+  // Active game rooms map
+  const rooms = new Map<string, any>();
+
   // MongoDB Connection setup
   const MONGODB_URI = process.env.MONGODB_URI?.trim();
   let dbClient: MongoClient | null = null;
@@ -58,6 +61,7 @@ async function startServer() {
   let verificationCodesCollection: any = null;
   let gamesCollection: any = null;
   let mapsCollection: any = null;
+  let debugSavesCollection: any = null;
   
   if (MONGODB_URI) {
     dbClient = new MongoClient(MONGODB_URI, {
@@ -75,6 +79,7 @@ async function startServer() {
       verificationCodesCollection = db.collection('verification_codes');
       gamesCollection = db.collection('games');
       mapsCollection = db.collection('maps');
+      debugSavesCollection = db.collection('debug_saves');
       
       await usersCollection.createIndex({ email: 1 }, { unique: true });
       await verificationCodesCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 }); // 10 minutes expiry
@@ -692,6 +697,131 @@ async function startServer() {
     }
   });
 
+  // ================= DEBUG SAVE/LOAD ENDPOINTS =================
+
+  // Save Game Progress
+  app.post('/api/admin/save-game', authMiddleware, adminMiddleware, async (req: any, res: any) => {
+    try {
+      const { roomId, saveName } = req.body;
+      if (!roomId || !saveName) {
+        return res.status(400).json({ error: '房间ID和存档名称不能为空' });
+      }
+
+      // Check if room exists in active map
+      const room = rooms.get(roomId);
+      if (!room) {
+        return res.status(404).json({ error: '该房间在服务器中未找到，可能已失效或被清理。' });
+      }
+
+      // Update the room's current save name to match
+      room.loadedFromSaveName = saveName.trim();
+
+      const saveDoc = {
+        name: saveName.trim(),
+        roomId,
+        roomData: JSON.parse(JSON.stringify(room)), // Deep clone to serialize safely
+        savedBy: req.user.username,
+        savedAt: new Date()
+      };
+
+      if (debugSavesCollection) {
+        // Check if an archive with the same name already exists
+        const existingSave = await debugSavesCollection.findOne({ name: saveName.trim() });
+        if (existingSave) {
+          // Overwrite the existing document
+          await debugSavesCollection.updateOne(
+            { _id: existingSave._id },
+            { 
+              $set: {
+                roomId,
+                roomData: saveDoc.roomData,
+                savedBy: req.user.username,
+                savedAt: new Date()
+              }
+            }
+          );
+          console.log(`[Server] Overwrote debug save "${saveName.trim()}" for room ${roomId}`);
+        } else {
+          // Insert a new document
+          await debugSavesCollection.insertOne(saveDoc);
+          console.log(`[Server] Created new debug save "${saveName.trim()}" for room ${roomId}`);
+        }
+      } else {
+        console.warn('MongoDB not connected. Saving game state temporarily is not persistent across restarts.');
+      }
+
+      res.json({ message: '存档成功！' });
+    } catch (err) {
+      console.error('Save game progress error', err);
+      res.status(500).json({ error: '保存游戏进度失败' });
+    }
+  });
+
+  // Get Saved Games List
+  app.get('/api/admin/saved-games', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      if (!debugSavesCollection) {
+        return res.json({ saves: [] });
+      }
+      const saves = await debugSavesCollection.find().sort({ savedAt: -1 }).toArray();
+      res.json({ saves });
+    } catch (err) {
+      console.error('Fetch saved games error', err);
+      res.status(500).json({ error: '获取存档列表失败' });
+    }
+  });
+
+  // Restore Saved Game Progress
+  app.post('/api/admin/restore-game', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { saveId } = req.body;
+      if (!saveId) {
+        return res.status(400).json({ error: '未指定存档ID' });
+      }
+
+      if (!debugSavesCollection) {
+        return res.status(500).json({ error: '数据库未连接，无法读取存档' });
+      }
+
+      const save = await debugSavesCollection.findOne({ _id: new ObjectId(saveId) });
+      if (!save) {
+        return res.status(404).json({ error: '存档未找到' });
+      }
+
+      const roomData = save.roomData;
+      // To ensure we can resume cleanly, make sure lastActiveAt is updated
+      roomData.lastActiveAt = Date.now();
+      roomData.loadedFromSaveName = save.name;
+      roomData.loadedFromSaveId = save._id.toString();
+      
+      // Overwrite/insert the room in-memory Map
+      rooms.set(roomData.roomId, roomData);
+
+      console.log(`[Server] Restored debug game state for room ${roomData.roomId} from save: ${save.name}`);
+
+      res.json({ message: '游戏进度已恢复！', roomId: roomData.roomId });
+    } catch (err) {
+      console.error('Restore game progress error', err);
+      res.status(500).json({ error: '恢复游戏进度失败' });
+    }
+  });
+
+  // Delete Saved Game
+  app.delete('/api/admin/saved-games/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      if (!debugSavesCollection) {
+        return res.status(500).json({ error: '数据库未连接' });
+      }
+      await debugSavesCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+      res.json({ message: '删除存档成功' });
+    } catch (err) {
+      console.error('Delete saved game error', err);
+      res.status(500).json({ error: '删除存档失败' });
+    }
+  });
+
+  // =============================================================
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -708,7 +838,6 @@ async function startServer() {
   }
 
   // Socket.io logic
-  const rooms = new Map<string, any>();
   const globalSettings = {
     maxVisibleRooms: 10
   };

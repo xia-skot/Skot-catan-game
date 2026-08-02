@@ -16,6 +16,8 @@ export interface RoomState {
   gameState?: any;
   reservedUntil?: number | null;
   status?: 'waiting' | 'playing';
+  loadedFromSaveName?: string;
+  loadedFromSaveId?: string;
 }
 
 class SocketService {
@@ -83,7 +85,7 @@ class SocketService {
       if (error.message === 'websocket error') {
         console.warn('[Socket] Connection Error (WebSocket fallback to polling):', error.message);
       } else {
-        console.error('[Socket] Connection Error:', error.message);
+        console.warn('[Socket] Connection Error:', error.message);
       }
       this.connectionChangeCallbacks.forEach(cb => cb(false));
       // If websocket fails, it might try polling automatically if transports is set
@@ -110,7 +112,7 @@ class SocketService {
       try {
         this.socket.emit(event, ...args);
       } catch (err) {
-        console.error(`Error emitting ${event}:`, err);
+        console.warn(`Error emitting ${event}:`, err);
       }
       return;
     }
@@ -120,7 +122,7 @@ class SocketService {
         try {
           this.socket?.emit(event, ...args);
         } catch (err) {
-          console.error(`Error flushing ${event}:`, err);
+          console.warn(`Error flushing ${event}:`, err);
         }
       };
       this.socket.once('connect', flushEvent);
@@ -131,7 +133,7 @@ class SocketService {
         try {
           this.socket.emit(event, ...args);
         } catch (err) {
-          console.error(`Error emitting ${event}:`, err);
+          console.warn(`Error emitting ${event}:`, err);
         }
       }
     }

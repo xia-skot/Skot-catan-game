@@ -71,7 +71,7 @@ import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame
 import { HexType, ResourceType, DevCardType, MapType, GameState } from './types';
 import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
 import { GameOverModal } from './components/GameOverModal';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { audioService } from './audioService';
 import { preloadAllAssets, checkIsAssetsCached } from './assetPreloader';
 import { 
@@ -108,7 +108,8 @@ import {
   Loader2,
   Swords,
   Clock,
-  LogOut as LogOutIcon
+  LogOut as LogOutIcon,
+  Bug
 } from 'lucide-react';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
@@ -127,7 +128,7 @@ import {
   HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, PIRATE_SHIP_IMG,
   DEV_CARD_ICON, RES_CARD_ICON, ROAD_ICON, MAP_ALBUM_ICON,
   RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
-  getImageUrl, getImageCandidates
+  getImageUrl, getImageCandidates, getDevCardImg
 } from './images';
 
 export const SmartImg = ({ src, alt, className, onClick, ...props }: any) => {
@@ -688,6 +689,14 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
 export default function App() {
   const [showSoundModal, setShowSoundModal] = useState(false);
+  const robberDragControls = useDragControls();
+  const playerTradeDragControls = useDragControls();
+  const devCardDragControls = useDragControls();
+  const bankTradeDragControls = useDragControls();
+  const stealDragControls = useDragControls();
+  const activeTradeDragControls = useDragControls();
+  const exitOptionsDragControls = useDragControls();
+  const dissolveRoomDragControls = useDragControls();
 
   useEffect(() => {
     let audioUnlocked = false;
@@ -1045,6 +1054,9 @@ export default function App() {
 
   const isRemoteUpdateRef = useRef(false);
   const playerBarRef = useRef<HTMLDivElement>(null);
+  const mainMapRef = useRef<HTMLDivElement>(null);
+  const gameContainerRef = useRef<HTMLDivElement>(null);
+  const devCardOverlayRef = useRef<HTMLDivElement>(null);
   
   const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
   
@@ -1097,13 +1109,13 @@ export default function App() {
   useEffect(() => {
     if (isAuthLoading) return;
 
-    if (!gameStarted) {
+    if (!gameStarted && !isJoinedLobby && !roomState?.roomId) {
       audioService.stopBgm(true);
       return;
     }
 
     const checkAndPlayBgm = () => {
-      if (!gameStarted) return;
+      if (!gameStarted && !isJoinedLobby && !roomState?.roomId) return;
       if (!audioService.enabled) return;
 
       if (!audioService.isBgmPlaying) {
@@ -1221,6 +1233,11 @@ export default function App() {
       setPlayerCount(state.settings.playerCount);
       setMapType(state.settings.mapType as MapType);
       setBotConfig(state.settings.botConfig);
+      
+      // Auto-populate the debug archive save name if the room was loaded from an archive
+      if (state.loadedFromSaveName && !debugSaveName) {
+        setDebugSaveName(state.loadedFromSaveName);
+      }
       
       setIsJoinedLobby(true); // Always set isJoinedLobby when room state is received
       
@@ -1443,6 +1460,21 @@ export default function App() {
 
     socketService.joinRoom(finalRoomId, playerName);
     setIsJoinedLobby(true);
+  };
+
+  const handleRestoreGame = (restoredRoomId: string) => {
+    setInputRoomId(restoredRoomId);
+    setIsRoomLocked(true);
+    localStorage.setItem('catan_active_room', restoredRoomId);
+    localStorage.setItem('catan_game_active', 'true');
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('room', restoredRoomId);
+    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    
+    socketService.connect();
+    socketService.joinRoom(restoredRoomId, playerName, false);
+    setIsJoinedLobby(true);
+    setActiveLobbyTab('lobby');
   };
 
   const handleFullLogout = useCallback(() => {
@@ -1857,6 +1889,8 @@ export default function App() {
 
   const sailingStartTimeRef = useRef(0);
   const [showDebugConsole, setShowDebugConsole] = useState(false);
+  const [debugSaveName, setDebugSaveName] = useState('');
+  const [debugSaveStatus, setDebugSaveStatus] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [showDebugButton, setShowDebugButton] = useState(false);
   const [debugModeEnabled, setDebugModeEnabled] = useState(false);
   const logoClickCountRef = useRef(0);
@@ -2355,13 +2389,14 @@ export default function App() {
         if (res.ok) {
           fetch('/api/maps')
             .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
-            .then(d => d && setDbMaps(d.maps || []));
+            .then(d => d && setDbMaps(d.maps || []))
+            .catch(() => {});
           alert('地图已保存到官方云图册！');
           setMapSaveDialog(null);
           return;
         }
       } catch(e) {
-        console.error(e);
+        console.warn(e);
       }
     }
 
@@ -2406,7 +2441,7 @@ export default function App() {
          });
          setDbMaps(dbMaps.filter(m => m._id !== map.id));
        } catch (e) {
-         console.error(e);
+         console.warn(e);
        }
        return;
     }
@@ -2433,7 +2468,7 @@ export default function App() {
           setDbMaps(dbMaps.map(m => m._id === map.id ? { ...m, name: newName } : m));
         }
       } catch (e) {
-        console.error(e);
+        console.warn(e);
       }
       return;
     }
@@ -2458,10 +2493,11 @@ export default function App() {
           if (res.ok) {
             fetch('/api/maps')
               .then(r => r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null)
-              .then(d => d && setDbMaps(d.maps || []));
+              .then(d => d && setDbMaps(d.maps || []))
+              .catch(() => {});
           }
         } catch (e) {
-          console.error(e);
+          console.warn(e);
         }
       }
     });
@@ -3104,6 +3140,9 @@ export default function App() {
       } else if (phase === 'gold_selection') {
         const rewardAmount = gameState.pendingGoldRewards[0]?.amount || 1;
         selectGoldResource({ lumber: 0, brick: 0, wool: 0, grain: 0, ore: rewardAmount });
+      } else if (phase === 'discard' || phase === 'year_of_plenty' || phase === 'monopoly' || phase === 'finished' || phase === 'order_determination' || phase === 'rolling_7') {
+        // Do nothing, handled by other logic, parallel loops, or manual play
+        return;
       } else {
         // Fallback for other subphases
         nextTurn();
@@ -3557,6 +3596,7 @@ export default function App() {
               onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
               onLogout={handleFullLogout}
               inline={true}
+              onRestoreGame={handleRestoreGame}
             />
           </div>
         )}
@@ -3607,6 +3647,7 @@ export default function App() {
           isOpen={showSoundModal} 
           onClose={() => setShowSoundModal(false)} 
           isAdmin={currentUser?.role === 'admin'}
+          gameContainerRef={gameContainerRef}
         />
       </div>
     );
@@ -4130,6 +4171,7 @@ export default function App() {
     )} */}
     <div style={lockedLandscapeStyle}>
       <div 
+        ref={gameContainerRef}
         data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
         style={shouldApplyPortraitRotation ? {
           width: windowSize.height,
@@ -4225,9 +4267,9 @@ export default function App() {
         {/* Center: Player Cards */}
         <div 
           ref={playerBarRef}
-          className="flex-1 flex justify-start sm:justify-center overflow-x-auto no-scrollbar py-1 px-2"
+          className="flex-1 flex justify-start overflow-x-auto no-scrollbar py-1 px-4 sm:px-6"
         >
-          <div className="flex items-center gap-2 lg:gap-4 px-4 lg:px-0">
+          <div className="flex items-center gap-2 lg:gap-4 pr-6 min-w-max">
             {gameState.players.map((p, i) => {
               const isCurrent = i === activePlayerId;
               const displayResources = (isDiceRolling && !isSpectator && displayedResourcesMap[p.id]) ? displayedResourcesMap[p.id] : p.resources;
@@ -4327,7 +4369,7 @@ export default function App() {
               initial={{ width: leftWidth }}
               animate={{ width: leftWidth }}
               exit={{ width: 0 }}
-              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white overflow-y-auto no-scrollbar overflow-x-hidden shrink-0 z-50 relative`}
+              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white h-full max-h-full min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden shrink-0 z-50 relative`}
             >
               <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
             <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
@@ -4378,26 +4420,24 @@ export default function App() {
                   {visiblePlayer && visiblePlayer.devCards.length > 0 && (
                     <div className="space-y-2">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">可使用</h4>
-                      <div className="grid grid-cols-1 gap-1.5">
+                      <div className="grid grid-cols-1 gap-1">
                         {Object.values(DevCardType).map(type => {
-                          const count = visiblePlayer.devCards.filter(c => c === type).length;
+                          const isCurrentlyPlaying = gameState.playingDevCard === type && visiblePlayer.id === gameState.players[gameState.currentPlayerIndex].id;
+                          const count = visiblePlayer.devCards.filter(c => c === type).length + (isCurrentlyPlaying ? 1 : 0);
                           if (count === 0) return null;
                           
                           return (
-                            <div key={`playable-${type}`} className="flex items-center justify-between p-2 rounded-xl bg-red-50 border border-red-100 shadow-sm group hover:border-red-200 transition-all">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-lg bg-zinc-100 flex items-center justify-center text-xs relative shadow-inner">
-                                  {type === DevCardType.Knight ? '⚔️' : 
-                                   type === DevCardType.VictoryPoint ? '🏆' :
-                                   type === DevCardType.RoadBuilding ? '🛣️' :
-                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                            <div key={`playable-${type}`} className="flex items-center justify-between py-1 px-1.5 rounded-md bg-white border border-red-200 hover:shadow-sm transition-all group overflow-visible">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-6 h-6 md:w-7 md:h-7 shrink-0 rounded bg-white flex items-center justify-center text-xs relative shadow-inner border border-red-50">
+                                  <SmartImg src={getDevCardImg(type)} alt={type} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
                                   {count > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold ring-2 ring-white">
+                                    <div className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-black text-white rounded-full flex items-center justify-center text-[8px] font-bold ring-1 ring-white z-30">
                                       {count}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[9px] font-black uppercase tracking-tight">
+                                <span className="font-bold uppercase tracking-tight text-[10px] md:text-[11px] text-slate-700 group-hover:text-red-600 transition-colors">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -4405,16 +4445,25 @@ export default function App() {
                                 </span>
                               </div>
                               {type !== DevCardType.VictoryPoint && (
-                                <div className="flex items-center gap-1.5 grayscale group-hover:grayscale-0 transition-all">
+                                <div className="flex items-center gap-1 grayscale group-hover:grayscale-0 transition-all shrink-0">
                                   {gameState.playingDevCard === type ? (
-                                    <span className="text-[8px] font-black uppercase tracking-widest bg-stone-100 text-stone-400 px-2 py-1 rounded-full">
-                                      正在使用
-                                    </span>
+                                    visiblePlayer.id === me.id ? (
+                                      <button 
+                                        onClick={() => cancelDevCard()}
+                                        className="text-[10px] font-black uppercase tracking-wider bg-stone-800 text-white px-2.5 py-1.5 rounded-full hover:bg-black transition-all shadow-sm active:scale-95"
+                                      >
+                                        取消
+                                      </button>
+                                    ) : (
+                                      <span className="text-[7px] font-black uppercase tracking-widest bg-stone-100 text-stone-400 px-1 py-0.5 rounded-full">
+                                        使用中
+                                      </span>
+                                    )
                                   ) : (
                                     <button 
                                       onClick={() => setConfirmDevCard(type)}
                                       disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn || visiblePlayer.id !== me.id}
-                                      className="text-[8px] font-black uppercase tracking-widest bg-black text-white px-1.5 py-0.5 rounded-full hover:bg-zinc-800 transition-all shadow-md active:scale-95 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed"
+                                      className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-2.5 py-1.5 rounded-full hover:bg-red-700 transition-all shadow-sm active:scale-95 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed"
                                     >
                                       使用
                                     </button>
@@ -4430,28 +4479,25 @@ export default function App() {
 
                   {/* Bought This Turn */}
                   {visiblePlayer && visiblePlayer.devCardsBoughtThisTurn && visiblePlayer.devCardsBoughtThisTurn.length > 0 && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">本回合购买</h4>
-                      {Object.values(DevCardType).map(type => {
-                        const count = visiblePlayer.devCardsBoughtThisTurn.filter(c => c === type).length;
-                        if (count === 0) return null;
-                        
-                        return (
-                          <div key={`bought-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/50 border border-red-100 shadow-sm opacity-60">
-                            <div className="flex items-center justify-between mx-0.5">
+                      <div className="grid grid-cols-1 gap-1">
+                        {Object.values(DevCardType).map(type => {
+                          const count = visiblePlayer.devCardsBoughtThisTurn.filter(c => c === type).length;
+                          if (count === 0) return null;
+                          
+                          return (
+                            <div key={`bought-${type}`} className="flex items-center justify-between py-1 px-1.5 rounded-md bg-white border border-red-100 shadow-sm opacity-60 overflow-visible">
                               <div className="flex items-center gap-1.5">
-                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
-                                  {type === DevCardType.Knight ? '⚔️' : 
-                                   type === DevCardType.VictoryPoint ? '🏆' :
-                                   type === DevCardType.RoadBuilding ? '🛣️' :
-                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                                <div className="w-6 h-6 md:w-7 md:h-7 shrink-0 rounded bg-white flex items-center justify-center text-[8px] relative border border-red-50">
+                                  <SmartImg src={getDevCardImg(type)} alt={type} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
                                   {count > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
+                                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold ring-1 ring-white z-30">
                                       {count}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[8px] font-black uppercase tracking-tight">
+                                <span className="font-bold uppercase tracking-tight text-[10px] md:text-[11px] text-slate-500">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -4459,39 +4505,36 @@ export default function App() {
                                 </span>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
                   {/* Played Cards */}
                   {visiblePlayer && visiblePlayer.playedDevCards && visiblePlayer.playedDevCards.length > 0 && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <h4 className="text-[9px] uppercase tracking-widest font-bold opacity-40">已使用</h4>
-                      {Object.values(DevCardType).map(type => {
-                        const count = visiblePlayer.playedDevCards.filter(c => c === type).length;
-                        if (count === 0 || (gameState.playingDevCard === type && count === 1)) return null;
-                        
-                        const displayCount = gameState.playingDevCard === type ? count - 1 : count;
-                        if (displayCount === 0) return null;
-                        
-                        return (
-                          <div key={`played-${type}`} className="flex flex-col p-1.5 rounded-lg bg-red-50/30 border border-red-100/50 opacity-40 grayscale">
-                            <div className="flex items-center justify-between mx-0.5">
+                      <div className="grid grid-cols-1 gap-1">
+                        {Object.values(DevCardType).map(type => {
+                          const count = visiblePlayer.playedDevCards.filter(c => c === type).length;
+                          if (count === 0 || (gameState.playingDevCard === type && count === 1)) return null;
+                          
+                          const displayCount = gameState.playingDevCard === type ? count - 1 : count;
+                          if (displayCount === 0) return null;
+                          
+                          return (
+                            <div key={`played-${type}`} className="flex items-center justify-between py-1 px-1.5 rounded-md bg-white border border-red-50 shadow-sm opacity-50 overflow-visible">
                               <div className="flex items-center gap-1.5">
-                                <div className="w-5 h-5 rounded-md bg-zinc-200 flex items-center justify-center text-[8px] relative">
-                                  {type === DevCardType.Knight ? '⚔️' : 
-                                   type === DevCardType.VictoryPoint ? '🏆' :
-                                   type === DevCardType.RoadBuilding ? '🛣️' :
-                                   type === DevCardType.YearOfPlenty ? '🎁' : '💎'}
+                                <div className="w-6 h-6 md:w-7 md:h-7 shrink-0 rounded bg-white flex items-center justify-center text-[8px] relative border border-red-50">
+                                  <SmartImg src={getDevCardImg(type)} alt={type} className="w-4 h-4 md:w-5 md:h-5 object-contain" />
                                   {displayCount > 1 && (
-                                    <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold">
+                                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-black text-white rounded-full flex items-center justify-center text-[7px] font-bold ring-1 ring-white z-30">
                                       {displayCount}
                                     </div>
                                   )}
                                 </div>
-                                <span className="text-[8px] font-black uppercase tracking-tight line-through">
+                                <span className="font-bold uppercase tracking-tight text-[10px] md:text-[11px] text-slate-400">
                                   {type === DevCardType.Knight ? '骑士' : 
                                    type === DevCardType.VictoryPoint ? '胜利点' :
                                    type === DevCardType.RoadBuilding ? '道路建设' :
@@ -4499,9 +4542,9 @@ export default function App() {
                                 </span>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </>
@@ -4512,22 +4555,80 @@ export default function App() {
       )}
     </AnimatePresence>
 
-        {/* Center Map */}
-        <main className="flex-1 flex relative overflow-hidden bg-[#e4e3e0]">
-          <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          <main className="flex-1 relative flex flex-col min-h-0 bg-stone-100/50">
+            <AnimatePresence>
+              {confirmDevCard && (
+              <motion.div 
+                ref={devCardOverlayRef}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[100] bg-transparent flex items-center justify-center pointer-events-auto"
+              >
+                <motion.div 
+                  drag
+                  dragConstraints={devCardOverlayRef}
+                  dragElastic={0.1}
+                  dragMomentum={false}
+                  onClick={(e) => e.stopPropagation()}
+                  initial={{ scale: 0.9, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.9, y: 20 }}
+                  className="bg-white border-2 border-red-200 w-[150px] sm:w-[170px] rounded-2xl shadow-2xl p-3 sm:p-4 pt-2.5 sm:pt-3 text-center pointer-events-auto cursor-grab active:cursor-grabbing select-none"
+                >
+                  {/* Poker Card Visual Header / Illustration */}
+                  <div className="w-12 h-18 sm:w-14 sm:h-20 rounded-lg bg-white border border-stone-100 shadow-sm mx-auto flex items-center justify-center p-1 mb-2 relative overflow-hidden group">
+                    <SmartImg src={getDevCardImg(confirmDevCard)} alt="dev card" className="w-full h-full object-contain transform group-hover:scale-105 transition-transform duration-300" />
+                    <div className="absolute top-0.5 left-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">CATAN</div>
+                    <div className="absolute bottom-0.5 right-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">DEV</div>
+                  </div>
 
-          {/* Dev Card Overlay */}
+                  <h2 className="text-[11px] sm:text-xs font-serif font-black text-stone-900 mb-0.5">
+                    {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
+                     confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
+                     confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
+                     confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '资源垄断'}
+                  </h2>
+                  <p className="text-[8px] sm:text-[9px] font-medium text-stone-500 mb-2 leading-tight px-0.5">
+                    {confirmDevCard === DevCardType.Knight ? '移动强盗并偷取资源卡。' : 
+                     confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
+                     confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
+                     confirmDevCard === DevCardType.YearOfPlenty ? '免费领取 2 张资源。' : '选择资源，玩家必须交出。'}
+                  </p>
+                  
+                  <div className="space-y-1.5 pointer-events-auto">
+                    <button 
+                      onClick={() => {
+                        playDevCard(confirmDevCard);
+                        setConfirmDevCard(null);
+                      }}
+                      className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-black uppercase tracking-widest text-[11px] shadow-sm transition-all active:scale-95 pointer-events-auto cursor-pointer"
+                    >
+                      确认使用
+                    </button>
+                    <button 
+                      onClick={() => setConfirmDevCard(null)}
+                      className="w-full bg-stone-50 hover:bg-stone-100 text-stone-500 py-2.5 rounded-lg font-bold uppercase tracking-wider text-[11px] transition-colors pointer-events-auto cursor-pointer"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+
           <AnimatePresence>
             {devCardOverlay && (
               <motion.div 
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                className="absolute top-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+                className="absolute top-2 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
               >
-                <div className="bg-black/80 backdrop-blur-md px-6 py-3 rounded-full text-white shadow-2xl flex items-center gap-3 border border-white/10">
-                  <span className="text-xl">✨</span>
-                  <p className="font-bold tracking-widest text-sm whitespace-nowrap">
+                <div className="bg-black/80 backdrop-blur-md px-4 py-1.5 rounded-full text-white shadow-2xl flex items-center justify-center border border-white/10">
+                  <p className="font-bold tracking-widest text-xs sm:text-sm whitespace-nowrap">
                     <span className="text-amber-400">{devCardOverlay.playerName}</span> {devCardOverlay.actionStr}
                   </p>
                 </div>
@@ -4585,13 +4686,6 @@ export default function App() {
                   <span>结算</span>
                 </button>
               )}
-              <button
-                onClick={toggleFullscreen}
-                className={`flex items-center gap-2 ${isMobile ? 'px-2 py-1 text-[9px] rounded-md' : 'px-5 py-2.5 text-[13px] rounded-lg'} backdrop-blur-xl border border-black/5 font-bold uppercase tracking-widest shadow-xl transition-all transform active:scale-95 bg-white/90 text-stone-600`}
-              >
-                {isFullscreen ? <Minimize size={isMobile ? 10 : 16} /> : <Maximize size={isMobile ? 10 : 16} />}
-                <span>{isFullscreen ? '退屏' : '全屏'}</span>
-              </button>
               <button
                 id="toggle-bot-button"
                 onClick={() => toggleBot(myPlayerIndex)}
@@ -4975,31 +5069,49 @@ export default function App() {
 {/* Exit Options Modal */}
       <AnimatePresence>
         {showExitOptions && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
             <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowExitOptions(false)}
-              className="absolute inset-0 bg-transparent"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-xs w-full flex flex-col items-center text-center max-h-[85vh] overflow-hidden"
+              drag
+              dragListener={false}
+              dragControls={exitOptionsDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[280px] sm:max-w-[300px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
-              <h3 className="text-lg font-black text-stone-800 mb-4">退出选项</h3>
-              
-              <div className="flex flex-col w-full gap-2">
+              {/* Standard drag handle bar & Header */}
+              <div 
+                onPointerDown={(e) => exitOptionsDragControls.start(e)}
+                className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                    退出选项
+                  </h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">离开当前正在进行的游戏</p>
+                </div>
+                <button 
+                  onClick={() => setShowExitOptions(false)}
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-3 sm:p-4 space-y-2.5 flex-1 pointer-events-auto">
                 <button 
                   onClick={() => {
                     handleReturnToLobby();
                     setShowExitOptions(false);
                   }}
-                  className="w-full py-3 bg-stone-100 text-stone-700 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-stone-200 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer pointer-events-auto shadow-sm"
                 >
-                  <LogOutIcon size={16} className="scale-x-[-1]" />
+                  <LogOutIcon size={14} className="scale-x-[-1]" />
                   <span>中途离开</span>
                 </button>
 
@@ -5008,15 +5120,15 @@ export default function App() {
                     setShowExitOptions(false);
                     setShowDissolveRoomConfirm(true);
                   }}
-                  className="w-full py-3 bg-red-50 text-red-600 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-100 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 font-bold text-xs uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer pointer-events-auto shadow-sm"
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={14} />
                   <span>解散房间</span>
                 </button>
 
                 <button 
                   onClick={() => setShowExitOptions(false)}
-                  className="mt-2 text-[10px] text-stone-400 font-bold uppercase hover:text-stone-600 transition-colors py-2"
+                  className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm text-center"
                 >
                   取消
                 </button>
@@ -5165,57 +5277,66 @@ export default function App() {
 {/* Dissolve Room Confirmation Modal */}
       <AnimatePresence>
         {showDissolveRoomConfirm && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
             <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowDissolveRoomConfirm(false)}
-              className="absolute inset-0 bg-transparent"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative bg-white rounded-2xl shadow-2xl p-4 max-w-xs w-full border border-black/5 flex flex-col items-center text-center max-h-[85vh] overflow-hidden"
+              drag
+              dragListener={false}
+              dragControls={dissolveRoomDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[280px] sm:max-w-[300px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
-              <div className="absolute top-0 right-0 p-3 opacity-5">
-                <Trash2 size={60} />
-              </div>
-              
-              <div className="w-10 h-10 bg-red-50 text-red-500 rounded-xl flex items-center justify-center mb-3 shadow-sm">
-                <Trash2 size={20} />
-              </div>
-              
-              <h3 className="text-lg font-black text-stone-800 mb-1">确定解散房间？</h3>
-              <p className="text-stone-500 text-[9px] mb-4 leading-relaxed px-2">
-                解散后所有玩家将被移出房间，<br />房间数据将永久删除且不可恢复。
-              </p>
-              
-              <div className="flex flex-col w-full gap-1.5">
-                <button 
-                  onClick={() => {
-                    const roomId = roomState?.roomId || inputRoomId;
-                    socketService.resetGame(roomId);
-                    localStorage.removeItem('catan_active_room');
-                    setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
-                    setIsJoinedLobby(false);
-                    setRoomState(null);
-                    syncGameState(null as any);
-                    setGameStarted(false);
-                    window.history.replaceState({}, '', window.location.pathname);
-                    setShowDissolveRoomConfirm(false);
-                  }}
-                  className="w-full py-2 bg-red-500 text-white font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-red-600 transition-all shadow-xl shadow-red-500/20 active:scale-[0.98]"
-                >
-                  确定解散
-                </button>
+              {/* Standard drag handle bar & Header */}
+              <div 
+                onPointerDown={(e) => dissolveRoomDragControls.start(e)}
+                className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                    解散房间
+                  </h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">解散后数据将不可恢复</p>
+                </div>
                 <button 
                   onClick={() => setShowDissolveRoomConfirm(false)}
-                  className="w-full py-2 bg-stone-100 text-stone-600 font-bold text-[10px] uppercase tracking-widest rounded-lg hover:bg-stone-200 transition-all active:scale-[0.98]"
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
                 >
-                  取消
+                  <X size={14} />
                 </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-3 sm:p-4 flex-1 pointer-events-auto">
+                <div className="flex flex-col w-full gap-2">
+                  <button 
+                    onClick={() => {
+                      const roomId = roomState?.roomId || inputRoomId;
+                      socketService.resetGame(roomId);
+                      localStorage.removeItem('catan_active_room');
+                      setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
+                      setIsJoinedLobby(false);
+                      setRoomState(null);
+                      syncGameState(null as any);
+                      setGameStarted(false);
+                      window.history.replaceState({}, '', window.location.pathname);
+                      setShowDissolveRoomConfirm(false);
+                    }}
+                    className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
+                  >
+                    确定解散
+                  </button>
+                  <button 
+                    onClick={() => setShowDissolveRoomConfirm(false)}
+                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
+                  >
+                    取消
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -5236,137 +5357,190 @@ export default function App() {
 
             return (
               <motion.div
-                key={`trade-alert-${offer.id}`}
-                initial={{ opacity: 0, y: -50 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -50 }}
-                className="absolute top-4 lg:top-6 left-1/2 -translate-x-1/2 z-[200] bg-white border border-stone-200 shadow-2xl rounded-3xl p-4 lg:p-6 w-[95%] max-w-[400px] max-h-[90%] flex flex-col pointer-events-auto"
+                key={`trade-alert-wrap-${offer.id}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
               >
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="font-black text-lg flex items-center gap-2">
-                       玩家交易
-                       {offer.status === 'completed' && <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full">已成交</span>}
-                       {offer.status === 'canceled' && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">已取消</span>}
-                    </h3>
-                    <p className="text-xs text-stone-500 font-medium">来自 {initiator.name}</p>
-                  </div>
-                  {isInitiator && offer.status === 'pending' && (
-                    <button onClick={() => cancelTrade(offer.id)} className="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg transition-colors">
-                      取消交易
-                    </button>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="flex-1 bg-stone-50 p-3 rounded-2xl flex flex-col items-center">
-                    <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">{isInitiator ? '你送出' : 'TA送出'}</span>
-                    <div className="flex gap-1 flex-wrap justify-center">
-                      {Object.values(ResourceType).filter(r => (offer.offer[r] || 0) > 0).map(r => (
-                        <div key={`offer-res-${r}`} className="flex items-center gap-1">
-                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
-                            <span className="text-xs font-bold px-1">{offer.offer[r]}</span>
-                        </div>
-                      ))}
+                <motion.div
+                  key={`trade-alert-${offer.id}`}
+                  drag
+                  dragListener={false}
+                  dragControls={activeTradeDragControls}
+                  dragConstraints={gameContainerRef}
+                  dragElastic={0}
+                  dragMomentum={false}
+                  onClick={(e) => e.stopPropagation()}
+                  initial={{ scale: 0.95, y: 10 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.95, y: 10 }}
+                  className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[90vh] w-[300px] sm:w-[325px] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+                >
+                  <div 
+                    onPointerDown={(e) => activeTradeDragControls.start(e)}
+                    className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+                  >
+                    <div>
+                      <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                        玩家交易
+                        {offer.status === 'completed' && <span className="bg-emerald-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">已成交</span>}
+                        {offer.status === 'canceled' && <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">已取消</span>}
+                      </h2>
+                      <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">来自 {initiator.name}</p>
                     </div>
+                    {isInitiator && offer.status === 'pending' ? (
+                      <button 
+                        onClick={() => cancelTrade(offer.id)} 
+                        className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg transition-colors pointer-events-auto cursor-pointer"
+                      >
+                        取消交易
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => setClosedTradeIds(prev => {
+                          const next = new Set(prev);
+                          next.add(offer.id);
+                          return next;
+                        })}
+                        className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
-                  <Repeat size={16} className="text-stone-300" />
-                  <div className="flex-1 bg-stone-50 p-3 rounded-2xl flex flex-col items-center">
-                    <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">{isInitiator ? '你得到' : 'TA要求'}</span>
-                    <div className="flex gap-1 flex-wrap justify-center">
-                      {Object.values(ResourceType).filter(r => (offer.request[r] || 0) > 0).map(r => (
-                        <div key={`req-res-${r}`} className="flex items-center gap-1">
-                            <ResourceIcon type={r as ResourceType} className="w-4 h-4" />
-                            <span className="text-xs font-bold px-1">{offer.request[r]}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
 
-                {/* Trade Reaction List */}
-                <div className="space-y-2 flex-1 overflow-y-auto no-scrollbar py-2">
-                  {gameState.players.map(p => {
-                    if (p.id === initiator.id) return null;
-                    const isMe = p.id === myPlayerIndex;
-                    const isAccepted = offer.acceptedBy.includes(p.id);
-                    let isRejected = offer.rejectedBy.includes(p.id);
-                    
-                    const canAfford = Object.entries(offer.request || {}).every(
-                      ([r, count]) => !count || (p.resources[r as ResourceType] || 0) >= (count as number)
-                    );
-                    
-                    const status = isAccepted ? 'accept' : (isRejected ? 'reject' : 'pending');
-                    const isFinalPartner = completedWith === p.id;
-
-                    return (
-                      <div key={`player-react-${p.id}`} className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${isFinalPartner ? 'bg-emerald-50 border-emerald-200' : 'bg-stone-50 border-stone-100'}`}>
-                        <div className="flex items-center gap-3">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: p.color }} />
-                          <span className={`text-sm font-black ${isFinalPartner ? 'text-emerald-700' : 'text-stone-700'}`}>{p.name} {isMe && '(你)'}</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {isMe && status === 'pending' && !isInitiator && offer.status === 'pending' ? (
-                            <div className="flex gap-1.5">
-                              <button 
-                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject')}
-                                className="px-3 py-1.5 bg-red-50 text-red-500 border border-red-100 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-all"
-                              >
-                                拒绝
-                              </button>
-                              <button 
-                                onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept')}
-                                disabled={!canAfford}
-                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${canAfford ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-stone-200 text-stone-400 cursor-not-allowed'}`}
-                              >
-                                {canAfford ? '接受' : '资源不足'}
-                              </button>
+                  <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-slate-50/40 border border-slate-200/60 p-2 rounded-xl flex flex-col items-center">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">{isInitiator ? '你送出' : 'TA送出'}</span>
+                        <div className="flex gap-1.5 flex-wrap justify-center min-h-[28px] items-center">
+                          {Object.values(ResourceType).filter(r => (offer.offer[r] || 0) > 0).map(r => (
+                            <div key={`offer-res-${r}`} className="flex items-center gap-1 bg-white border border-slate-200/80 px-1.5 py-0.5 rounded-lg shadow-sm">
+                                <ResourceIcon type={r as ResourceType} className="w-3.5 h-3.5" />
+                                <span className="text-[11px] font-bold text-slate-800">{offer.offer[r]}</span>
                             </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              {isFinalPartner && (
-                                <span className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-md">
-                                  🤝 成交
-                                </span>
-                              )}
-                              {!isFinalPartner && status === 'accept' && (
-                                <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                  接受
-                                </span>
-                              )}
-                              {!isFinalPartner && status === 'reject' && (
-                                <span className="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-black uppercase tracking-widest">
-                                  拒绝
-                                </span>
-                              )}
-                              {!isFinalPartner && status === 'pending' && !isMe && offer.status === 'pending' && (
-                                <div className="w-4 h-4 rounded-full border-2 border-stone-100 border-t-stone-200 animate-spin opacity-20" />
-                              )}
-
-                              {isInitiator && status === 'accept' && offer.status === 'pending' && (
-                                <button 
-                                  disabled={finalizingTradeIds.has(offer.id)}
-                                  onClick={() => {
-                                      setFinalizingTradeIds(prev => new Set([...prev, offer.id]));
-                                      // Delay finalization to let all players see the result
-                                      setTimeout(() => {
-                                        if (roomState?.roomId) socketService.sendFinalizeTrade(roomState.roomId, offer.id, p.id);
-                                      }, 500);
-                                  }}
-                                  className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${finalizingTradeIds.has(offer.id) ? 'bg-stone-300 text-stone-500 shadow-none' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-600/20'}`}
-                                >
-                                  {finalizingTradeIds.has(offer.id) ? '处理中...' : '成交'}
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          ))}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                      
+                      <div className="flex items-center justify-center text-slate-400 bg-slate-100 w-6 h-6 rounded-full shrink-0">
+                        <Repeat size={12} />
+                      </div>
+
+                      <div className="flex-1 bg-slate-50/40 border border-slate-200/60 p-2 rounded-xl flex flex-col items-center">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">{isInitiator ? '你得到' : 'TA要求'}</span>
+                        <div className="flex gap-1.5 flex-wrap justify-center min-h-[28px] items-center">
+                          {Object.values(ResourceType).filter(r => (offer.request[r] || 0) > 0).map(r => (
+                            <div key={`req-res-${r}`} className="flex items-center gap-1 bg-white border border-slate-200/80 px-1.5 py-0.5 rounded-lg shadow-sm">
+                                <ResourceIcon type={r as ResourceType} className="w-3.5 h-3.5" />
+                                <span className="text-[11px] font-bold text-slate-800">{offer.request[r]}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto no-scrollbar py-1">
+                      {gameState.players.map(p => {
+                        if (p.id === initiator.id) return null;
+                        const isMe = p.id === myPlayerIndex;
+                        const isAccepted = offer.acceptedBy.includes(p.id);
+                        let isRejected = offer.rejectedBy.includes(p.id);
+                        
+                        const canAfford = Object.entries(offer.request || {}).every(
+                          ([r, count]) => !count || (p.resources[r as ResourceType] || 0) >= (count as number)
+                        );
+                        
+                        const status = isAccepted ? 'accept' : (isRejected ? 'reject' : 'pending');
+                        const isFinalPartner = completedWith === p.id;
+
+                        return (
+                          <div 
+                            key={`player-react-${p.id}`} 
+                            className={`flex items-center justify-between p-2 rounded-xl border transition-all ${
+                              isFinalPartner 
+                                ? 'bg-emerald-50/60 border-emerald-200/60' 
+                                : 'bg-slate-50/40 border-slate-100'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                              <span className={`text-[11px] sm:text-xs font-bold truncate max-w-[100px] ${isFinalPartner ? 'text-emerald-700 font-extrabold' : 'text-slate-700'}`}>
+                                {p.name} {isMe && '(你)'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1.5">
+                              {isMe && status === 'pending' && !isInitiator && offer.status === 'pending' ? (
+                                <div className="flex gap-1">
+                                  <button 
+                                    onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject')}
+                                    className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-100/50 rounded-lg text-[10px] font-bold transition-all cursor-pointer pointer-events-auto"
+                                  >
+                                    拒绝
+                                  </button>
+                                  <button 
+                                    onClick={() => roomState?.roomId && socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept')}
+                                    disabled={!canAfford}
+                                    className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer pointer-events-auto ${
+                                      canAfford 
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' 
+                                        : 'bg-slate-100 text-slate-400 border border-slate-200/40 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    {canAfford ? '接受' : '资源不足'}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  {isFinalPartner && (
+                                    <span className="px-2 py-1 bg-emerald-600 text-white rounded-lg text-[10px] font-bold shadow-sm">
+                                      🤝 成交
+                                    </span>
+                                  )}
+                                  {!isFinalPartner && status === 'accept' && (
+                                    <span className="px-2 py-0.5 sm:py-1 bg-emerald-50 text-emerald-700 border border-emerald-100/60 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                      接受
+                                    </span>
+                                  )}
+                                  {!isFinalPartner && status === 'reject' && (
+                                    <span className="px-2 py-0.5 sm:py-1 bg-red-50 text-red-600 border border-red-100/50 rounded-lg text-[10px] font-bold">
+                                      拒绝
+                                    </span>
+                                  )}
+                                  {!isFinalPartner && status === 'pending' && !isMe && offer.status === 'pending' && (
+                                    <div className="w-3.5 h-3.5 rounded-full border border-slate-200 border-t-slate-400 animate-spin opacity-40" />
+                                  )}
+
+                                  {isInitiator && status === 'accept' && offer.status === 'pending' && (
+                                    <button 
+                                      disabled={finalizingTradeIds.has(offer.id)}
+                                      onClick={() => {
+                                          setFinalizingTradeIds(prev => new Set([...prev, offer.id]));
+                                          setTimeout(() => {
+                                            if (roomState?.roomId) socketService.sendFinalizeTrade(roomState.roomId, offer.id, p.id);
+                                          }, 500);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all shadow-sm active:scale-95 cursor-pointer pointer-events-auto ${
+                                        finalizingTradeIds.has(offer.id) 
+                                          ? 'bg-slate-200 text-slate-400 border border-slate-300/30' 
+                                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                      }`}
+                                    >
+                                      {finalizingTradeIds.has(offer.id) ? '处理中...' : '成交'}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </motion.div>
               </motion.div>
             );
         })}
@@ -5518,375 +5692,72 @@ export default function App() {
                   ))}
                 </div>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      
-      {/* Debug Toggle Button Removed - Replaced by logo 5-click toggle */}
 
-      {/* Removed DiscardModal rendering here as it's now in the left panel */}
-
-
-
-      {/* Player Trade Modal */}
-      <AnimatePresence>
-        {showPlayerTradeModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[200] flex items-center justify-center pointer-events-none p-4 w-full"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white border border-stone-200 rounded-3xl p-4 lg:p-5 max-w-[400px] w-full max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl"
-            >
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <h2 className="text-xl font-black tracking-tight">玩家交易</h2>
-                  <p className="text-stone-500 font-medium text-xs">与其他玩家交换资源</p>
-                </div>
-                <button 
-                  onClick={() => setShowPlayerTradeModal(false)}
-                  className="w-8 h-8 rounded-full bg-stone-100 flex items-center justify-center hover:bg-stone-200 transition-colors"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="space-y-2 overflow-y-auto text-[10px]">
-                <div>
-                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你送出 (Offer)</h3>
-                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
-                    {Object.values(ResourceType).map(r => (
-                      <div key={`offer-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
-                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <button 
-                            disabled={(playerTradeOffer[r] || 0) <= 0}
-                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
-                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
-                          >-</button>
-                          <span className="font-bold text-xs">{playerTradeOffer[r] || 0}</span>
-                          <button 
-                            disabled={(playerTradeOffer[r] || 0) >= (me.resources[r] || 0)}
-                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
-                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
-                          >+</button>
-                        </div>
-                      </div>
-                    ))}
+              <div>
+                <h4 className="font-bold text-[10px] uppercase tracking-widest opacity-40 mb-3">系统管理 (调试存档)</h4>
+                <div className="space-y-3 bg-stone-50/50 p-3 rounded-2xl border border-black/5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">
+                      自定义存档名称 {roomState?.loadedFromSaveName && <span className="text-emerald-600 font-black text-[9px]">(来自已载入存档)</span>}
+                    </label>
+                    <input 
+                      type="text"
+                      value={debugSaveName}
+                      onChange={(e) => setDebugSaveName(e.target.value)}
+                      placeholder={roomState?.loadedFromSaveName || `调试存档_${new Date().toLocaleTimeString()}`}
+                      className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500 font-sans"
+                    />
                   </div>
-                </div>
 
-                <div>
-                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">你希望得到 (Request)</h3>
-                  <div className="grid gap-1.5 grid-cols-2 md:grid-cols-5">
-                    {Object.values(ResourceType).map(r => (
-                      <div key={`request-${r}`} className="p-2 border rounded-lg flex flex-col items-center gap-1">
-                        <ResourceIcon type={r as ResourceType} className="w-6 h-6" />
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <button 
-                            disabled={(playerTradeRequest[r] || 0) <= 0}
-                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
-                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center disabled:opacity-30"
-                          >-</button>
-                          <span className="font-bold text-xs">{playerTradeRequest[r] || 0}</span>
-                          <button 
-                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
-                            className="w-5 h-5 rounded bg-stone-100 flex items-center justify-center"
-                          >+</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-bold uppercase tracking-widest text-stone-400 mb-2">交易对象</h3>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => setPlayerTradeTarget(null)}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === null ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
-                    >
-                      所有人
-                    </button>
-                    {gameState?.players.filter(p => p.id !== me.id && !p.isBot).map(p => (
-                      <button
-                        key={`target-${p.id}`}
-                        onClick={() => setPlayerTradeTarget(p.id)}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all ${playerTradeTarget === p.id ? 'bg-black text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
-                      >
-                        {p.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button 
-                  disabled={
-                    Object.values(playerTradeOffer).reduce((a,b) => a+b, 0) === 0 || 
-                    Object.values(playerTradeRequest).reduce((a,b) => a+b, 0) === 0
-                  }
-                  onClick={() => {
-                    proposeTrade(playerTradeOffer, playerTradeRequest, playerTradeTarget);
-                    setShowPlayerTradeModal(false);
-                  }}
-                  className="w-full bg-black text-white px-4 py-3 rounded-lg font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all hover:bg-zinc-800 text-xs"
-                >
-                  发起交易
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Dev Card Confirmation Modal */}
-      <AnimatePresence>
-        {confirmDevCard && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-transparent"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white w-full max-w-[280px] lg:max-w-sm rounded-[2.5rem] shadow-2xl overflow-hidden p-6 lg:p-10 text-center"
-            >
-              <div className="w-16 h-16 lg:w-20 lg:h-20 rounded-2xl lg:rounded-3xl bg-zinc-50 mx-auto flex items-center justify-center text-3xl lg:text-4xl shadow-inner mb-4 lg:mb-6">
-                {confirmDevCard === DevCardType.Knight ? '⚔️' : 
-                 confirmDevCard === DevCardType.VictoryPoint ? '🏆' :
-                 confirmDevCard === DevCardType.RoadBuilding ? '🛣️' :
-                 confirmDevCard === DevCardType.YearOfPlenty ? '🎁' : '💎'}
-              </div>
-              <h2 className="text-xl lg:text-2xl font-serif font-black italic mb-1 lg:mb-2">
-                {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
-                 confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
-                 confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
-                 confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '开启垄断'}
-              </h2>
-              <p className="text-[10px] lg:text-xs opacity-50 uppercase tracking-[0.1em] lg:tracking-[0.2em] font-bold mb-6 lg:mb-8 leading-relaxed">
-                {confirmDevCard === DevCardType.Knight ? '移动强盗并从相邻玩家处偷取一张资源卡。' : 
-                 confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
-                 confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
-                 confirmDevCard === DevCardType.YearOfPlenty ? '从银行免费领取任意 2 张资源卡。' : '选择一种资源，所有玩家必须交出该资源。'}
-              </p>
-              
-              <div className="space-y-2 lg:space-y-3">
-                <button 
-                  onClick={() => {
-                    playDevCard(confirmDevCard);
-                    setConfirmDevCard(null);
-                  }}
-                  className="w-full bg-black text-white py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] shadow-xl hover:bg-zinc-800 transition-all active:scale-95"
-                >
-                  确认使用
-                </button>
-                <button 
-                  onClick={() => setConfirmDevCard(null)}
-                  className="w-full py-3 lg:py-4 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[9px] lg:text-[10px] text-stone-400 hover:text-stone-600 transition-colors"
-                >
-                  取消
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
- 
-      {/* Trade Modal */}
-      <AnimatePresence>
-        {showTradeModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-none p-4 w-full"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white border border-stone-200 w-full max-w-[340px] rounded-[2rem] shadow-2xl overflow-hidden max-h-[95%] flex flex-col pointer-events-auto"
-            >
-              <div className="p-4 border-b border-black/5 flex items-center justify-between bg-stone-50/50">
-                <div>
-                  <h2 className="text-lg font-serif font-black italic">海上贸易</h2>
-                  <p className="text-[8px] opacity-40 uppercase tracking-widest mt-0.5">与银行进行 {currentTradeRatio}:1 资源交换</p>
-                </div>
-                <button onClick={() => setShowTradeModal(false)} className="p-2 rounded-full hover:bg-black/5 transition-colors">
-                  <X size={14} />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 flex flex-row gap-4">
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">支付 ({currentTradeRatio})</h4>
-                  <div className="grid grid-cols-1 gap-1">
-                    {Object.values(ResourceType).map(r => (
-                      <button 
-                        key={r} 
-                        onClick={() => setTradeGive(r)}
-                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeGive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
-                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
-                        </div>
-                        <span className={`text-[10px] font-mono ${tradeGive === r ? 'opacity-60' : 'opacity-40'}`}>x{me.resources[r]}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-[8px] uppercase tracking-widest font-black opacity-30 mb-2">获得 (1)</h4>
-                  <div className="grid grid-cols-1 gap-1">
-                    {Object.values(ResourceType).map(r => (
-                      <button 
-                        key={r} 
-                        onClick={() => setTradeReceive(r)}
-                        className={`w-full px-2 py-2.5 rounded-xl border transition-all flex items-center justify-between ${tradeReceive === r ? 'bg-black text-white border-black scale-[1.02] shadow-lg' : 'border-black/5 hover:bg-stone-50'}`}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <ResourceIcon type={r as ResourceType} className="w-5 h-5" />
-                          <span className="text-xs font-bold whitespace-nowrap">{RESOURCE_NAMES[r]}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 bg-stone-50 flex flex-col gap-3 shrink-0 border-t border-black/5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-black uppercase tracking-widest opacity-40">交换数量:</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 bg-white border border-black/5 rounded-full p-0.5">
-                      <button 
-                        onClick={() => setTradeQuantity(Math.max(1, tradeQuantity - 1))}
-                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
-                      >
-                        -
-                      </button>
-                      <span className="w-5 text-center font-mono font-bold text-xs">{tradeQuantity}</span>
-                      <button 
-                        onClick={() => setTradeQuantity(Math.min(maxTradeQuantity, tradeQuantity + 1))}
-                        className="w-6 h-6 rounded-full hover:bg-black/5 flex items-center justify-center transition-colors text-xs"
-                        disabled={tradeQuantity >= maxTradeQuantity}
-                      >
-                        +
-                      </button>
-                    </div>
-                    <span className="text-[8px] opacity-30 font-medium">限额 {maxTradeQuantity}</span>
-                  </div>
-                </div>
-                <button 
-                  disabled={!tradeGive || !tradeReceive || tradeGive === tradeReceive || maxTradeQuantity < 1}
-                  onClick={handleTrade}
-                  className="w-full bg-black text-white py-3 rounded-full font-black uppercase tracking-widest disabled:opacity-20 disabled:cursor-not-allowed transition-all shadow-xl active:scale-95 text-[10px]"
-                >
-                  确认 ({tradeQuantity * currentTradeRatio} 换 {tradeQuantity})
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Stealing Modal */}
-      <AnimatePresence mode="wait">
-        {gameState.phase === 'stealing' && (
-          <motion.div 
-            key="stealing-modal"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center bg-transparent pointer-events-auto p-4 w-full"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white border-2 border-stone-100 rounded-[2rem] shadow-2xl overflow-hidden max-w-[280px] w-full p-4 lg:p-6 flex flex-col items-center text-center relative pointer-events-auto"
-            >
-              <div className="w-10 h-10 rounded-xl bg-stone-50 flex items-center justify-center text-xl mb-2 shadow-inner">
-                🕵️
-              </div>
-              <h3 className="text-lg font-serif font-black italic mb-1 text-slate-900">选择偷取对象</h3>
-              <p className="text-[9px] opacity-40 uppercase tracking-widest mb-4 px-2 leading-relaxed">
-                从相邻建筑的玩家手中抽取随机资源<br />
-                <span className="text-red-500 font-bold opacity-100">点击选择偷取他的资源</span>
-              </p>
-              
-              <div className="grid grid-cols-1 gap-1.5 w-full">
-                {gameState.pendingStealFrom.map(pid => (
-                  <button
-                    key={pid}
+                  <button 
                     onClick={() => {
-                      if (isMyHumanTurn && gameState.selectedStealTarget == null) {
-                        doSteal(pid);
-                      }
+                      const defaultName = roomState?.loadedFromSaveName || `调试存档_${new Date().toLocaleTimeString()}`;
+                      const saveName = debugSaveName.trim() || defaultName;
+                      const roomId = roomState?.roomId || inputRoomId;
+                      const token = localStorage.getItem('catan_auth_token');
+                      const isOverwrite = roomState?.loadedFromSaveName === saveName;
+                      
+                      setDebugSaveStatus(null);
+                      
+                      fetch('/api/admin/save-game', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ roomId, saveName })
+                      })
+                      .then(async (res) => {
+                        const data = await res.json();
+                        if (!res.ok) {
+                          throw new Error(data.error || '保存失败');
+                        }
+                        setDebugSaveStatus({ 
+                          type: 'success', 
+                          text: isOverwrite 
+                            ? `存档「${saveName}」已直接覆盖保存成功！可以在【我的】->【调试】页面中查看并继续加载。` 
+                            : `新存档「${saveName}」保存成功！可以在【我的】->【调试】页面中查看并加载。` 
+                        });
+                        setDebugSaveName(saveName);
+                      })
+                      .catch(err => {
+                        setDebugSaveStatus({ type: 'error', text: `保存失败: ${err.message}` });
+                      });
                     }}
-                    disabled={!isMyHumanTurn || gameState.selectedStealTarget != null}
-                    className={`flex items-center justify-between px-4 py-3 rounded-2xl border transition-all relative overflow-hidden group ${
-                      gameState.selectedStealTarget === pid
-                        ? "bg-black text-white border-black scale-[1.02] shadow-xl"
-                        : gameState.selectedStealTarget != null
-                          ? "opacity-20 border-black/5"
-                          : isMyHumanTurn 
-                            ? "bg-stone-50 border-stone-100 hover:border-black/20 hover:bg-stone-100 active:scale-98" 
-                            : "opacity-40 bg-stone-50 border-stone-100 cursor-not-allowed"
-                    }`}
+                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer font-sans"
                   >
-                    <div className="flex items-center gap-3 relative z-10 text-left">
-                      <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: gameState.players[pid].color }} />
-                      <span className="font-black tracking-tight text-[11px] uppercase truncate max-w-[120px]">{gameState.players[pid].name}</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 relative z-10">
-                      <span className="text-[9px] font-bold opacity-40">卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
-                      {isMyHumanTurn && gameState.selectedStealTarget === null && (
-                        <ChevronRight size={12} className="opacity-20 group-hover:translate-x-1 transition-transform" />
-                      )}
-                      {gameState.selectedStealTarget === pid && (
-                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
-                          <Check size={10} />
-                        </div>
-                      )}
-                    </div>
-
-                    {gameState.selectedStealTarget === pid && (
-                      <motion.div 
-                        layoutId="active-target-bg"
-                        className="absolute inset-0 bg-black z-0"
-                      />
-                    )}
+                    <Bug size={14} className="animate-bounce" /> 保存当前游戏进度
                   </button>
-                ))}
+
+                  {debugSaveStatus && (
+                    <div className={`p-2.5 rounded-xl text-[11px] font-medium leading-normal text-center font-sans ${debugSaveStatus.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-rose-50 text-rose-700 border border-rose-100'}`}>
+                      {debugSaveStatus.text}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {(!isMyHumanTurn || gameState.selectedStealTarget !== null) && (
-                <div 
-                  className={`mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full border border-black/5 transition-colors ${gameState.selectedStealTarget !== null && isMyHumanTurn ? 'cursor-pointer bg-stone-100 hover:bg-stone-200 active:bg-stone-300' : 'bg-stone-100'}`}
-                  onClick={() => {
-                    if (isMyHumanTurn && gameState.selectedStealTarget !== null) {
-                      stealResource(gameState.selectedStealTarget);
-                    }
-                  }}
-                  title={gameState.selectedStealTarget !== null && isMyHumanTurn ? "如果卡住可以点击此处强制继续" : ""}
-                >
-                  <div className="w-1 h-1 rounded-full bg-stone-400 animate-pulse" />
-                  <span className="text-[8px] font-black uppercase tracking-widest text-stone-400">
-                    {gameState.selectedStealTarget !== null ? '正在窃取... (卡住点此)' : '正在等待行动玩家...'}
-                  </span>
-                </div>
-              )}
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -5904,25 +5775,48 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            // Backdrop with zero opacity as requested to see resources behind
-            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-transparent pointer-events-auto"
+            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
           >
             <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
+              drag
+              dragListener={false}
+              dragControls={robberDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-white w-full max-w-[300px] lg:max-w-sm rounded-[1.8rem] lg:rounded-[2.5rem] shadow-2xl border border-black/10 p-4 lg:p-8 pointer-events-auto max-h-[95vh] overflow-y-auto no-scrollbar"
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 rounded-2xl w-[90%] max-w-[280px] sm:max-w-[300px] max-h-[92vh] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
-              {gameState.phase === 'robber' && pendingRobberHex != null && (
-                <div className="space-y-4 text-center">
-                  <h3 className="text-lg lg:text-xl font-serif font-black italic text-stone-800">确认移动{pendingRobberHex.type === HexType.Sea ? '海盗' : '强盗'}？</h3>
-                  <div className="flex justify-center gap-4 mt-6">
-                    <button
-                      onClick={() => setPendingRobberHex(null)}
-                      className="px-6 py-2.5 rounded-xl border-2 border-stone-200 text-stone-500 font-bold uppercase tracking-wider hover:bg-stone-50 active:scale-95 transition-all"
-                    >
-                      取消
-                    </button>
+              {/* Header */}
+              <div 
+                onPointerDown={(e) => robberDragControls.start(e)}
+                className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                    {gameState.phase === 'discard' && '强盗突袭！'}
+                    {gameState.phase === 'robber' && `确认移动${pendingRobberHex?.type === HexType.Sea ? '海盗' : '强盗'}`}
+                    {gameState.phase === 'year_of_plenty' && '丰收之年'}
+                    {gameState.phase === 'monopoly' && '垄断资源'}
+                    {gameState.phase === 'gold_selection' && '淘金热'}
+                  </h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                    {gameState.phase === 'discard' && `请弃掉 ${gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 张资源卡`}
+                    {gameState.phase === 'robber' && '请确认选择的目标格子'}
+                    {gameState.phase === 'year_of_plenty' && '请从银行任选 2 张资源'}
+                    {gameState.phase === 'monopoly' && '所有玩家必须交出你选中的资源'}
+                    {gameState.phase === 'gold_selection' && `请选择 ${gameState.pendingGoldRewards[0]?.amount || 1} 张奖励资源`}
+                  </p>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="p-3 sm:p-4 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
+                {gameState.phase === 'robber' && pendingRobberHex != null && (
+                  <div className="flex flex-col w-full gap-2.5">
                     <button
                       onClick={() => {
                         if (pendingRobberHex.type === HexType.Sea) {
@@ -5932,138 +5826,470 @@ export default function App() {
                         }
                         setPendingRobberHex(null);
                       }}
-                      className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-bold uppercase tracking-wider hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-600/30"
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
                     >
-                      确定
+                      确定移动
+                    </button>
+                    <button
+                      onClick={() => setPendingRobberHex(null)}
+                      className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
+                    >
+                      取消
                     </button>
                   </div>
-                </div>
-              )}
+                )}
 
-              {gameState.phase === 'discard' && (
-                <div className="space-y-4">
-                  <div className="text-center space-y-1">
-                    <h3 className="text-lg lg:text-xl font-serif font-black italic text-red-600">强盗突袭！</h3>
-                    <p className="text-[10px] lg:text-xs font-bold text-slate-800">
-                      请弃掉 {gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 张牌 (还需 {((gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0) - Object.values(discardSelection).reduce((a, b) => a + b, 0))} 张)
+                {gameState.phase === 'discard' && (
+                  <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                    <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-2.5 px-0.5 shrink-0">
+                      资源数量超标，请选择弃掉 <span className="font-bold text-red-600">{((gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0) - Object.values(discardSelection).reduce((a, b) => a + b, 0))}</span> 张资源卡：
                     </p>
+                    <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                      <DiscardPanel 
+                        key={myPlayerIndex} 
+                        player={me} 
+                        amount={gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 
+                        onDiscard={(res) => discardCards(myPlayerIndex, res)} 
+                        onChange={setDiscardSelection}
+                      />
+                    </div>
                   </div>
-                  <DiscardPanel 
-                    key={myPlayerIndex} 
-                    player={me} 
-                    amount={gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 
-                    onDiscard={(res) => discardCards(myPlayerIndex, res)} 
-                    onChange={setDiscardSelection}
-                  />
-                </div>
-              )}
+                )}
 
-              {gameState.phase === 'year_of_plenty' && (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <h3 className="text-lg lg:text-xl font-serif font-black italic mb-1">丰收之年</h3>
-                    <p className="text-[9px] lg:text-[10px] opacity-40 uppercase tracking-widest">请从银行任选 2 张资源</p>
-                  </div>
-                  <div className="space-y-2">
-                    <ResourceSelector 
-                      title="第一张资源"
-                      selected={tradeGive}
-                      onSelect={setTradeGive}
-                    />
-                    <ResourceSelector 
-                      title="第二张资源"
-                      selected={tradeReceive}
-                      onSelect={setTradeReceive}
-                    />
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <button 
-                      onClick={cancelDevCard}
-                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
-                    >
-                      取消
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (tradeGive && tradeReceive) {
-                          resolveYearOfPlenty(tradeGive, tradeReceive);
-                          setTradeGive(null);
-                          setTradeReceive(null);
-                        }
-                      }}
-                      disabled={!tradeGive || !tradeReceive}
-                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
-                    >
-                      确认领取
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {gameState.phase === 'monopoly' && (
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <h3 className="text-xl font-serif font-black italic mb-1">垄断资源</h3>
-                    <p className="text-[10px] opacity-40 uppercase tracking-widest">所有玩家必须交出你选中的资源</p>
-                  </div>
-                  <div className="grid grid-cols-5 gap-1.5 lg:gap-2">
-                    {Object.values(ResourceType).map(res => (
-                      <button
-                        key={`mono-${res}`}
-                        onClick={() => setTradeGive(res)}
-                        className={`p-2 lg:p-3 rounded-xl border transition-all flex flex-col items-center gap-1 ${tradeGive === res ? 'border-black bg-stone-50 scale-105 shadow-md' : 'border-black/5 hover:border-black/20 hover:bg-stone-50'}`}
+                {gameState.phase === 'year_of_plenty' && (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <ResourceSelector 
+                        title="第一张资源"
+                        selected={tradeGive}
+                        onSelect={setTradeGive}
+                      />
+                      <ResourceSelector 
+                        title="第二张资源"
+                        selected={tradeReceive}
+                        onSelect={setTradeReceive}
+                      />
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button 
+                        onClick={cancelDevCard}
+                        className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all cursor-pointer"
                       >
-                        <ResourceIcon type={res as ResourceType} className="w-6 h-6 lg:w-7 lg:h-7" />
+                        取消
                       </button>
-                    ))}
+                      <button 
+                        onClick={() => {
+                          if (tradeGive && tradeReceive) {
+                            resolveYearOfPlenty(tradeGive, tradeReceive);
+                            setTradeGive(null);
+                            setTradeReceive(null);
+                          }
+                        }}
+                        disabled={!tradeGive || !tradeReceive}
+                        className="flex-[1.5] bg-black text-white py-2 rounded-xl font-bold text-xs hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95 cursor-pointer"
+                      >
+                        确认领取
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-3 pt-1 lg:pt-2">
-                    <button 
-                      onClick={cancelDevCard}
-                      className="flex-1 bg-stone-100 text-stone-500 py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-stone-200 transition-all"
-                    >
-                      取消
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (tradeGive) {
-                          resolveMonopoly(tradeGive);
-                          setTradeGive(null);
-                        }
-                      }}
-                      disabled={!tradeGive}
-                      className="flex-[1.5] bg-black text-white py-3 rounded-xl font-black uppercase tracking-widest text-[9px] hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95"
-                    >
-                      执行垄断
-                    </button>
-                  </div>
-                </div>
-              )}
+                )}
 
-              {gameState.phase === 'gold_selection' && (
-                <div className="space-y-4">
-                  <GoldSelectionPanel 
-                    bankResources={gameState.bankResources}
-                    amount={gameState.pendingGoldRewards[0].amount}
-                    onSelect={selectGoldResource}
-                  />
-                  <button 
-                    onClick={() => {
-                      // Logic to skip if possible or handle cancellation if allowed
-                      // (Usually gold rush is mandatory, but we can add a cancel if needed)
-                    }}
-                    className="w-full py-2 text-[9px] font-black uppercase tracking-widest text-stone-300 pointer-events-none"
-                  >
-                    结算中...
-                  </button>
-                </div>
-              )}
+                {gameState.phase === 'monopoly' && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-5 gap-1">
+                      {Object.values(ResourceType).map(res => (
+                        <button
+                          key={`mono-${res}`}
+                          onClick={() => setTradeGive(res)}
+                          className={`p-1.5 sm:p-2 rounded-xl border transition-all flex flex-col items-center gap-1 cursor-pointer ${tradeGive === res ? 'border-black bg-slate-50 scale-105 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}
+                        >
+                          <ResourceIcon type={res as ResourceType} className="w-5 h-5 sm:w-6 sm:h-6" />
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button 
+                        onClick={cancelDevCard}
+                        className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all cursor-pointer"
+                      >
+                        取消
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (tradeGive) {
+                            resolveMonopoly(tradeGive);
+                            setTradeGive(null);
+                          }
+                        }}
+                        disabled={!tradeGive}
+                        className="flex-[1.5] bg-black text-white py-2 rounded-xl font-bold text-xs hover:bg-zinc-800 transition-all disabled:opacity-20 active:scale-95 cursor-pointer"
+                      >
+                        执行垄断
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {gameState.phase === 'gold_selection' && (
+                  <div className="space-y-3">
+                    <GoldSelectionPanel 
+                      bankResources={gameState.bankResources}
+                      amount={gameState.pendingGoldRewards[0].amount}
+                      onSelect={selectGoldResource}
+                    />
+                  </div>
+                )}
+              </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      
+      {/* Player Trade Modal */}
+      <AnimatePresence>
+        {showPlayerTradeModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onClick={() => setShowPlayerTradeModal(false)}
+          >
+            <motion.div 
+              drag
+              dragListener={false}
+              dragControls={playerTradeDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+            >
+              <div 
+                onPointerDown={(e) => playerTradeDragControls.start(e)}
+                className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight">玩家交易</h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">与其他玩家交换资源</p>
+                </div>
+                <button 
+                  onClick={() => setShowPlayerTradeModal(false)}
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div className="p-2.5 sm:p-3 space-y-2 text-xs flex-1 min-h-0 overflow-y-auto no-scrollbar pr-0.5 pointer-events-auto">
+                <div>
+                  <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">你送出</h3>
+                  <div className="grid grid-cols-5 gap-1">
+                    {Object.values(ResourceType).map(r => (
+                      <div key={`offer-${r}`} className="p-0.5 sm:p-1 py-1 border border-slate-200/80 rounded-xl bg-slate-50/50 flex flex-col items-center justify-between gap-0.5">
+                        <ResourceIcon type={r as ResourceType} className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                        <div className="flex items-center gap-0.5 w-full justify-between px-0.5">
+                          <button 
+                            disabled={(playerTradeOffer[r] || 0) <= 0}
+                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
+                            className="w-3.5 h-3.5 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 disabled:opacity-30 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                          >-</button>
+                          <span className="font-bold text-[10px] sm:text-xs text-slate-800">{playerTradeOffer[r] || 0}</span>
+                          <button 
+                            disabled={(playerTradeOffer[r] || 0) >= (me.resources[r] || 0)}
+                            onClick={() => setPlayerTradeOffer(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
+                            className="w-3.5 h-3.5 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 disabled:opacity-30 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                          >+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">你希望得到</h3>
+                  <div className="grid grid-cols-5 gap-1">
+                    {Object.values(ResourceType).map(r => (
+                      <div key={`request-${r}`} className="p-0.5 sm:p-1 py-1 border border-slate-200/80 rounded-xl bg-slate-50/50 flex flex-col items-center justify-between gap-0.5">
+                        <ResourceIcon type={r as ResourceType} className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                        <div className="flex items-center gap-0.5 w-full justify-between px-0.5">
+                          <button 
+                            disabled={(playerTradeRequest[r] || 0) <= 0}
+                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) - 1}))}
+                            className="w-3.5 h-3.5 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 disabled:opacity-30 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                          >-</button>
+                          <span className="font-bold text-[10px] sm:text-xs text-slate-800">{playerTradeRequest[r] || 0}</span>
+                          <button 
+                            onClick={() => setPlayerTradeRequest(prev => ({...prev, [r]: (prev[r] || 0) + 1}))}
+                            className="w-3.5 h-3.5 rounded bg-white border border-slate-200 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 transition-colors text-[9px] pointer-events-auto cursor-pointer"
+                          >+</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">交易对象</h3>
+                  <div className="flex flex-wrap gap-1 font-sans">
+                    <button
+                      onClick={() => setPlayerTradeTarget(null)}
+                      className={`px-2 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-bold transition-all pointer-events-auto cursor-pointer ${playerTradeTarget === null ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                      所有人
+                    </button>
+                    {gameState?.players.filter(p => p.id !== me.id && !p.isBot).map(p => (
+                      <button
+                        key={`target-${p.id}`}
+                        onClick={() => setPlayerTradeTarget(p.id)}
+                        className={`px-2 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-bold transition-all pointer-events-auto cursor-pointer ${playerTradeTarget === p.id ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button 
+                  disabled={
+                    Object.values(playerTradeOffer).reduce((a,b) => a+b, 0) === 0 || 
+                    Object.values(playerTradeRequest).reduce((a,b) => a+b, 0) === 0
+                  }
+                  onClick={() => {
+                    proposeTrade(playerTradeOffer, playerTradeRequest, playerTradeTarget);
+                    setShowPlayerTradeModal(false);
+                  }}
+                  className="w-full bg-indigo-600 text-white px-4 py-1.5 sm:py-2 rounded-xl font-bold tracking-wide disabled:opacity-30 disabled:cursor-not-allowed transition-all hover:bg-indigo-700 text-[11px] sm:text-xs shadow-md active:scale-[0.98] mt-1 pointer-events-auto cursor-pointer"
+                >
+                  发起交易
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Dev Card Confirmation Modal Removed from here, moved to Map container */}
+
+      {/* Trade Modal */}
+      <AnimatePresence>
+        {showTradeModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onClick={() => setShowTradeModal(false)}
+          >
+            <motion.div 
+              drag
+              dragListener={false}
+              dragControls={bankTradeDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              className="bg-white border border-slate-200 w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto select-none cursor-default"
+            >
+              <div 
+                onPointerDown={(e) => bankTradeDragControls.start(e)}
+                className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight">银行兑换</h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">与银行进行 {tradeGive ? getTradeRatio(tradeGive) : '4/3/2'}:1 资源交换</p>
+                </div>
+                <button onClick={() => setShowTradeModal(false)} className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+                {/* Pay Section (Give) */}
+                <div>
+                  <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5 flex justify-between">
+                    <span>你送出</span>
+                    {tradeGive && <span className="text-indigo-600 normal-case font-bold text-[9px] sm:text-[10px]">兑换比率 {getTradeRatio(tradeGive)}:1</span>}
+                  </h3>
+                  <div className="grid grid-cols-5 gap-1">
+                    {Object.values(ResourceType).map(r => {
+                      const ratio = getTradeRatio(r);
+                      return (
+                        <button 
+                          key={`bank-give-${r}`} 
+                          onClick={() => {
+                            setTradeGive(r);
+                            if (tradeReceive === r) setTradeReceive(null);
+                          }}
+                          className={`p-1 sm:p-1.5 border rounded-xl flex flex-col items-center justify-center gap-1 pointer-events-auto cursor-pointer transition-all ${tradeGive === r ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'border-slate-200/80 bg-slate-50/50 hover:bg-slate-100/80 text-slate-700'}`}
+                        >
+                          <ResourceIcon type={r as ResourceType} className="w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0" />
+                          <span className={`text-[8px] sm:text-[9px] font-mono font-bold px-1 py-0.5 rounded ${tradeGive === r ? 'bg-indigo-700/50 text-indigo-200' : 'bg-slate-200/60 text-slate-500'}`}>
+                            {ratio}:1
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Get Section (Receive) */}
+                <div>
+                  <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">
+                    你希望得到
+                  </h3>
+                  <div className="grid grid-cols-5 gap-1">
+                    {Object.values(ResourceType).map(r => {
+                      const isDisabled = tradeGive === r;
+                      return (
+                        <button 
+                          key={`bank-receive-${r}`} 
+                          disabled={isDisabled}
+                          onClick={() => setTradeReceive(r)}
+                          className={`p-1 sm:p-1.5 border rounded-xl flex flex-col items-center justify-center gap-1 pointer-events-auto cursor-pointer transition-all ${tradeReceive === r ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'border-slate-200/80 bg-slate-50/50 hover:bg-slate-100/80 text-slate-700 disabled:opacity-30'}`}
+                        >
+                          <ResourceIcon type={r as ResourceType} className="w-4 h-4 sm:w-4.5 sm:h-4.5 shrink-0" />
+                          <span className={`text-[8px] sm:text-[9px] font-mono font-bold px-1 py-0.5 rounded ${tradeReceive === r ? 'bg-indigo-700/50 text-indigo-200' : 'bg-slate-200/60 text-slate-500'}`}>
+                            1
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="p-2.5 sm:p-3 bg-slate-50/80 flex flex-col gap-2 shrink-0 border-t border-slate-100 pointer-events-auto">
+                <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                  <span className="font-bold text-slate-500 text-[11px] sm:text-xs">交换数量:</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 shadow-sm">
+                      <button 
+                        onClick={() => setTradeQuantity(Math.max(1, tradeQuantity - 1))}
+                        className="w-4.5 h-4.5 sm:w-5 sm:h-5 rounded hover:bg-slate-100 flex items-center justify-center transition-colors text-xs font-bold text-slate-700 pointer-events-auto cursor-pointer"
+                      >
+                        -
+                      </button>
+                      <span className="w-6 text-center font-mono font-bold text-xs text-slate-800">{tradeQuantity}</span>
+                      <button 
+                        onClick={() => setTradeQuantity(Math.min(maxTradeQuantity, tradeQuantity + 1))}
+                        className="w-4.5 h-4.5 sm:w-5 sm:h-5 rounded hover:bg-slate-100 flex items-center justify-center transition-colors text-xs font-bold text-slate-700 pointer-events-auto cursor-pointer"
+                        disabled={tradeQuantity >= maxTradeQuantity}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <span className="text-[9px] sm:text-[10px] text-slate-400">限额 {maxTradeQuantity}</span>
+                  </div>
+                </div>
+                <button 
+                  disabled={!tradeGive || !tradeReceive || tradeGive === tradeReceive || maxTradeQuantity < 1}
+                  onClick={handleTrade}
+                  className="w-full bg-indigo-600 text-white py-1.5 sm:py-2 rounded-xl font-bold tracking-wide disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-md active:scale-[0.98] text-[11px] sm:text-xs hover:bg-indigo-700 pointer-events-auto cursor-pointer"
+                >
+                  确认兑换 ({tradeQuantity * currentTradeRatio} 换 {tradeQuantity})
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Stealing Modal */}
+      <AnimatePresence mode="wait">
+        {gameState.phase === 'stealing' && (
+          <motion.div 
+            key="stealing-modal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"
+          >
+            <motion.div 
+              drag
+              dragListener={false}
+              dragControls={stealDragControls}
+              dragConstraints={gameContainerRef}
+              dragElastic={0}
+              dragMomentum={false}
+              onClick={(e) => e.stopPropagation()}
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+            >
+              {/* Header */}
+              <div 
+                onPointerDown={(e) => stealDragControls.start(e)}
+                className="p-2.5 sm:p-3 px-3.5 sm:px-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+              >
+                <div>
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                    选择一位玩家偷取卡牌
+                  </h2>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                    从相邻建筑的玩家手中抽取随机资源
+                  </p>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="p-3 sm:p-4 flex-1 pointer-events-auto space-y-2">
+                <div className="grid grid-cols-1 gap-2 w-full pointer-events-auto">
+                {gameState.pendingStealFrom.map(pid => (
+                  <button
+                    key={pid}
+                    onClick={() => {
+                      if (isMyHumanTurn && gameState.selectedStealTarget == null) {
+                        doSteal(pid);
+                      }
+                    }}
+                    disabled={!isMyHumanTurn || gameState.selectedStealTarget != null}
+                    className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all relative overflow-hidden group pointer-events-auto cursor-pointer ${
+                      gameState.selectedStealTarget === pid
+                        ? "bg-black text-white border-black scale-[1.01] shadow-md"
+                        : gameState.selectedStealTarget != null
+                          ? "opacity-20 border-slate-200"
+                          : isMyHumanTurn 
+                            ? "bg-slate-50/50 border-slate-200 hover:border-slate-300 hover:bg-slate-100/50 active:scale-98" 
+                            : "opacity-40 bg-slate-50 border-slate-200 cursor-not-allowed"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 relative z-10 text-left">
+                      <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: gameState.players[pid].color }} />
+                      <span className={`font-bold tracking-tight text-xs truncate max-w-[130px] ${gameState.selectedStealTarget === pid ? 'text-white' : 'text-slate-800'}`}>{gameState.players[pid].name}</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-2 relative z-10">
+                      <span className={`text-[10px] font-medium ${gameState.selectedStealTarget === pid ? 'text-slate-200' : 'text-slate-500'}`}>卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
+                      {isMyHumanTurn && gameState.selectedStealTarget === null && (
+                        <ChevronRight size={12} className="text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                      )}
+                      {gameState.selectedStealTarget === pid && (
+                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                          <Check size={10} className="text-white" />
+                        </div>
+                      )}
+                    </div>
+
+                    {gameState.selectedStealTarget === pid && (
+                      <motion.div 
+                        layoutId="active-target-bg"
+                        className="absolute inset-0 bg-black z-0"
+                      />
+                    )}
+                  </button>
+                ))}
+              </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 </main>
 
         {/* Right Panel */}
@@ -6157,7 +6383,7 @@ export default function App() {
                 className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
               >
                 <Repeat size={isMobile ? 12 : 14} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
-                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>系统交易</span>
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>银行兑换</span>
               </button>
               <button 
                 id="trade-player-button"
@@ -6193,6 +6419,7 @@ export default function App() {
         isOpen={showSoundModal} 
         onClose={() => setShowSoundModal(false)} 
         isAdmin={currentUser?.role === 'admin'}
+        gameContainerRef={gameContainerRef}
       />
       
       {/* Game Over Modal */}
@@ -6818,31 +7045,31 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
   };
 
   return (
-    <div className="flex flex-col gap-1 lg:gap-2 bg-red-50 p-2 lg:p-4 rounded-[1.2rem] lg:rounded-[1.5rem] border border-red-100 shadow-inner">
-      <div className="space-y-1 lg:space-y-1.5">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      <div className="flex-1 overflow-y-auto space-y-2 p-1.5 no-scrollbar min-h-0">
         {Object.values(ResourceType).map(res => {
           const count = player.resources[res];
           if (count === 0) return null;
           return (
-            <div key={res} className="flex items-center justify-between p-1.5 lg:p-2.5 bg-white rounded-lg lg:rounded-xl shadow-sm border border-black/[0.03]">
-              <div className="flex items-center gap-1.5 lg:gap-2">
-                <ResourceIcon type={res as ResourceType} className="w-4 h-4 lg:w-5 lg:h-5" />
-                <span className="font-bold text-[10px] lg:text-xs text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
-                <span className="text-[9px] lg:text-[10px] text-slate-400 font-medium">({count})</span>
+            <div key={res} className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl shadow-sm border border-black/[0.04] shrink-0">
+              <div className="flex items-center gap-2.5">
+                <ResourceIcon type={res as ResourceType} className="w-5 h-5 sm:w-6 sm:h-6" />
+                <span className="font-bold text-xs sm:text-sm text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
+                <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">({count})</span>
               </div>
-              <div className="flex items-center gap-2 lg:gap-3">
+              <div className="flex items-center gap-2.5">
                 <button 
                   onClick={() => handleDecrement(res)}
                   disabled={selected[res] === 0}
-                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-[10px] lg:text-xs font-black"
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-xs sm:text-sm font-black shrink-0"
                 >
                   -
                 </button>
-                <span className="font-mono font-black w-3 lg:w-4 text-center text-[10px] lg:text-sm text-slate-800">{selected[res]}</span>
+                <span className="font-mono font-black w-5 text-center text-xs sm:text-sm text-slate-800 shrink-0">{selected[res]}</span>
                 <button 
                   onClick={() => handleIncrement(res)}
                   disabled={totalSelected >= amount || selected[res] >= count}
-                  className="w-5 h-5 lg:w-7 lg:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-[10px] lg:text-xs font-black shadow-md shadow-black/10"
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-xs sm:text-sm font-black shadow-sm shrink-0"
                 >
                   +
                 </button>
@@ -6852,13 +7079,15 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
         })}
       </div>
 
-      <button 
-        onClick={() => onDiscard(selected)}
-        disabled={remaining !== 0}
-        className="w-full mt-1 lg:mt-2 py-3 lg:py-4 bg-red-400 text-white rounded-xl lg:rounded-2xl text-[11px] lg:text-[13px] font-black uppercase tracking-widest shadow-lg shadow-red-200 hover:bg-red-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-1.5 lg:gap-2"
-      >
-        确认弃牌
-      </button>
+      <div className="shrink-0 p-1.5 pt-3 mt-auto bg-white/80 backdrop-blur-sm border-t border-slate-50 z-10">
+        <button 
+          onClick={() => onDiscard(selected)}
+          disabled={remaining !== 0}
+          className="w-full py-3 sm:py-3.5 bg-slate-900 text-white rounded-xl text-xs sm:text-sm font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+        >
+          确认弃牌
+        </button>
+      </div>
     </div>
   );
 }

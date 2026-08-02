@@ -171,6 +171,42 @@ export function updateLongestRoad(players: Player[], roads: Road[], ships: Ship[
   return { players: updatedPlayers, longestRoadPlayerId: newLongestRoadPlayerId };
 }
 
+// ... Helper function to finalize knight play and check largest army ...
+function finalizeKnightPlay(prev: GameState, updatedPlayers: Player[], checkWinner: (players: Player[]) => number | null) {
+  if (prev.playingDevCard !== DevCardType.Knight) {
+    return { largestArmyPlayerId: prev.largestArmyPlayerId, winnerId: prev.winnerId };
+  }
+
+  const currentPlayer = { ...updatedPlayers[prev.currentPlayerIndex], knightsPlayed: updatedPlayers[prev.currentPlayerIndex].knightsPlayed + 1 };
+  updatedPlayers[prev.currentPlayerIndex] = currentPlayer;
+
+  let newLargestArmyPlayerId = prev.largestArmyPlayerId;
+  if (currentPlayer.knightsPlayed >= 3) {
+    if (prev.largestArmyPlayerId === null) {
+      newLargestArmyPlayerId = currentPlayer.id;
+    } else if (prev.largestArmyPlayerId !== currentPlayer.id) {
+      const currentLargestArmyPlayer = prev.players[prev.largestArmyPlayerId];
+      if (currentPlayer.knightsPlayed > currentLargestArmyPlayer.knightsPlayed) {
+        newLargestArmyPlayerId = currentPlayer.id;
+      }
+    }
+
+    if (newLargestArmyPlayerId !== prev.largestArmyPlayerId) {
+      if (prev.largestArmyPlayerId !== null) {
+        const oldPlayer = updatedPlayers.find(p => p.id === prev.largestArmyPlayerId);
+        if (oldPlayer) oldPlayer.victoryPoints -= 2;
+      }
+      if (newLargestArmyPlayerId !== null) {
+        const newPlayer = updatedPlayers.find(p => p.id === newLargestArmyPlayerId);
+        if (newPlayer) newPlayer.victoryPoints += 2;
+      }
+    }
+  }
+
+  const winnerId = checkWinner(updatedPlayers);
+  return { largestArmyPlayerId: newLargestArmyPlayerId, winnerId };
+}
+
 export function useCatanGame() {
   const [gameState, setGameState] = useState<GameState | null>(null);
 
@@ -639,6 +675,35 @@ export function useCatanGame() {
         }
     });
 
+    // Clear all existing islandIds to prevent Desert hexes from leaking old IDs
+    hexes.forEach(h => h.islandId = undefined);
+    // Recalculate islandId to ensure contiguous islands share exactly one ID
+    let currentIslandId = 1;
+    const isValidIslandHex = (h) => h.isIsland && h._category !== 'Desert' && h.type !== 'desert';
+    const unvisitedIslands = new Set(hexes.filter(isValidIslandHex).map(h => h.id));
+    
+    while (unvisitedIslands.size > 0) {
+        const startId = Array.from(unvisitedIslands)[0];
+        const queue = [startId];
+        unvisitedIslands.delete(startId);
+        
+        while (queue.length > 0) {
+            const currId = queue.shift();
+            const curr = hexes.find(h => h.id === currId);
+            if (curr) {
+                curr.islandId = currentIslandId;
+                const neighbors = hexes.filter(n => isValidIslandHex(n) && Math.max(Math.abs(n.q - curr.q), Math.abs(n.r - curr.r), Math.abs((n.q + n.r) - (curr.q + curr.r))) === 1);
+                for (const n of neighbors) {
+                    if (unvisitedIslands.has(n.id)) {
+                        unvisitedIslands.delete(n.id);
+                        queue.push(n.id);
+                    }
+                }
+            }
+        }
+        currentIslandId++;
+    }
+
     return hexes;
   }, []);
 
@@ -1042,6 +1107,7 @@ export function useCatanGame() {
       longestRoadLength: 0,
       vpCardsCount: 0,
       islandBonusPoints: 0,
+      discoveredIslandIds: [],
     };
     });
 
@@ -1286,7 +1352,7 @@ export function useCatanGame() {
 
   const rollDice = useCallback(() => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
 
       if (prev.phase === 'initial_dice_roll') {
         if (prev.hasRolled) return prev;
@@ -1369,7 +1435,11 @@ export function useCatanGame() {
         
         if (pendingGold.length > 0) {
           next.phase = 'gold_selection';
-          next.pendingGoldRewards = pendingGold;
+          next.pendingGoldRewards = Object.values(pendingGold.reduce((acc, curr) => {
+            if (!acc[curr.playerId]) acc[curr.playerId] = { playerId: curr.playerId, amount: 0 };
+            acc[curr.playerId].amount += curr.amount;
+            return acc;
+          }, {} as Record<number, { playerId: number, amount: number }>));
         }
       }
       return next;
@@ -1470,7 +1540,7 @@ export function useCatanGame() {
  
   const buildRoad = useCallback((edgeId: string) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       
       const hexes = getHexesForEdge(prev.board, edgeId);
@@ -1613,7 +1683,7 @@ export function useCatanGame() {
 
   const buildShip = useCallback((edgeId: string) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       
       const isSetup = prev.phase === 'setup';
@@ -1730,7 +1800,7 @@ export function useCatanGame() {
 
   const buildSettlement = useCallback((vertexId: string, hexIds: string[]) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       
       const isSetup = prev.phase === 'setup';
@@ -1788,29 +1858,23 @@ export function useCatanGame() {
       if (allBarren) return prev;
 
       // Check for island settlement bonus
-      // Desert hexes don't count as islands themselves for the bonus, 
-      // but if a vertex touches a real Island hex (even if it also touches Desert), it counts.
       const isIslandSettlement = adjacentHexes.some(h => h!.isIsland && h!.type !== HexType.Desert);
+      
+      const currentDiscovered = player.discoveredIslandIds || [];
+      const newIslandIdsTouching = adjacentHexes
+        .filter(h => h!.isIsland && h!.islandId !== undefined)
+        .map(h => h!.islandId as number);
+      
+      const newlyDiscoveredIds: number[] = [];
+      newIslandIdsTouching.forEach(id => {
+        if (!currentDiscovered.includes(id) && !newlyDiscoveredIds.includes(id)) {
+          newlyDiscoveredIds.push(id);
+        }
+      });
+
       let bonusPoints = 0;
-      if (isIslandSettlement && !isSetup) {
-        const playerIslandIds = new Set(prev.settlements
-          .filter(s => s.playerId === player.id)
-          .flatMap(s => s.hexIds)
-          .map(id => prev.board.find(h => h.id === id))
-          .filter(h => h && h.isIsland)
-          .map(h => h!.islandId)
-        );
-        const newIslandIds = new Set(adjacentHexes.filter(h => h!.isIsland).map(h => h!.islandId));
-        let hasNewIsland = false;
-        for (const id of newIslandIds) {
-          if (!playerIslandIds.has(id)) {
-            hasNewIsland = true;
-            break;
-          }
-        }
-        if (hasNewIsland) {
-          bonusPoints = 2; // Island bonus
-        }
+      if (!isSetup && newlyDiscoveredIds.length > 0) {
+        bonusPoints = newlyDiscoveredIds.length * 2; // 2 points per newly discovered island
       }
 
       const updatedPlayers = [...prev.players];
@@ -1819,7 +1883,8 @@ export function useCatanGame() {
         settlements: player.settlements + 1,
         resources: { ...player.resources },
         victoryPoints: player.victoryPoints + bonusPoints,
-        islandBonusPoints: player.islandBonusPoints + bonusPoints
+        islandBonusPoints: player.islandBonusPoints + bonusPoints,
+        discoveredIslandIds: [...currentDiscovered, ...newlyDiscoveredIds]
       };
       const updatedBank = { ...prev.bankResources };
 
@@ -1883,7 +1948,7 @@ export function useCatanGame() {
 
   const upgradeToCity = useCallback((vertexId: string) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       const cost = COSTS.city;
 
@@ -1993,7 +2058,7 @@ export function useCatanGame() {
 
   const playDevCard = useCallback((cardType: DevCardType) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       const cardIdx = player.devCards.indexOf(cardType);
       if (cardIdx === -1) return prev;
@@ -2025,7 +2090,6 @@ export function useCatanGame() {
         updatedPlayer.victoryPoints += 1;
       } else if (cardType === DevCardType.Knight) {
         nextPhase = 'robber';
-        updatedPlayer.knightsPlayed += 1;
       } else if (cardType === DevCardType.YearOfPlenty) {
         nextPhase = 'year_of_plenty';
       } else if (cardType === DevCardType.Monopoly) {
@@ -2037,35 +2101,6 @@ export function useCatanGame() {
       
       updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
       
-      // Check Largest Army
-      let newLargestArmyPlayerId = prev.largestArmyPlayerId;
-      if (updatedPlayer.knightsPlayed >= 3) {
-        if (prev.largestArmyPlayerId === null) {
-          newLargestArmyPlayerId = updatedPlayer.id;
-        } else if (prev.largestArmyPlayerId !== updatedPlayer.id) {
-          const currentLargestArmyPlayer = prev.players[prev.largestArmyPlayerId];
-          if (updatedPlayer.knightsPlayed > currentLargestArmyPlayer.knightsPlayed) {
-            newLargestArmyPlayerId = updatedPlayer.id;
-          }
-        }
-
-        // Adjust victory points for Largest Army
-        if (newLargestArmyPlayerId !== prev.largestArmyPlayerId) {
-          if (prev.largestArmyPlayerId !== null) {
-            const oldPlayer = updatedPlayers.find(p => p.id === prev.largestArmyPlayerId);
-            if (oldPlayer) {
-              oldPlayer.victoryPoints -= 2;
-            }
-          }
-          if (newLargestArmyPlayerId !== null) {
-            const newPlayer = updatedPlayers.find(p => p.id === newLargestArmyPlayerId);
-            if (newPlayer) {
-              newPlayer.victoryPoints += 2;
-            }
-          }
-        }
-      }
-
       const winnerId = checkWinner(updatedPlayers);
       
       return { 
@@ -2076,7 +2111,6 @@ export function useCatanGame() {
         freeRoads,
         hasPlayedDevCardThisTurn: cardType !== DevCardType.VictoryPoint,
         playingDevCard: cardType !== DevCardType.VictoryPoint ? cardType : null,
-        largestArmyPlayerId: newLargestArmyPlayerId,
         activeBuildMode: nextPhase === 'road_building' ? 'road' : null,
         lastDevCardEvent: newEvent,
       };
@@ -2109,46 +2143,6 @@ export function useCatanGame() {
         currentPlayer.playedDevCards = currentPlayer.playedDevCards.filter((_, i) => i !== playedIdx);
       }
 
-      let newLargestArmyPlayerId = prev.largestArmyPlayerId;
-      if (cardType === DevCardType.Knight) {
-        currentPlayer.knightsPlayed = Math.max(0, currentPlayer.knightsPlayed - 1);
-        
-        // Re-evaluate largest army if this player was the holder
-        if (prev.largestArmyPlayerId === currentPlayer.id) {
-          if (currentPlayer.knightsPlayed < 3) {
-            // Find new holder or null
-            const eligiblePlayers = updatedPlayers.filter(p => p.knightsPlayed >= 3);
-            if (eligiblePlayers.length === 0) {
-              newLargestArmyPlayerId = null;
-            } else {
-              const maxKnights = Math.max(...eligiblePlayers.map(p => p.knightsPlayed));
-              const maxPlayers = eligiblePlayers.filter(p => p.knightsPlayed === maxKnights);
-              if (maxPlayers.length === 1) {
-                newLargestArmyPlayerId = maxPlayers[0].id;
-              } else {
-                newLargestArmyPlayerId = null;
-              }
-            }
-          }
-        }
-
-        // Adjust victory points for Largest Army
-        if (newLargestArmyPlayerId !== prev.largestArmyPlayerId) {
-          if (prev.largestArmyPlayerId !== null) {
-            const oldPlayer = updatedPlayers.find(p => p.id === prev.largestArmyPlayerId);
-            if (oldPlayer) {
-              oldPlayer.victoryPoints -= 2;
-            }
-          }
-          if (newLargestArmyPlayerId !== null) {
-            const newPlayer = updatedPlayers.find(p => p.id === newLargestArmyPlayerId);
-            if (newPlayer) {
-              newPlayer.victoryPoints += 2;
-            }
-          }
-        }
-      }
-
       updatedPlayers[prev.currentPlayerIndex] = currentPlayer;
 
       return {
@@ -2158,7 +2152,6 @@ export function useCatanGame() {
         hasPlayedDevCardThisTurn: false,
         playingDevCard: null,
         freeRoads: 0,
-        largestArmyPlayerId: newLargestArmyPlayerId,
         activeBuildMode: null,
       };
     });
@@ -2188,10 +2181,16 @@ export function useCatanGame() {
         };
       }
 
+      const updatedPlayers = [...prev.players];
+      const { largestArmyPlayerId, winnerId } = finalizeKnightPlay(prev, updatedPlayers, checkWinner);
+      
       return {
         ...prev,
+        players: updatedPlayers,
         robberHexId: hexId,
-        phase: 'main',
+        phase: winnerId !== null ? 'finished' : 'main',
+        winnerId,
+        largestArmyPlayerId,
         playingDevCard: null
       };
     });
@@ -2235,10 +2234,16 @@ export function useCatanGame() {
         };
       }
 
+      const updatedPlayers = [...prev.players];
+      const { largestArmyPlayerId, winnerId } = finalizeKnightPlay(prev, updatedPlayers, checkWinner);
+
       return {
         ...prev,
+        players: updatedPlayers,
         pirateHexId: hexId,
-        phase: 'main',
+        phase: winnerId !== null ? 'finished' : 'main',
+        winnerId,
+        largestArmyPlayerId,
         playingDevCard: null
       };
     });
@@ -2336,7 +2341,20 @@ export function useCatanGame() {
         .filter(([_, count]) => count > 0)
         .flatMap(([res, count]) => Array(count).fill(res as ResourceType));
       
-      if (availableResources.length === 0) return { ...prev, phase: 'main', selectedStealTarget: null, pendingStealFrom: [], playingDevCard: null };
+      if (availableResources.length === 0) {
+        const updatedPlayers = [...prev.players];
+        const { largestArmyPlayerId, winnerId } = finalizeKnightPlay(prev, updatedPlayers, checkWinner);
+        return { 
+          ...prev, 
+          players: updatedPlayers,
+          phase: winnerId !== null ? 'finished' : 'main', 
+          winnerId,
+          largestArmyPlayerId,
+          selectedStealTarget: null, 
+          pendingStealFrom: [], 
+          playingDevCard: null 
+        };
+      }
 
       const stolenRes = availableResources[Math.floor(Math.random() * availableResources.length)];
       
@@ -2350,10 +2368,14 @@ export function useCatanGame() {
         resources: { ...currentPlayer.resources, [stolenRes]: currentPlayer.resources[stolenRes] + 1 }
       };
 
+      const { largestArmyPlayerId, winnerId } = finalizeKnightPlay(prev, updatedPlayers, checkWinner);
+
       return {
         ...prev,
         players: updatedPlayers,
-        phase: 'main',
+        phase: winnerId !== null ? 'finished' : 'main',
+        winnerId,
+        largestArmyPlayerId,
         pendingStealFrom: [],
         selectedStealTarget: null,
         playingDevCard: null
@@ -2407,7 +2429,7 @@ export function useCatanGame() {
 
   const tradeWithBank = useCallback((give: ResourceType, receive: ResourceType) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const player = prev.players[prev.currentPlayerIndex];
       
       const playerPorts = prev.ports.filter(p => {
@@ -2444,7 +2466,7 @@ export function useCatanGame() {
 
   const addResources = useCallback((playerId: number, amount: number) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const updatedPlayers = [...prev.players];
       const p = { ...updatedPlayers[playerId], resources: { ...updatedPlayers[playerId].resources } };
       Object.values(ResourceType).forEach(r => {
@@ -2459,7 +2481,7 @@ export function useCatanGame() {
 
   const setPlayerResource = useCallback((playerId: number, resource: ResourceType, amount: number) => {
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const updatedPlayers = [...prev.players];
       const p = { ...updatedPlayers[playerId] };
       
@@ -2479,7 +2501,7 @@ export function useCatanGame() {
   const setDice = useCallback((d1: number, d2: number) => {
     const total = d1 + d2;
     setGameState(prev => {
-      if (!prev) return null;
+      if (!prev) return null; if (prev.phase === 'finished') return prev;
       const next = { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
       
       if (total === 7) {
@@ -2542,7 +2564,11 @@ export function useCatanGame() {
         
         if (pendingGold.length > 0) {
           next.phase = 'gold_selection';
-          next.pendingGoldRewards = pendingGold;
+          next.pendingGoldRewards = Object.values(pendingGold.reduce((acc, curr) => {
+            if (!acc[curr.playerId]) acc[curr.playerId] = { playerId: curr.playerId, amount: 0 };
+            acc[curr.playerId].amount += curr.amount;
+            return acc;
+          }, {} as Record<number, { playerId: number, amount: number }>));
         }
       }
       return next;
@@ -2551,7 +2577,7 @@ export function useCatanGame() {
 
   const toggleBot = useCallback((playerId: number) => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       const newPlayers = [...prev.players];
       newPlayers[playerId] = { ...newPlayers[playerId], isBot: !newPlayers[playerId].isBot };
       return { ...prev, players: newPlayers };
@@ -2561,7 +2587,7 @@ export function useCatanGame() {
   useEffect(() => {
     if (gameState?.phase === 'rolling_7') {
       setGameState(prev => {
-        if (!prev) return prev;
+        if (!prev || prev.phase === 'finished') return prev;
         return {
           ...prev,
           phase: prev.pendingDiscards.length > 0 ? 'discard' : 'robber'
@@ -2576,7 +2602,7 @@ export function useCatanGame() {
 
   const proposeTrade = useCallback((offer: Record<ResourceType, number>, request: Record<ResourceType, number>, targetPlayerId: number | null) => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       const newOffer: TradeOffer = {
         id: Math.random().toString(36).substring(2, 9),
         initiatorId: prev.currentPlayerIndex,
@@ -2593,7 +2619,7 @@ export function useCatanGame() {
 
   const reactToTrade = useCallback((tradeId: string, playerId: number, reaction: 'accept' | 'reject') => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       const offers = (prev.tradeOffers || []).map(offer => {
         if (offer.id === tradeId) {
           // Prevent duplicate reactions
@@ -2618,7 +2644,7 @@ export function useCatanGame() {
 
   const cancelTrade = useCallback((tradeId: string) => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       const offers = (prev.tradeOffers || []).map(offer => 
         offer.id === tradeId ? { ...offer, status: 'canceled' as const } : offer
       );
@@ -2628,7 +2654,7 @@ export function useCatanGame() {
 
   const finalizeTrade = useCallback((tradeId: string, partnerId: number) => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       const offer = (prev.tradeOffers || []).find(o => o.id === tradeId);
       if (!offer) return prev;
 
@@ -2678,7 +2704,7 @@ export function useCatanGame() {
 
   const setBuildModeSync = useCallback((mode: GameState['activeBuildMode']) => {
     setGameState(prev => {
-      if (!prev) return prev;
+      if (!prev || prev.phase === 'finished') return prev;
       return { ...prev, activeBuildMode: mode };
     });
   }, []);

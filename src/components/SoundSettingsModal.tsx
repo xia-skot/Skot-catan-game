@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion, useDragControls } from 'motion/react';
 import { X, Volume2, VolumeX, Music, BellRing, Sliders, Play, RotateCcw, Shield } from 'lucide-react';
 import { audioService, SoundEqualizer, DEFAULT_EQUALIZER, SoundType } from '../audioService';
 import { socketService } from '../socketService';
@@ -9,6 +9,7 @@ interface SoundSettingsModalProps {
   onClose: () => void;
   isAdmin?: boolean;
   inline?: boolean;
+  gameContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = [
@@ -20,11 +21,13 @@ const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = 
   { key: 'bgm', label: '背景音乐', icon: '🎵' },
 ];
 
-export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = false }: SoundSettingsModalProps) {
+export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = false, gameContainerRef }: SoundSettingsModalProps) {
   const [enabled, setEnabled] = useState(audioService.enabled);
   const [bgmVol, setBgmVol] = useState(Math.round(audioService.bgmVolume * 100));
   const [sfxVol, setSfxVol] = useState(Math.round(audioService.sfxVolume * 100));
   const [equalizer, setEqualizer] = useState<SoundEqualizer>(audioService.sfxEqualizer);
+
+  const dragControls = useDragControls();
 
   useEffect(() => {
     if (isOpen) {
@@ -77,7 +80,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({ soundSettings: newEq })
-      }).catch(console.error);
+      }).catch(() => {});
     }
   };
 
@@ -96,193 +99,196 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({ soundSettings: defaultEq })
-      }).catch(console.error);
+      }).catch(() => {});
     }
   };
 
-  const content = (
-    <>
-      {!inline && (
-        <button 
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-stone-400 hover:bg-stone-100 rounded-full transition-colors z-20"
+  const mainContent = (
+    <div className="space-y-4">
+      {/* Main Switch */}
+      <div className="flex items-center justify-between p-3 bg-slate-50/50 border border-slate-100 rounded-xl">
+        <div className="flex items-center gap-2.5">
+          <div className={`p-2 rounded-lg transition-colors ${enabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
+            {enabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </div>
+          <div>
+            <h3 className="text-xs sm:text-sm font-bold text-slate-800">全部声音</h3>
+            <p className="text-[10px] text-slate-400">开启或关闭游戏内所有音效</p>
+          </div>
+        </div>
+        <button
+          onClick={handleToggle}
+          className={`w-10 h-6 rounded-full p-1 transition-colors duration-300 relative cursor-pointer ${
+            enabled ? 'bg-indigo-600' : 'bg-slate-200'
+          }`}
         >
-          <X size={20} />
+          <div
+            className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 absolute top-1 ${
+              enabled ? 'left-5' : 'left-1'
+            }`}
+          />
         </button>
-      )}
+      </div>
 
-      {!inline && (
-        <h2 className="text-xl font-black text-stone-800 mb-6 flex items-center gap-2">
-          <BellRing size={20} className="text-indigo-600" /> 声音设置
-          {isAdmin && (
-            <span className="ml-auto text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-200">
-              <Shield size={12} /> 管理员权限
-            </span>
-          )}
-        </h2>
-      )}
+      {/* BGM Slider */}
+      <div className={`space-y-1.5 transition-all duration-300 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+            <Music size={13} className="text-indigo-500" /> 背景音乐 (BGM)
+          </span>
+          <span className="text-[11px] font-mono font-bold text-slate-400">{bgmVol}%</span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={bgmVol}
+          onChange={handleBgmChange}
+          disabled={!enabled}
+          className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+        />
+      </div>
 
-      {inline && (
-        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-           <BellRing size={16} /> 声音设置
-           {isAdmin && (
-              <span className="ml-auto text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1 border border-amber-200">
-                <Shield size={12} /> 管理员权限
-              </span>
-           )}
-        </h3>
-      )}
+      {/* SFX Slider */}
+      <div className={`space-y-1.5 transition-all duration-300 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
+            <Volume2 size={13} className="text-indigo-500" /> 主音效音量 (SFX)
+          </span>
+          <span className="text-[11px] font-mono font-bold text-slate-400">{sfxVol}%</span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={sfxVol}
+          onChange={handleSfxChange}
+          onMouseUp={handleSfxMouseUp}
+          onTouchEnd={handleSfxMouseUp}
+          disabled={!enabled}
+          className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+        />
+      </div>
 
-      <div className="space-y-6">
-          {/* Main Switch */}
-          <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-100">
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${enabled ? 'bg-indigo-50 text-indigo-600' : 'bg-stone-200 text-stone-400'}`}>
-                {enabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-stone-800">全部声音</h3>
-                <p className="text-[10px] text-stone-400">开启或关闭游戏内所有音效</p>
-              </div>
+      {/* ADMIN EQUALIZER SECTION */}
+      {isAdmin && (
+        <div className="pt-3.5 border-t border-slate-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Sliders size={13} className="text-amber-500 animate-pulse" /> 音效均衡器
+              </h3>
+              <p className="text-[9px] text-slate-400 mt-0.5">管理员可调节单项音效比例，实时对所有玩家生效</p>
             </div>
             <button
-              onClick={handleToggle}
-              className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ${
-                enabled ? 'bg-indigo-600' : 'bg-stone-300'
-              }`}
+              onClick={handleResetEq}
+              className="text-[10px] font-bold text-amber-600 hover:text-amber-700 hover:bg-amber-50 border border-amber-200/40 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+              title="重置所有音效为 100%"
             >
-              <div
-                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${
-                  enabled ? 'translate-x-6' : 'translate-x-0'
-                }`}
-              />
+              <RotateCcw size={10} /> 重置
             </button>
           </div>
 
-          {/* BGM Slider */}
-          <div className={`space-y-2 transition-opacity duration-300 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-stone-600 flex items-center gap-1.5">
-                <Music size={14} className="text-indigo-500" /> 背景音乐 (BGM)
-              </span>
-              <span className="text-xs font-mono font-bold text-stone-400">{bgmVol}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={bgmVol}
-              onChange={handleBgmChange}
-              disabled={!enabled}
-              className="w-full h-2 bg-stone-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-            />
-          </div>
-
-          {/* SFX Slider */}
-          <div className={`space-y-2 transition-opacity duration-300 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-stone-600 flex items-center gap-1.5">
-                <Volume2 size={14} className="text-indigo-500" /> 主音效音量 (SFX)
-              </span>
-              <span className="text-xs font-mono font-bold text-stone-400">{sfxVol}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={sfxVol}
-              onChange={handleSfxChange}
-              onMouseUp={handleSfxMouseUp}
-              onTouchEnd={handleSfxMouseUp}
-              disabled={!enabled}
-              className="w-full h-2 bg-stone-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-            />
-          </div>
-
-          {/* ADMIN EQUALIZER SECTION */}
-          {isAdmin && (
-            <div className="pt-4 border-t border-stone-100 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs font-black text-stone-800 flex items-center gap-1.5">
-                    <Sliders size={14} className="text-amber-500" /> 音效均衡器 (所有玩家音效比例)
-                  </h3>
-                  <p className="text-[10px] text-stone-400 mt-0.5">管理员可调节单项音效比例，实时对所有玩家生效</p>
-                </div>
-                <button
-                  onClick={handleResetEq}
-                  className="text-[11px] font-bold text-amber-600 hover:text-amber-700 hover:bg-amber-50 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"
-                  title="重置所有音效为 100%"
-                >
-                  <RotateCcw size={12} /> 重置
-                </button>
-              </div>
-
-              <div className="space-y-3 bg-stone-50 p-4 rounded-2xl border border-stone-100">
-                {SFX_ITEMS.map((item) => {
-                  const val = equalizer[item.key] ?? 100;
-                  return (
-                    <div key={item.key} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-stone-700 flex items-center gap-1">
-                          <span>{item.icon}</span> {item.label}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-black text-indigo-600 text-[11px]">{val}%</span>
-                          <button
-                            onClick={() => audioService.play(item.key as SoundType)}
-                            className="p-1 hover:bg-stone-200 rounded text-stone-500 transition-colors"
-                            title="试听音效"
-                          >
-                            <Play size={12} className="fill-stone-500" />
-                          </button>
-                        </div>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="200"
-                        step="5"
-                        value={val}
-                        onChange={(e) => handleEqChange(item.key, Number(e.target.value))}
-                        disabled={!enabled}
-                        className="w-full h-1.5 bg-stone-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                      />
+          <div className="space-y-2.5 bg-slate-50/30 border border-slate-100/50 p-3 rounded-xl max-h-[160px] overflow-y-auto no-scrollbar">
+            {SFX_ITEMS.map((item) => {
+              const val = equalizer[item.key] ?? 100;
+              return (
+                <div key={item.key} className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-700 flex items-center gap-1">
+                      <span>{item.icon}</span> {item.label}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-bold text-indigo-600">{val}%</span>
+                      <button
+                        onClick={() => audioService.play(item.key as SoundType)}
+                        className="p-1 hover:bg-slate-200 text-slate-500 rounded transition-colors cursor-pointer"
+                        title="试听音效"
+                      >
+                        <Play size={10} className="fill-slate-500 text-slate-500" />
+                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {!inline && (
-            <button 
-              onClick={onClose}
-              className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 rounded-xl shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] transition-all flex items-center justify-center gap-2 text-sm"
-            >
-              确定
-            </button>
-          )}
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="200"
+                    step="5"
+                    value={val}
+                    onChange={(e) => handleEqChange(item.key, Number(e.target.value))}
+                    disabled={!enabled}
+                    className="w-full h-1 bg-slate-200/60 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
-    </>
+      )}
+    </div>
   );
 
   if (inline) {
-    return <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">{content}</div>;
+    return (
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 select-none cursor-default">
+        <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+           声音设置
+           {isAdmin && (
+              <span className="ml-auto text-[10px] font-bold bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded-full flex items-center gap-1 border border-amber-200/50">
+                <Shield size={10} /> 管理员权限
+              </span>
+           )}
+        </h3>
+        {mainContent}
+      </div>
+    );
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-transparent" onClick={onClose} />
-      
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className={`bg-white rounded-3xl p-6 sm:p-8 w-full shadow-2xl relative z-10 border border-stone-100 max-h-[90vh] overflow-y-auto ${
-          isAdmin ? 'max-w-md' : 'max-w-sm'
-        }`}
+    <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+      <motion.div
+        drag
+        dragListener={false}
+        dragControls={dragControls}
+        dragConstraints={gameContainerRef}
+        dragElastic={0}
+        dragMomentum={false}
+        onClick={(e) => e.stopPropagation()}
+        initial={{ scale: 0.95, y: 10 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        className={`bg-white border border-slate-200 rounded-2xl w-full ${
+          isAdmin ? 'max-w-[340px] sm:max-w-[370px]' : 'max-w-[300px] sm:max-w-[330px]'
+        } max-h-[calc(100%-16px)] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default`}
       >
-        {content}
+        {/* Standard drag handle bar & Header */}
+        <div 
+          onPointerDown={(e) => dragControls.start(e)}
+          className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+        >
+          <div>
+            <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+              声音设置
+              {isAdmin && (
+                <span className="text-[9px] font-bold bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 border border-amber-200/50">
+                  <Shield size={10} /> 管理员
+                </span>
+              )}
+            </h2>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">调整背景音乐和音效音量</p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="p-3 sm:p-4 space-y-4 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+          {mainContent}
+        </div>
       </motion.div>
     </div>
   );

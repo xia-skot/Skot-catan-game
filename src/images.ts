@@ -57,6 +57,37 @@ export const MAP_ALBUM_ICON = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pic
 export const CATAN_SHIPS_BG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catanships.jpg';
 export const SEA_BG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/sea_bg.jpg';
 
+export const KNIGHT_DEV_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%AA%91%E5%A3%AB.png';
+export const VICTORY_POINT_DEV_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%83%9C%E5%88%A9%E7%82%B9.png';
+export const ROAD_BUILDING_DEV_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF%E5%BB%BA%E8%AE%BE.png';
+export const YEAR_OF_PLENTY_DEV_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E4%B8%B0%E6%94%B6.png';
+export const MONOPOLY_DEV_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%9E%84%E6%96%AD.png';
+
+export function getDevCardImg(type: string): string {
+  switch (type) {
+    case 'knight':
+    case 'Knight':
+      return KNIGHT_DEV_IMG;
+    case 'victory_point':
+    case 'VictoryPoint':
+    case 'victoryPoint':
+      return VICTORY_POINT_DEV_IMG;
+    case 'road_building':
+    case 'RoadBuilding':
+    case 'roadBuilding':
+      return ROAD_BUILDING_DEV_IMG;
+    case 'year_of_plenty':
+    case 'YearOfPlenty':
+    case 'yearOfPlenty':
+      return YEAR_OF_PLENTY_DEV_IMG;
+    case 'monopoly':
+    case 'Monopoly':
+      return MONOPOLY_DEV_IMG;
+    default:
+      return DEV_CARD_ICON;
+  }
+}
+
 export const ALL_GAME_IMAGES: string[] = [
   FOREST_IMG,
   FIELDS_IMG,
@@ -81,5 +112,10 @@ export const ALL_GAME_IMAGES: string[] = [
   MAP_ALBUM_ICON,
   CATAN_SHIPS_BG,
   SEA_BG,
+  KNIGHT_DEV_IMG,
+  VICTORY_POINT_DEV_IMG,
+  ROAD_BUILDING_DEV_IMG,
+  YEAR_OF_PLENTY_DEV_IMG,
+  MONOPOLY_DEV_IMG,
 ];
 

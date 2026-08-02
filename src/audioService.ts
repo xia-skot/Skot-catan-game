@@ -15,7 +15,7 @@ export const DEFAULT_EQUALIZER: SoundEqualizer = {
   pirate: 100,
   click: 130,
   build: 100,
-  bgm: 55,
+  bgm: 85,
 };
 
 const AUDIO_URLS: Record<SoundType, string> = {
@@ -34,7 +34,7 @@ class AudioService {
   public roomActive: boolean = false;
   
   private _sfxVolume: number = 0.5;
-  private _bgmVolume: number = 0.16;
+  private _bgmVolume: number = 0.45;
   private _enabled: boolean = true;
   private _bgmPlaying: boolean = false;
   private _sfxEqualizer: SoundEqualizer = { ...DEFAULT_EQUALIZER };
@@ -46,10 +46,10 @@ class AudioService {
     const savedBgm = localStorage.getItem('catan_bgm_volume');
     
     this._sfxVolume = savedSfx ? Number(savedSfx) : 0.5;
-    this._bgmVolume = savedBgm ? Number(savedBgm) : 0.16;
+    this._bgmVolume = savedBgm ? Number(savedBgm) : 0.45;
     
     if (isNaN(this._sfxVolume)) this._sfxVolume = 0.5;
-    if (isNaN(this._bgmVolume)) this._bgmVolume = 0.3;
+    if (isNaN(this._bgmVolume)) this._bgmVolume = 0.45;
 
     this._enabled = localStorage.getItem('catan_audio_enabled') !== 'false';
 
@@ -77,13 +77,22 @@ class AudioService {
     
     const promises = entries.map(async ([key, url]) => {
       try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const audio = new Audio(blobUrl);
-        audio.preload = 'auto';
-        this.audios[key] = audio;
+        if (key === 'bgm') {
+          // Do not blob large BGM files to avoid memory/playback issues on mobile iOS
+          if (!this.audios[key]) {
+            const audio = new Audio(url);
+            audio.preload = 'auto';
+            this.audios[key] = audio;
+          }
+        } else {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const audio = new Audio(blobUrl);
+          audio.preload = 'auto';
+          this.audios[key] = audio;
+        }
       } catch (err) {
         console.warn(`[AudioService] Blob preload failed for ${key}, using fallback:`, err);
         if (!this.audios[key]) {
@@ -116,7 +125,7 @@ class AudioService {
 
   get isBgmPlaying(): boolean {
     const active = this.activeLoops['bgm'];
-    return !!active && !active.paused;
+    return !!active && !active.paused && this._bgmPlaying;
   }
 
   get sfxEqualizer() {

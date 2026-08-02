@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing } from 'lucide-react';
+import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing, Bug, Trash2, Play, Database } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
 import { AdminDashboard } from './AdminDashboard';
 
@@ -11,10 +11,11 @@ interface UserProfileModalProps {
   onLogout?: () => void;
   inline?: boolean;
   onPlayerClick?: (username: string) => void;
+  onRestoreGame?: (roomId: string) => void;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick }: UserProfileModalProps) {
-  const [activeView, setActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin'>('menu');
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick, onRestoreGame }: UserProfileModalProps) {
+  const [activeView, setActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug'>('menu');
   const [username, setUsername] = useState(currentUser?.username || '');
   const [oldPassword, setOldPassword] = useState('');
   const [password, setPassword] = useState('');
@@ -25,6 +26,10 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   const [games, setGames] = useState<any[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
+
+  const [saves, setSaves] = useState<any[]>([]);
+  const [savesLoading, setSavesLoading] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     setGames([]);
@@ -43,9 +48,82 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     .then(data => {
       if (data?.games) setGames(data.games);
     })
-    .catch(console.error)
+    .catch(() => {})
     .finally(() => setGamesLoading(false));
   }, [currentUser?.username]);
+
+  const fetchSaves = async () => {
+    if (currentUser?.role !== 'admin') return;
+    setSavesLoading(true);
+    setErrorText('');
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/saved-games', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('获取存档列表失败');
+      const data = await res.json();
+      setSaves(data.saves || []);
+    } catch (err: any) {
+      setErrorText(err.message || '获取存档列表出错');
+    } finally {
+      setSavesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeView === 'debug') {
+      fetchSaves();
+    }
+  }, [activeView, currentUser?.role]);
+
+  const handleRestoreSave = async (saveId: string) => {
+    setErrorText('');
+    setSuccessText('');
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/restore-game', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ saveId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || '恢复进度失败');
+      }
+      setSuccessText('进度已恢复！正在加载游戏...');
+      setTimeout(() => {
+        if (onRestoreGame) {
+          onRestoreGame(data.roomId);
+        }
+        onClose();
+      }, 1000);
+    } catch (err: any) {
+      setErrorText(err.message || '恢复进度出错');
+    }
+  };
+
+  const handleDeleteSave = async (saveId: string) => {
+    setErrorText('');
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/admin/saved-games/${saveId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || '删除失败');
+      }
+      setSaves(prev => prev.filter(s => s._id !== saveId));
+      setConfirmDeleteId(null);
+    } catch (err: any) {
+      setErrorText(err.message || '删除存档出错');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,6 +365,119 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
           </AnimatePresence>
         )}
 
+        {activeView === 'debug' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="debug"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-4"
+            >
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
+                <h3 className="text-sm font-black text-slate-800 mb-1 flex items-center gap-2">
+                   <Bug size={16} className="text-indigo-500 animate-pulse" /> 游戏调试存档
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium mb-4 leading-relaxed">
+                  在这里可以查看、删除和一键加载已保存的游戏进度，方便您调试游戏和页面布局。
+                </p>
+
+                {errorText && (
+                  <div className="mb-4 p-3 bg-red-50 text-red-600 text-xs rounded-xl border border-red-100 font-medium text-center font-sans">
+                    {errorText}
+                  </div>
+                )}
+                {successText && (
+                  <div className="mb-4 p-3 bg-green-50 text-green-600 text-xs rounded-xl border border-green-100 font-medium text-center font-sans">
+                    {successText}
+                  </div>
+                )}
+
+                <div className="space-y-3 font-sans">
+                  {savesLoading ? (
+                    <div className="py-12 flex justify-center text-slate-400">
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                    </div>
+                  ) : saves.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400 text-xs font-medium border-2 border-dashed border-slate-100 rounded-2xl flex flex-col items-center justify-center gap-2">
+                      <Database className="w-8 h-8 opacity-30 text-slate-400 mb-1" />
+                      暂无已保存的调试进度数据。
+                      <span className="text-[10px] text-slate-400 max-w-[200px] leading-normal block">
+                        在游戏中点击【调试控制台】中的【保存游戏进度】可以添加存档。
+                      </span>
+                    </div>
+                  ) : (
+                    saves.map((save) => {
+                      const hostPlayer = save.roomData?.players?.find((p: any) => p.id === save.roomData?.hostId);
+                      const hostName = hostPlayer ? hostPlayer.name : '未知';
+                      const playerNames = save.roomData?.players?.map((p: any) => p.name).join(', ') || '无';
+                      const botCount = save.roomData?.settings?.botConfig?.filter((b: boolean) => b).length || 0;
+                      return (
+                        <div key={save._id} className="p-3.5 border border-slate-100 hover:border-indigo-100 rounded-2xl bg-slate-50/50 hover:bg-white transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 relative group">
+                          <div className="space-y-1 text-left min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-slate-800 text-sm truncate">{save.name}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold font-mono">
+                                ID: {save.roomId}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-medium">
+                              <span className="text-slate-400 font-bold">玩家数：</span>
+                              {save.roomData?.players?.length || 0}人 ({botCount}机器人)
+                            </div>
+                            <div className="text-[11px] text-slate-505 font-medium truncate text-slate-500">
+                              <span className="text-slate-400 font-bold">玩家名单：</span>
+                              {playerNames}
+                            </div>
+                            <div className="text-[9px] text-slate-400 font-mono mt-1">
+                              保存人: {save.savedBy} | {new Date(save.savedAt).toLocaleString()}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                            {confirmDeleteId === save._id ? (
+                              <div className="flex items-center gap-1.5 animate-in fade-in zoom-in duration-150">
+                                <button
+                                  onClick={() => handleDeleteSave(save._id)}
+                                  className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer shadow-sm animate-pulse"
+                                >
+                                  确认删除
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => handleRestoreSave(save._id)}
+                                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-md hover:shadow-indigo-500/10 active:scale-95 transition-all cursor-pointer"
+                                >
+                                  <Play size={12} className="fill-white text-white" /> 继续游戏
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(save._id)}
+                                  className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-600 rounded-xl transition-all active:scale-95 cursor-pointer flex items-center justify-center"
+                                  title="删除存档"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        )}
+
         {activeView === 'history' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -465,6 +656,21 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                   <div className="flex items-center gap-3">
                     <Settings size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
                     <h3 className="font-bold text-slate-700 text-sm">管理中心</h3>
+                  </div>
+                  <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </button>
+              )}
+
+              {currentUser?.role === 'admin' && (
+                <button 
+                  onClick={() => setActiveView('debug')} 
+                  className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <Bug size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                    <h3 className="font-bold text-slate-700 text-sm">调试 (游戏存档)</h3>
                   </div>
                   <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>

@@ -215,7 +215,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                       body: JSON.stringify({ maxVisibleRooms: val })
                     });
                   } catch (err) {
-                    console.error('Failed to update setting', err);
+                    console.warn('Failed to update setting', err);
                   }
                 }
               }}
@@ -401,7 +401,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                           body: JSON.stringify({ maxVisibleRooms: val })
                         });
                       } catch (err) {
-                        console.error('Failed to update setting', err);
+                        console.warn('Failed to update setting', err);
                       }
                     }
                   }}

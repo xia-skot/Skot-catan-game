@@ -1,7 +1,14 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Home, Map as MapIcon } from 'lucide-react';
+import { Trophy, Home, Map as MapIcon, Award, Castle, Waypoints, Swords, Flag, User, X } from 'lucide-react';
 import { GameState, DevCardType } from '../types';
+
+const CircleOne = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M10 8l2 -2v12" />
+  </svg>
+);
 
 interface GameOverModalProps {
   gameState: GameState;
@@ -11,6 +18,8 @@ interface GameOverModalProps {
 }
 
 export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onReturnToLobby, onReturnToMap, maxWidth }) => {
+  if (!gameState) return null;
+
   // Helper to calculate specific player stats
   const getPlayerStats = (playerId: number) => {
     const player = gameState.players.find(p => p.id === playerId);
@@ -18,172 +27,150 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
     const cities = gameState.settlements.filter(s => s.playerId === playerId && s.isCity).length;
     const roads = gameState.roads.filter(r => r.playerId === playerId).length;
     const ships = gameState.ships.filter(s => s.playerId === playerId).length;
-    const knights = player?.knightsPlayed || 0;
     
-    // Calculate islands landed (approximate by grouping hexes with settlements)
-    const settledHexes = new Set<string>();
-    gameState.settlements.filter(s => s.playerId === playerId).forEach(s => {
-      s.hexIds.forEach(hid => settledHexes.add(hid));
-    });
-    
-    // Real island count logic if archipelago
-    let islandsLanded = 0;
-    if (gameState.mapType === 'archipelago') {
-      const landedIslandIds = new Set<number>();
-      gameState.settlements.filter(s => s.playerId === playerId).forEach(s => {
-        s.hexIds.forEach(hid => {
-          const hex = gameState.board.find(h => h.id === hid);
-          if (hex?.isIsland && hex.islandId) landedIslandIds.add(hex.islandId);
-        });
-      });
-      islandsLanded = landedIslandIds.size;
-    } else {
-      islandsLanded = Math.ceil(settledHexes.size / 3); 
-    }
-
     const totalVpCards = (player?.devCards.filter(c => c === DevCardType.VictoryPoint).length || 0) + 
                         ((player?.devCardsBoughtThisTurn || []).filter(c => c === DevCardType.VictoryPoint).length || 0) +
                         (player?.playedDevCards?.filter(c => c === DevCardType.VictoryPoint).length || 0);
 
     const vpBreakdown = [
-      { label: '村庄', value: settlements, points: settlements },
-      { label: '城市', value: cities, points: cities * 2 },
-      { label: '最长道路', value: gameState.longestRoadPlayerId === playerId ? 1 : 0, points: gameState.longestRoadPlayerId === playerId ? 2 : 0 },
-      { label: '最大骑士', value: gameState.largestArmyPlayerId === playerId ? 1 : 0, points: gameState.largestArmyPlayerId === playerId ? 2 : 0 },
-      { label: '胜利点卡', value: totalVpCards, points: totalVpCards },
-      { label: '登岛奖励', value: player?.islandBonusPoints || 0, points: player?.islandBonusPoints || 0 },
+      { id: 'settlements', label: '村庄', icon: Home, value: settlements, points: settlements },
+      { id: 'cities', label: '城市', icon: Castle, value: cities, points: cities * 2 },
+      { id: 'roads', label: '最长道路', icon: Waypoints, value: gameState.longestRoadPlayerId === playerId ? 1 : 0, points: gameState.longestRoadPlayerId === playerId ? 2 : 0 },
+      { id: 'army', label: '最多骑士', icon: Swords, value: gameState.largestArmyPlayerId === playerId ? 1 : 0, points: gameState.largestArmyPlayerId === playerId ? 2 : 0 },
+      { id: 'cards', label: '胜利点卡', icon: CircleOne, value: totalVpCards, points: totalVpCards },
+      { id: 'islands', label: '登岛奖励', icon: Flag, value: player?.islandBonusPoints || 0, points: player?.islandBonusPoints || 0 },
     ];
 
     const totalVp = vpBreakdown.reduce((sum, item) => sum + item.points, 0);
 
-    return { settlements, cities, roads, ships, knights, islandsLanded, vpBreakdown, totalVp };
+    return { settlements, cities, roads, ships, vpBreakdown, totalVp };
   };
 
-  const sortedPlayers = gameState ? [...gameState.players].sort((a, b) => getPlayerStats(b.id).totalVp - getPlayerStats(a.id).totalVp) : [];
+  const playersWithStats = gameState.players.map(p => ({
+    ...p,
+    stats: getPlayerStats(p.id)
+  }));
 
-  if (!gameState) return null;
+  const sortedPlayers = [...playersWithStats].sort((a, b) => b.stats.totalVp - a.stats.totalVp);
 
   return (
     <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 lg:p-8 bg-transparent"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
+      className="fixed inset-0 z-[120] flex flex-col bg-stone-50 overflow-hidden w-full h-full"
     >
-      <motion.div 
-        initial={{ scale: 0.95, y: 40 }}
-        animate={{ scale: 1, y: 0 }}
-        className="bg-white w-full rounded-[2rem] lg:rounded-[3.5rem] shadow-[0_32px_128px_rgba(0,0,0,0.2)] overflow-hidden max-h-[90vh] flex flex-col relative border border-white/50"
-        style={{ maxWidth: maxWidth ? `${Math.min(maxWidth, 800)}px` : '48rem' }}
-      >
-        <div className="p-2 lg:p-4 text-center bg-stone-50 border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-center gap-3">
-          <Trophy className="absolute -right-4 -top-4 w-24 h-24 text-black/[0.02] -rotate-12 pointer-events-none" />
-          
-          <div className="w-8 h-8 lg:w-10 lg:h-10 bg-yellow-400 rounded-lg flex items-center justify-center shadow-lg rotate-12 ring-2 ring-yellow-400/20">
-            <Trophy size={18} className="text-white" />
+      {/* Header - More Compact */}
+      <div className="px-3 py-2 sm:px-4 sm:py-3 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg sm:rounded-xl flex items-center justify-center shadow-md rotate-3 ring-2 ring-yellow-400/10">
+            <Trophy size={16} className="text-white drop-shadow-sm sm:w-4 sm:h-4" />
           </div>
           <div className="text-left">
-            <h2 className="text-lg lg:text-2xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
-            <p className="text-[7px] lg:text-[9px] opacity-40 uppercase tracking-[0.2em] font-bold">The Golden Victory of Catan</p>
+            <h2 className="text-base sm:text-xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
+            <p className="text-[7px] sm:text-[9px] opacity-40 uppercase tracking-[0.2em] font-bold mt-0.5">The Golden Victory of Catan</p>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-1.5 lg:p-4 no-scrollbar space-y-1.5 lg:space-y-2">
-          {sortedPlayers.map((p, index) => {
-            const stats = getPlayerStats(p.id);
-            const isWinner = p.id === gameState.winnerId;
-            
-            return (
-              <div 
-                key={p.id} 
-                className={`relative p-2 lg:p-3.5 rounded-[1rem] lg:rounded-[1.5rem] border transition-all ${isWinner ? 'bg-black text-white border-black shadow-lg z-10' : 'bg-stone-50 border-black/5'}`}
-              >
-                {isWinner && (
-                  <div className="absolute -top-2 -right-1 bg-yellow-400 text-black px-2 py-0.5 rounded-full font-black uppercase tracking-widest text-[6px] lg:text-[8px] shadow-lg rotate-6">
-                    🏆 冠军
-                  </div>
-                )}
+        <button 
+          onClick={onReturnToMap}
+          className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors"
+        >
+          <X size={18} className="sm:w-5 sm:h-5" />
+        </button>
+      </div>
 
-                <div className="grid grid-cols-[40px_1fr_auto_60px] lg:grid-cols-[60px_1fr_auto_100px] items-center gap-2 lg:gap-4">
-                  {/* Rank & Color */}
-                  <div className="flex flex-col items-center shrink-0 -mt-2 lg:-mt-3">
-                    <span className={`text-xl lg:text-3xl font-serif italic font-black leading-none ${isWinner ? 'text-yellow-400' : 'opacity-20'}`}>
-                      #{index + 1}
+      {/* Vertical & Horizontal Rankings Container */}
+      <div className="flex-1 overflow-auto bg-white no-scrollbar relative z-10 px-2 pb-2 sm:px-4 sm:pb-4">
+        <div className="min-w-max flex flex-col gap-2">
+          {/* Header Row */}
+          {sortedPlayers.length > 0 && (
+            <div className="sticky top-0 z-40 flex items-end mb-1 border-b border-black/5 pb-2 pt-2 sm:pt-4 bg-white">
+              <div className="sticky left-0 z-50 w-28 sm:w-36 lg:w-48 shrink-0 bg-white" />
+              <div className="flex items-center gap-3 sm:gap-5 px-3 sm:px-4 bg-white flex-1">
+                {sortedPlayers[0].stats.vpBreakdown.map((item) => (
+                  <div key={item.id} className="flex flex-col items-center gap-1 min-w-[32px] sm:min-w-[40px]">
+                    <item.icon size={14} className="sm:w-4 sm:h-4 text-stone-400" />
+                    <span className="text-[8px] sm:text-[9px] font-bold text-stone-400 uppercase tracking-widest whitespace-nowrap">
+                      {item.label}
                     </span>
-                    <div className="w-3 h-3 lg:w-4.5 lg:h-4.5 rounded-full border-2 border-white shadow-sm -mt-2 lg:-mt-2.5 z-10" style={{ backgroundColor: p.color }} />
                   </div>
+                ))}
+              </div>
+              <div className="sticky right-0 z-50 w-16 sm:w-20 shrink-0 bg-white" />
+            </div>
+          )}
+          {sortedPlayers.map((player, index) => {
+            const isWinner = index === 0;
 
-                  {/* Player Name & Breakdown */}
-                  <div className="min-w-0 flex flex-col justify-center">
-                    <h3 className="font-black uppercase tracking-tight text-xs lg:text-lg truncate leading-tight">{p.name}</h3>
-                    <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
-                      {stats.vpBreakdown.map((item, i) => (
-                        item.points > 0 && (
-                          <div key={i} className="flex items-center gap-1 opacity-60">
-                            <span className="text-[7px] lg:text-[9px] font-bold uppercase">{item.label}</span>
-                            <span className="text-[8px] lg:text-[10px] font-black">+{item.points}</span>
-                          </div>
-                        )
-                      ))}
+            return (
+              <motion.div
+                key={player.id}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className={`group relative flex items-stretch transition-all ${
+                  isWinner 
+                    ? 'bg-amber-50/80 rounded-xl shadow-sm' 
+                    : 'border-b border-black/5 last:border-b-0 hover:bg-stone-50'
+                }`}
+              >
+                {/* Left Section: Rank & Player Info (Sticky) */}
+                <div className={`sticky left-0 z-20 flex items-center gap-3 shrink-0 w-28 sm:w-36 lg:w-48 py-2 px-2 sm:px-3 transition-colors ${
+                  isWinner ? 'bg-amber-50/90 rounded-l-xl' : 'bg-white group-hover:bg-stone-50'
+                }`}>
+                  <div className="relative flex-shrink-0">
+                    <div 
+                      className={`flex items-center justify-center text-white font-serif font-black italic shadow-sm relative z-10 w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg text-xs sm:text-sm`}
+                      style={{ backgroundColor: player.color }}
+                    >
+                      #{index + 1}
                     </div>
-                  </div>
-
-                  {/* Summary Stats - Grid with fixed-width columns for alignment */}
-                  <div className="hidden sm:grid grid-cols-6 gap-1 lg:gap-4 px-2 lg:px-4 border-l border-r border-black/5 items-center justify-items-center">
-                    <StatMini label="村" value={stats.settlements} isWinner={isWinner} />
-                    <StatMini label="城" value={stats.cities} isWinner={isWinner} />
-                    <StatMini label="路" value={stats.roads} isWinner={isWinner} />
-                    <StatMini label="船" value={stats.ships} isWinner={isWinner} />
-                    <StatMini label="骑" value={stats.knights} isWinner={isWinner} />
-                    <StatMini label="探" value={stats.islandsLanded} isWinner={isWinner} />
+                    {isWinner && (
+                      <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-black w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] shadow-sm border border-white z-20">
+                        👑
+                      </div>
+                    )}
                   </div>
                   
-                  {/* Total Score */}
-                  <div className="flex items-baseline justify-end gap-0.5 lg:gap-1">
-                    <span className="text-xl lg:text-5xl font-serif font-black italic tabular-nums leading-none">{stats.totalVp}</span>
-                    <span className="text-[7px] lg:text-[11px] uppercase tracking-widest font-black opacity-40">分</span>
+                  <div className="flex flex-col min-w-0 justify-center">
+                    <span className="text-xs sm:text-sm font-black text-slate-900 truncate leading-tight">
+                      {player.name}
+                    </span>
                   </div>
                 </div>
-              </div>
+
+                {/* Middle Section: Horizontal Score Breakdown */}
+                <div className="flex items-center gap-3 sm:gap-5 px-3 sm:px-4 py-2 sm:py-3 bg-transparent flex-1">
+                  {player.stats.vpBreakdown.map((item) => (
+                    <div 
+                      key={item.id} 
+                      className={`flex flex-col items-center justify-center min-w-[32px] sm:min-w-[40px] transition-opacity ${
+                        item.points > 0 
+                        ? 'opacity-100' 
+                        : 'opacity-30 grayscale'
+                      }`}
+                    >
+                      <span className={`text-[12px] sm:text-[14px] font-serif font-black italic leading-none ${item.points > 0 ? 'text-amber-600' : 'text-stone-400'}`}>
+                        {item.points > 0 ? `+${item.points}` : '0'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Right Section: Total Score (Sticky) */}
+                <div className={`sticky right-0 z-20 flex items-center justify-end w-16 sm:w-20 shrink-0 py-2 px-2 sm:px-4 transition-colors ${
+                  isWinner ? 'bg-amber-50/90 rounded-r-xl' : 'bg-white group-hover:bg-stone-50'
+                }`}>
+                  <span className={`text-xl sm:text-2xl font-serif font-black italic tabular-nums leading-none ${isWinner ? 'text-amber-600' : 'text-slate-800'}`}>
+                    {player.stats.totalVp}
+                  </span>
+                </div>
+              </motion.div>
             );
           })}
         </div>
-
-        <div className="p-3 lg:p-6 bg-stone-50 border-t border-black/5 flex gap-2 shrink-0">
-          <button 
-            onClick={onReturnToMap}
-            className="flex-1 flex items-center justify-center gap-1.5 bg-white text-black border border-black/10 px-4 py-3 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[8px] lg:text-[10px] hover:bg-stone-100 transition-all shadow-sm active:scale-95"
-          >
-            <MapIcon size={14} />
-            详情
-          </button>
-          <button 
-            onClick={onReturnToLobby}
-            className="flex-[1.5] flex items-center justify-center gap-1.5 bg-black text-white px-4 py-3 rounded-xl lg:rounded-2xl font-black uppercase tracking-widest text-[8px] lg:text-[10px] hover:bg-zinc-800 transition-all shadow-xl active:scale-95"
-          >
-            <Home size={14} />
-            好友约战
-          </button>
-        </div>
-      </motion.div>
+      </div>
     </motion.div>
   );
 };
-
-const StatMini = ({ label, value, isWinner }: { label: string, value: number, isWinner: boolean }) => (
-  <div className="flex flex-col items-center min-w-[24px] lg:min-w-[32px]">
-    <span className={`text-[10px] lg:text-[12px] uppercase font-bold ${isWinner ? 'text-white/40' : 'text-stone-400'}`}>{label}</span>
-    <span className="text-[12px] lg:text-[16px] font-black italic">{value}</span>
-  </div>
-);
-
-const StatBox = ({ label, value, color, isWinner }: { label: string, value: number, color: string, isWinner: boolean }) => (
-  <div className={`p-2 lg:p-4 rounded-xl lg:rounded-2xl flex flex-col items-center justify-center border ${isWinner ? 'bg-white/5 border-white/10' : 'bg-white border-black/5 shadow-sm'}`}>
-    <span className={`text-[7px] lg:text-[9px] uppercase tracking-tighter mb-0.5 lg:mb-1 font-bold ${isWinner ? 'text-white/40' : 'text-stone-400'}`}>{label}</span>
-    <div className="flex items-baseline gap-0.5 lg:gap-1">
-      <span className="text-sm lg:text-lg font-serif font-black italic">{value}</span>
-      <div className="w-1 lg:w-1.5 h-1 lg:h-1.5 rounded-full" style={{ backgroundColor: color }} />
-    </div>
-  </div>
-);
-
