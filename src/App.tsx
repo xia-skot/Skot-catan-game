@@ -418,6 +418,14 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
   const realProgressRef = useRef(isCached.current ? 100 : 0);
   const finishTriggeredRef = useRef(isCached.current);
+  const completedRef = useRef(false);
+
+  const triggerComplete = useCallback(() => {
+    if (!completedRef.current) {
+      completedRef.current = true;
+      onComplete();
+    }
+  }, [onComplete]);
 
   useEffect(() => {
     let isMounted = true;
@@ -439,7 +447,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
                 setPreloadFinished(true);
                 setBoatAnimKey(k => k + 1);
               }
-            }, 300);
+            }, 200);
           }
           return next;
         });
@@ -456,9 +464,21 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
         }
       });
 
+      // Timeout fallback: Force finish preloading if network is slow so user isn't stuck
+      const maxPreloadTimeout = setTimeout(() => {
+        if (isMounted && !finishTriggeredRef.current) {
+          finishTriggeredRef.current = true;
+          realProgressRef.current = 100;
+          setPreloadProgress(100);
+          setPreloadFinished(true);
+          setBoatAnimKey(k => k + 1);
+        }
+      }, 3500);
+
       return () => {
         isMounted = false;
         clearInterval(ticker);
+        clearTimeout(maxPreloadTimeout);
       };
     } else {
       setPreloadFinished(true);
@@ -474,6 +494,16 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
       clearTimeout(cancelTimer);
     };
   }, []);
+
+  // When boat animation starts (preloadFinished is true), guarantee transition complete after 2.6s even if onAnimationEnd doesn't fire
+  useEffect(() => {
+    if (preloadFinished) {
+      const timer = setTimeout(() => {
+        triggerComplete();
+      }, 2600);
+      return () => clearTimeout(timer);
+    }
+  }, [preloadFinished, triggerComplete]);
 
   const calculatePaths = (w: number, h: number) => {
     const isPortrait = w < h;
@@ -539,7 +569,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
   const handleAnimCycleComplete = () => {
     if (preloadFinished) {
-      onComplete();
+      triggerComplete();
     }
   };
 
@@ -2133,7 +2163,7 @@ export default function App() {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
 
-      if (gameStarted) {
+      if (gameStarted && !showSailingScreen) {
         tryLockOrientation();
       } else {
         unlockOrientation();
@@ -2143,7 +2173,7 @@ export default function App() {
     window.addEventListener('orientationchange', handleResize);
 
     // Initial enter game center
-    if (gameStarted) {
+    if (gameStarted && !showSailingScreen) {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
       tryLockOrientation();
@@ -3385,10 +3415,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             className="relative z-10 flex flex-col items-center h-full w-full px-6 max-w-sm mx-auto pt-[15vh]"
           >
-            {isSpectator && (
-                <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default rounded-2xl" title="观战模式" />
-            )}
-            <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4" onClick={handleLogoClick} />
+            <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
             <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
             
             <div className="flex flex-col gap-4 text-left w-full">
@@ -3412,7 +3439,10 @@ export default function App() {
                 
                 <button 
                   id="join-room-button"
-                  onClick={() => {
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     const activeRoom = localStorage.getItem('catan_active_room');
                     const enteredCode = inputRoomId.trim();
                     const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
@@ -3421,11 +3451,15 @@ export default function App() {
                       setInputRoomId(targetRoom);
                     }
                     
-                    const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                    const asSpec = (isRoomLocked && activeRoom) ? (isSpectator || localStorage.getItem('catan_is_spectator') === 'true') : false;
+                    if (!asSpec) {
+                      setIsJoinSpectator(false);
+                      localStorage.removeItem('catan_is_spectator');
+                    }
                     localStorage.setItem('catan_active_room', targetRoom);
                     socketService.joinRoom(targetRoom, playerName, asSpec);
                   }}
-                  className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
+                  className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
                 >
                   <span className="relative z-10 flex items-center justify-center gap-2">
                     {isRoomLocked ? <RotateCcw size={16} /> : <Swords size={16} />}
