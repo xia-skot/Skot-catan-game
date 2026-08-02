@@ -464,21 +464,9 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
         }
       });
 
-      // Timeout fallback: Force finish preloading if network is slow so user isn't stuck
-      const maxPreloadTimeout = setTimeout(() => {
-        if (isMounted && !finishTriggeredRef.current) {
-          finishTriggeredRef.current = true;
-          realProgressRef.current = 100;
-          setPreloadProgress(100);
-          setPreloadFinished(true);
-          setBoatAnimKey(k => k + 1);
-        }
-      }, 3500);
-
       return () => {
         isMounted = false;
         clearInterval(ticker);
-        clearTimeout(maxPreloadTimeout);
       };
     } else {
       setPreloadFinished(true);
@@ -559,11 +547,20 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
          const newPaths = calculatePaths(w, h);
          if (isMounted) setPaths(newPaths);
      };
+
+     const handleOrientation = () => {
+         upds();
+         setTimeout(upds, 150);
+         setTimeout(upds, 350);
+     };
+
      window.addEventListener('resize', upds);
+     window.addEventListener('orientationchange', handleOrientation);
 
      return () => {
          isMounted = false;
          window.removeEventListener('resize', upds);
+         window.removeEventListener('orientationchange', handleOrientation);
      };
   }, []);
 
@@ -2165,7 +2162,7 @@ export default function App() {
 
       if (gameStarted && !showSailingScreen) {
         tryLockOrientation();
-      } else {
+      } else if (!gameStarted && !isJoinedLobby) {
         unlockOrientation();
       }
     };
@@ -2177,14 +2174,13 @@ export default function App() {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
       tryLockOrientation();
-    } else {
+    } else if (!gameStarted && !isJoinedLobby) {
       unlockOrientation();
     }
 
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
-      unlockOrientation();
     };
   }, [centerMap, gameStarted]);
 

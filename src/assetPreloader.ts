@@ -33,7 +33,7 @@ export function clearAssetsCache(): void {
   } catch {}
 }
 
-function preloadSingleImage(src: string, timeoutMs: number = 3000): Promise<void> {
+function preloadSingleImage(src: string, timeoutMs: number = 12000): Promise<void> {
   return new Promise<void>((resolve) => {
     let resolved = false;
     const finish = () => {
@@ -46,34 +46,23 @@ function preloadSingleImage(src: string, timeoutMs: number = 3000): Promise<void
     const timer = setTimeout(finish, timeoutMs);
 
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = src;
+    img.referrerPolicy = 'no-referrer';
 
-    const tryDecodeAndFinish = () => {
-      if ('decode' in img && typeof img.decode === 'function') {
-        img.decode()
-          .then(() => {
-            clearTimeout(timer);
-            finish();
-          })
-          .catch(() => {
-            clearTimeout(timer);
-            finish();
-          });
-      } else {
-        clearTimeout(timer);
-        finish();
-      }
+    img.onload = () => {
+      clearTimeout(timer);
+      finish();
     };
 
-    if (img.complete) {
-      tryDecodeAndFinish();
-    } else {
-      img.onload = tryDecodeAndFinish;
-      img.onerror = () => {
-        clearTimeout(timer);
-        finish();
-      };
+    img.onerror = () => {
+      clearTimeout(timer);
+      finish();
+    };
+
+    img.src = src;
+
+    if (img.complete && img.naturalWidth > 0) {
+      clearTimeout(timer);
+      finish();
     }
   });
 }
@@ -109,10 +98,10 @@ export async function preloadAllAssets(
   };
 
   // Step 1: Priority load sailboat and logo first
-  broadcastProgress(10, '正在初始化关键动画资源...');
+  broadcastProgress(5, '正在初始化关键动画资源...');
   await Promise.allSettled([
-    preloadSingleImage(SAILING_BOAT_IMG, 2000),
-    preloadSingleImage(CATAN_LOGO_IMG, 2000),
+    preloadSingleImage(SAILING_BOAT_IMG, 10000),
+    preloadSingleImage(CATAN_LOGO_IMG, 10000),
   ]);
 
   const totalImages = ALL_GAME_IMAGES.length;
@@ -123,13 +112,13 @@ export async function preloadAllAssets(
 
   const notifyProgress = (label: string) => {
     loadedAssets++;
-    const percent = Math.min(100, Math.round((loadedAssets / totalAssets) * 100));
+    const percent = Math.min(99, Math.round((loadedAssets / totalAssets) * 100));
     broadcastProgress(percent, label);
   };
 
-  // Preload all remaining images with 3s timeout each
+  // Preload all remaining images with 12s timeout each
   const imagePromises = ALL_GAME_IMAGES.map((src) => {
-    return preloadSingleImage(src, 3000).then(() => {
+    return preloadSingleImage(src, 12000).then(() => {
       notifyProgress('正在加载游戏贴图与图标...');
     });
   });
