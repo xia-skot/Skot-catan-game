@@ -1,5 +1,27 @@
 import { ResourceType } from './types';
 
+export const RESOLVED_IMAGE_MAP: Record<string, string> = {};
+
+export function getImageUrl(url: string): string {
+  if (!url) return '';
+  return RESOLVED_IMAGE_MAP[url] || url;
+}
+
+export function getImageCandidates(url: string): string[] {
+  if (!url) return [];
+  const match = url.match(/\/gh\/xia-skot\/Catan_Pics\/img\/(.+)$/);
+  if (!match) return [url];
+  const filename = match[1];
+  return [
+    `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://jsd.cdn.zzko.cn/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://testingcf.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/img/${filename}`,
+  ];
+}
+
 export const FOREST_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%A3%AE%E6%9E%97.jpg';
 export const FIELDS_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%BA%A6%E7%94%B0.jpg';
 export const PASTURE_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E7%89%A7%E5%9C%BA.jpg';

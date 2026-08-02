@@ -126,15 +126,44 @@ import {
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
   HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, PIRATE_SHIP_IMG,
   DEV_CARD_ICON, RES_CARD_ICON, ROAD_ICON, MAP_ALBUM_ICON,
-  RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES
+  RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
+  getImageUrl, getImageCandidates
 } from './images';
 
+export const SmartImg = ({ src, alt, className, onClick, ...props }: any) => {
+  const [currentSrc, setCurrentSrc] = useState(() => getImageUrl(src));
+  const candidateIdxRef = useRef(0);
+
+  useEffect(() => {
+    setCurrentSrc(getImageUrl(src));
+  }, [src]);
+
+  const handleError = () => {
+    const candidates = getImageCandidates(src);
+    candidateIdxRef.current += 1;
+    if (candidateIdxRef.current < candidates.length) {
+      setCurrentSrc(candidates[candidateIdxRef.current]);
+    }
+  };
+
+  return (
+    <img
+      src={currentSrc}
+      alt={alt || ''}
+      className={className}
+      onClick={onClick}
+      onError={handleError}
+      referrerPolicy="no-referrer"
+      {...props}
+    />
+  );
+};
+
 const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
-  <img 
+  <SmartImg 
     src={RESOURCE_ICONS[type]} 
     className={`${className} object-contain inline-block align-middle`} 
     alt={RESOURCE_NAMES[type]} 
-    referrerPolicy="no-referrer" 
   />
 );
 
@@ -416,7 +445,6 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
   const [showCancelBtn, setShowCancelBtn] = useState(false);
   const [boatAnimKey, setBoatAnimKey] = useState(0);
 
-  const realProgressRef = useRef(isCached.current ? 100 : 0);
   const finishTriggeredRef = useRef(isCached.current);
   const completedRef = useRef(false);
 
@@ -429,70 +457,42 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
   useEffect(() => {
     let isMounted = true;
-    if (!checkIsAssetsCached()) {
-      const ticker = setInterval(() => {
-        if (!isMounted) return;
-        setPreloadProgress(prev => {
-          const target = realProgressRef.current;
-          
-          if (prev >= 100 && target >= 100) {
-            return 100;
-          }
-
-          // Cap display progress at 99% until real target reaches 100%
-          const maxAllowed = target >= 100 ? 100 : 99;
-
-          let next = prev;
-          if (prev < target || (target >= 100 && prev < 100)) {
-            const step = Math.max(1, Math.round((target - prev) * 0.15));
-            next = Math.min(maxAllowed, prev + step);
-          }
-
-          if (next >= 100 && target >= 100 && !finishTriggeredRef.current) {
-            finishTriggeredRef.current = true;
-            setTimeout(() => {
-              if (isMounted) {
-                setPreloadFinished(true);
-                setBoatAnimKey(k => k + 1);
-              }
-            }, 200);
-          }
-
-          return next;
-        });
-      }, 50);
-
-      preloadAllAssets((percent, label) => {
-        if (isMounted) {
-          realProgressRef.current = Math.max(realProgressRef.current, percent);
-          if (label) setPreloadStatusText(label);
-        }
-      }).then(() => {
-        if (isMounted) {
-          realProgressRef.current = 100;
-        }
-      }).catch(() => {
-        if (isMounted) {
-          realProgressRef.current = 100;
-        }
-      });
-
-      // Safety timeout: Ensure realProgressRef becomes 100 after 6s so slow network never hangs forever
-      const safetyTimeout = setTimeout(() => {
-        if (isMounted && !finishTriggeredRef.current) {
-          realProgressRef.current = 100;
-        }
-      }, 6000);
-
-      return () => {
-        isMounted = false;
-        clearInterval(ticker);
-        clearTimeout(safetyTimeout);
-      };
-    } else {
+    if (checkIsAssetsCached()) {
       setPreloadFinished(true);
       setPreloadProgress(100);
+      finishTriggeredRef.current = true;
+      return;
     }
+
+    preloadAllAssets((percent, label) => {
+      if (!isMounted) return;
+      setPreloadProgress(percent);
+      if (label) setPreloadStatusText(label);
+
+      if (percent >= 100 && !finishTriggeredRef.current) {
+        finishTriggeredRef.current = true;
+        setTimeout(() => {
+          if (isMounted) {
+            setPreloadFinished(true);
+            setBoatAnimKey(k => k + 1);
+          }
+        }, 150);
+      }
+    }).then(() => {
+      if (isMounted && !finishTriggeredRef.current) {
+        finishTriggeredRef.current = true;
+        setPreloadProgress(100);
+        setPreloadFinished(true);
+        setBoatAnimKey(k => k + 1);
+      }
+    }).catch(() => {
+      if (isMounted && !finishTriggeredRef.current) {
+        finishTriggeredRef.current = true;
+        setPreloadProgress(100);
+        setPreloadFinished(true);
+        setBoatAnimKey(k => k + 1);
+      }
+    });
 
     const cancelTimer = setTimeout(() => {
       if (isMounted) setShowCancelBtn(true);
@@ -608,13 +608,11 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
                     position: 'absolute', left: 0, top: 0, zIndex: 10
                   }} className="will-change-transform pointer-events-none">
                   <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                      <img 
+                      <SmartImg 
                         src={SAILING_BOAT_IMG} 
                         alt="Sailing Boat" 
                         className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
                         onLoad={() => setBoatLoaded(true)}
-                        onError={() => setBoatLoaded(false)}
-                        referrerPolicy="no-referrer"
                       />
                       {/* SVG Fallback boat so it is instantly visible before/if image loads */}
                       {!boatLoaded && (
@@ -3409,7 +3407,7 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             className="relative z-10 flex flex-col items-center h-full w-full px-6 max-w-sm mx-auto pt-[15vh]"
           >
-            <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
+            <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
             <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
             
             <div className="flex flex-col gap-4 text-left w-full">
@@ -3667,7 +3665,7 @@ export default function App() {
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-8 h-8 sm:w-10 sm:h-10 lg:w-11 lg:h-11 object-contain relative z-10 group-hover:scale-105 transition-transform duration-300" />
+              <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-8 h-8 sm:w-10 sm:h-10 lg:w-11 lg:h-11 object-contain relative z-10 group-hover:scale-105 transition-transform duration-300" />
             </div>
             <div className="flex flex-col justify-center">
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">CATAN</h1>
@@ -4124,7 +4122,7 @@ export default function App() {
               {isSpectator && (
                 <div className="absolute inset-0 z-50 pointer-events-auto bg-transparent cursor-default" title="观战模式" />
               )}
-              <img src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-sm" />
+              <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-full h-full object-contain drop-shadow-sm" />
             </div>
             <div className="flex flex-col justify-center font-sans min-w-0">
               <span className="text-[8px] sm:text-[9px] uppercase font-black tracking-wider text-stone-400 leading-none whitespace-nowrap mb-0.5">海域代码</span>
@@ -5354,7 +5352,7 @@ export default function App() {
                className="flex flex-col items-center"
             >
               <div className="w-24 h-24 mb-6 bg-slate-50 rounded-[2rem] flex items-center justify-center shadow-2xl relative">
-                <img src={CATAN_LOGO_IMG} alt="Catan" className="w-16 h-16 object-contain z-10" />
+                <SmartImg src={CATAN_LOGO_IMG} alt="Catan" className="w-16 h-16 object-contain z-10" />
                 <div className="absolute inset-0 border-4 border-indigo-500/20 border-t-indigo-500 rounded-[2rem] animate-spin" />
               </div>
               <h2 className="text-2xl font-serif font-black italic text-slate-800">正在生成地图...</h2>
@@ -6460,11 +6458,32 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
       case HexType.Sea: src = SEA_HEX_IMG; break;
     }
     if (src) {
-      const img = new window.Image();
-      img.src = src;
-      img.referrerPolicy = 'no-referrer';
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => setImage(img);
+      const resolvedSrc = getImageUrl(src);
+      const candidates = getImageCandidates(src);
+      const attempts = Array.from(new Set([resolvedSrc, ...candidates]));
+      let idx = 0;
+
+      const tryLoad = () => {
+        if (idx >= attempts.length) return;
+        const currentUrl = attempts[idx];
+        const img = new window.Image();
+        img.referrerPolicy = 'no-referrer';
+        img.onload = () => {
+          if (img.naturalWidth > 0) {
+            setImage(img);
+          } else {
+            idx++;
+            tryLoad();
+          }
+        };
+        img.onerror = () => {
+          idx++;
+          tryLoad();
+        };
+        img.src = currentUrl;
+      };
+
+      tryLoad();
     }
   }, [hex.type]);
 

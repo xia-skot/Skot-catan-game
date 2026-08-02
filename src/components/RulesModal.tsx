@@ -13,7 +13,9 @@ import {
   BRICK_ICON,
   WOOL_ICON,
   GRAIN_ICON,
-  ORE_ICON
+  ORE_ICON,
+  getImageUrl,
+  getImageCandidates
 } from '../images';
 
 interface RulesModalProps {
@@ -23,22 +25,32 @@ interface RulesModalProps {
 }
 
 const HexImg = ({ src, alt }: { src: string, alt: string }) => {
-  const [hasError, setHasError] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(() => getImageUrl(src));
+  const candidateIdxRef = React.useRef(0);
+
+  React.useEffect(() => {
+    setCurrentSrc(getImageUrl(src));
+  }, [src]);
+
+  const handleError = () => {
+    const candidates = getImageCandidates(src);
+    candidateIdxRef.current += 1;
+    if (candidateIdxRef.current < candidates.length) {
+      setCurrentSrc(candidates[candidateIdxRef.current]);
+    }
+  };
+
   return (
     <div className={`w-12 h-[54px] mb-1.5 flex items-center justify-center relative`}>
       <div className={`absolute inset-0 bg-slate-300`} style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }} />
       <div className="absolute inset-[2px] overflow-hidden bg-slate-100 flex items-center justify-center" style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}>
-        {src && !hasError ? (
-          <img
-            src={src}
-            alt={alt}
-            className="w-full h-full object-cover scale-[1.4]"
-            referrerPolicy="no-referrer"
-            onError={() => setHasError(true)}
-          />
-        ) : (
-          <div className="text-[10px] font-black text-slate-500 text-center px-1">{alt}</div>
-        )}
+        <img
+          src={currentSrc}
+          alt={alt}
+          className="w-full h-full object-cover scale-[1.4]"
+          referrerPolicy="no-referrer"
+          onError={handleError}
+        />
       </div>
     </div>
   );

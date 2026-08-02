@@ -1,4 +1,4 @@
-import { ALL_GAME_IMAGES, SAILING_BOAT_IMG, CATAN_LOGO_IMG } from './images';
+import { ALL_GAME_IMAGES, SAILING_BOAT_IMG, CATAN_LOGO_IMG, getImageCandidates, RESOLVED_IMAGE_MAP } from './images';
 import { audioService } from './audioService';
 
 type ProgressCallback = (progressPercent: number, label: string) => void;
@@ -9,7 +9,7 @@ let currentProgress = 0;
 let currentLabel = '资源加载中...';
 const progressListeners: ProgressCallback[] = [];
 
-const CACHE_KEY = 'catan_assets_cached_v2';
+const CACHE_KEY = 'catan_assets_cached_v3';
 
 export function checkIsAssetsCached(): boolean {
   try {
@@ -33,38 +33,52 @@ export function clearAssetsCache(): void {
   } catch {}
 }
 
-function preloadSingleImage(src: string, timeoutMs: number = 12000): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let resolved = false;
-    const finish = () => {
-      if (!resolved) {
-        resolved = true;
-        resolve();
+function preloadSingleImageCandidate(candidateUrl: string, timeoutMs: number = 3000): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let finished = false;
+    const done = (success: boolean) => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(success);
       }
     };
 
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(() => done(false), timeoutMs);
 
     const img = new Image();
     img.referrerPolicy = 'no-referrer';
 
     img.onload = () => {
-      clearTimeout(timer);
-      finish();
+      if (img.naturalWidth > 0) {
+        done(true);
+      } else {
+        done(false);
+      }
     };
 
-    img.onerror = () => {
-      clearTimeout(timer);
-      finish();
-    };
-
-    img.src = src;
+    img.onerror = () => done(false);
+    img.src = candidateUrl;
 
     if (img.complete && img.naturalWidth > 0) {
-      clearTimeout(timer);
-      finish();
+      done(true);
     }
   });
+}
+
+async function preloadSingleImage(originalSrc: string): Promise<void> {
+  const candidates = getImageCandidates(originalSrc);
+  for (const candidateUrl of candidates) {
+    const success = await preloadSingleImageCandidate(candidateUrl, 3000);
+    if (success) {
+      RESOLVED_IMAGE_MAP[originalSrc] = candidateUrl;
+      return;
+    }
+  }
+  // If all CDN candidates failed, assign the first candidate as fallback
+  if (candidates.length > 0) {
+    RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
+  }
 }
 
 export async function preloadAllAssets(
@@ -97,11 +111,11 @@ export async function preloadAllAssets(
     });
   };
 
-  // Step 1: Priority load sailboat and logo first
+  // Priority load sailboat and logo first
   broadcastProgress(5, '正在初始化关键动画资源...');
   await Promise.allSettled([
-    preloadSingleImage(SAILING_BOAT_IMG, 8000),
-    preloadSingleImage(CATAN_LOGO_IMG, 8000),
+    preloadSingleImage(SAILING_BOAT_IMG),
+    preloadSingleImage(CATAN_LOGO_IMG),
   ]);
 
   const totalImages = ALL_GAME_IMAGES.length;
@@ -112,13 +126,13 @@ export async function preloadAllAssets(
 
   const notifyProgress = (label: string) => {
     loadedAssets++;
-    const percent = Math.min(98, Math.round(5 + (loadedAssets / totalAssets) * 93));
+    const percent = Math.min(99, Math.round(5 + (loadedAssets / totalAssets) * 94));
     broadcastProgress(percent, label);
   };
 
-  // Preload all remaining images with 8s timeout each
+  // Preload all remaining images with candidate failover
   const imagePromises = ALL_GAME_IMAGES.map((src) => {
-    return preloadSingleImage(src, 8000).then(() => {
+    return preloadSingleImage(src).then(() => {
       notifyProgress('正在加载游戏贴图与图标...');
     });
   });
