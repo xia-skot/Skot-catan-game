@@ -140,21 +140,17 @@ class SocketService {
     const timeout = setTimeout(() => {
       if (!handled) {
         handled = true;
-        this.socket?.off('active_rooms_list');
         callback([]);
       }
     }, 2500);
 
-    this.socket.off('active_rooms_list');
-    this.socket.once('active_rooms_list', (rooms: RoomState[]) => {
+    this.socket.emit('get_active_rooms', isAdmin, (rooms: RoomState[]) => {
       if (!handled) {
         handled = true;
         clearTimeout(timeout);
         callback(rooms || []);
       }
     });
-
-    this.socket.emit('get_active_rooms', isAdmin);
   }
 
   leaveRoom(roomId: string) {

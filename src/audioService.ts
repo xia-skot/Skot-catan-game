@@ -194,16 +194,15 @@ class AudioService {
 
     const audio = this.audios['bgm'];
     if (audio) {
-      const clone = audio.cloneNode() as HTMLAudioElement;
       const eqValue = Number(this._sfxEqualizer.bgm);
       const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
-      clone.volume = Math.min(1, Math.max(0, this._bgmVolume * eqRatio));
-      clone.loop = true;
+      audio.volume = Math.min(1, Math.max(0, this._bgmVolume * eqRatio));
+      audio.loop = true;
 
-      this.activeLoops['bgm'] = clone;
-      clone.play().catch(e => {
+      this.activeLoops['bgm'] = audio;
+      audio.play().catch(e => {
         console.warn('BGM play prevented:', e);
-        if (this.activeLoops['bgm'] === clone) {
+        if (this.activeLoops['bgm'] === audio) {
           delete this.activeLoops['bgm'];
         }
       });

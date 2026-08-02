@@ -28,23 +28,29 @@ export const GameRoomsTab: React.FC<GameRoomsTabProps> = ({
 
   const fetchRooms = () => {
     socketService.getActiveRooms(isAdmin, (fetchedRooms) => {
-      setRooms(fetchedRooms);
+      const sanitizedRooms = fetchedRooms || [];
+      setRooms(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(sanitizedRooms)) {
+          return prev;
+        }
+        return sanitizedRooms;
+      });
       setLoading(false);
 
       const myId = currentUser?.id;
       const myName = currentUser?.username || localStorage.getItem('catan_player_name');
       
       // Auto-detect if user belongs to any active room
-      const userRoom = fetchedRooms.find((room: RoomState) => {
+      const userRoom = sanitizedRooms.find((room: RoomState) => {
         if (!room) return false;
         return room.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName));
       });
       
-      if (userRoom && onUserFoundInRoom) {
+      if (userRoom && onUserFoundInRoom && (!isRoomLocked || activeRoomId !== userRoom.roomId)) {
         onUserFoundInRoom(userRoom.roomId);
       }
 
-      const hasMyRoom = fetchedRooms.some((room: RoomState) => {
+      const hasMyRoom = sanitizedRooms.some((room: RoomState) => {
         if (!room) return false;
         if (myId && room.hostId === myId) return true;
         if (room.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName))) return true;

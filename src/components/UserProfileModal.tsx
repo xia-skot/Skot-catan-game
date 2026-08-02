@@ -121,7 +121,14 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
             )}
           </div>
           <div>
-            <div className="text-base font-black text-slate-800 leading-tight">{currentUser.isGuest ? '游客' : currentUser.username}</div>
+            <div className="text-base font-black text-slate-800 leading-tight flex items-center gap-1.5">
+              {currentUser.username}
+              {currentUser.isGuest && (
+                <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full border border-indigo-100">
+                  游客
+                </span>
+              )}
+            </div>
             <div className="text-[10px] text-slate-400 font-medium leading-tight mt-0.5">{currentUser.isGuest ? '未绑定邮箱' : currentUser.email}</div>
           </div>
         </div>
@@ -327,7 +334,17 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     </div>
                   ) : (
                     games.map((g, i) => {
-                      const sortedPlayers = [...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+                      const calcTotalScore = (p: any) => {
+                        const setPts = (p.breakdown?.settlements || 0) * 1;
+                        const cityPts = p.breakdown?.cities ? p.breakdown.cities * 2 : 0;
+                        const roadPts = p.breakdown?.longestRoad ? 2 : 0;
+                        const armyPts = p.breakdown?.largestArmy ? 2 : 0;
+                        const vpCardsPts = p.breakdown?.vpCards || 0;
+                        const islandPts = p.breakdown?.islandBonus || 0;
+                        const breakdownSum = setPts + cityPts + roadPts + armyPts + vpCardsPts + islandPts;
+                        return Math.max(p.score || 0, breakdownSum);
+                      };
+                      const sortedPlayers = [...(g.players || [])].sort((a, b) => calcTotalScore(b) - calcTotalScore(a));
                       const isWin = g.winnerId && g.players?.find((p: any) => p.name === currentUser.username)?.id === g.winnerId;
                       return (
                         <div key={i} className="py-4 border-b border-slate-100 last:border-b-0 flex flex-col gap-2 relative group">
@@ -368,7 +385,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                       <td className="py-2 px-2 font-bold text-slate-700 whitespace-nowrap">
                                         {p.name} {isWinner && '👑'}
                                       </td>
-                                      <td className="py-2 px-2 text-center font-black text-indigo-600">{p.score || 0}</td>
+                                      <td className="py-2 px-2 text-center font-black text-indigo-600">{calcTotalScore(p)}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.settlements || 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.cities ? p.breakdown.cities * 2 : 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.longestRoad ? 2 : 0}</td>

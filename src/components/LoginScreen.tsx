@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, User, Lock, ArrowRight, Loader2, Database } from 'lucide-react';
+import { Mail, User, Lock, ArrowRight, Loader2, Database, RotateCcw, X, Sparkles } from 'lucide-react';
 import { socketService } from '../socketService';
 
 interface LoginScreenProps {
@@ -20,6 +20,21 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [successText, setSuccessText] = useState('');
 
   const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [showGuestModal, setShowGuestModal] = useState(false);
+  const [guestNickname, setGuestNickname] = useState('');
+
+  const generateRandomGuestName = () => {
+    const prefixes = ['航海家', '探险家', '领主', '骑士', '开拓者', '水手', '岛主', '船长', '冒险家'];
+    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+    const num = Math.floor(1000 + Math.random() * 9000);
+    return `${prefix}_${num}`;
+  };
+
+  const openGuestModal = () => {
+    setErrorText('');
+    setGuestNickname(generateRandomGuestName());
+    setShowGuestModal(true);
+  };
 
   useEffect(() => {
     let timer: any;
@@ -125,17 +140,18 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     }
   };
 
-  const handleGuestLogin = async () => {
+  const handleGuestLoginSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setErrorText('');
     setLoading(true);
     try {
-      const gUsername = prompt("请输入游客昵称 (如果不填将随机生成):");
+      const finalName = guestNickname.trim() || generateRandomGuestName();
       const existingGuestId = localStorage.getItem('catan_guest_id');
       
       const res = await fetch('/api/guest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: gUsername, guestId: existingGuestId })
+        body: JSON.stringify({ username: finalName, guestId: existingGuestId })
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || '游客登录失败');
@@ -144,6 +160,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       localStorage.setItem('catan_auth_token', data.token);
       localStorage.setItem('catan_player_name', data.user.username);
       socketService.playerId = data.user.id;
+      setShowGuestModal(false);
       onLoginSuccess(data.user);
     } catch (err: any) {
       setErrorText(err.message);
@@ -329,7 +346,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
               <button 
                 type="button" 
-                onClick={handleGuestLogin}
+                onClick={openGuestModal}
                 disabled={loading}
                 className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2 group"
               >
@@ -348,6 +365,100 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           )}
         </div>
       </motion.div>
+
+      {/* 游客自定义昵称弹框 (不依赖浏览器原生prompt，避免退出全屏) */}
+      <AnimatePresence>
+        {showGuestModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="bg-white rounded-3xl p-6 shadow-2xl max-w-sm w-full border border-slate-100 relative overflow-hidden"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-bold">
+                    <User size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800 leading-tight">游客体验登录</h3>
+                    <p className="text-[11px] text-slate-400 font-medium">免注册快速开启即时对局</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowGuestModal(false)}
+                  className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleGuestLoginSubmit} className="space-y-4">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">
+                    游戏昵称
+                  </label>
+                  <div className="relative flex items-center">
+                    <User className="absolute left-3 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={guestNickname}
+                      onChange={(e) => setGuestNickname(e.target.value)}
+                      placeholder="请输入昵称"
+                      maxLength={16}
+                      className="w-full bg-slate-50 border border-slate-200 pl-9 pr-10 py-2.5 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setGuestNickname(generateRandomGuestName())}
+                      className="absolute right-2 p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors"
+                      title="随机更换昵称"
+                    >
+                      <RotateCcw size={15} />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1.5 pl-1 flex items-center gap-1">
+                    <Sparkles size={11} className="text-amber-500" />
+                    已随机分配默认昵称，可直接修改或点击刷新
+                  </p>
+                </div>
+
+                {errorText && (
+                  <div className="p-2.5 bg-red-50 text-red-600 text-xs rounded-xl border border-red-100 font-medium text-center">
+                    {errorText}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowGuestModal(false)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        进入游戏
+                        <ArrowRight size={14} />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

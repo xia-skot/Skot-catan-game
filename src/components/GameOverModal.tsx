@@ -83,7 +83,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
             <Trophy size={18} className="text-white" />
           </div>
           <div className="text-left">
-            <h2 className="text-lg lg:text-2xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">克坦岛盛大闭幕</h2>
+            <h2 className="text-lg lg:text-2xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
             <p className="text-[7px] lg:text-[9px] opacity-40 uppercase tracking-[0.2em] font-bold">The Golden Victory of Catan</p>
           </div>
         </div>

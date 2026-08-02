@@ -10,7 +10,14 @@ import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 
-dotenv.config({ override: true });
+dotenv.config();
+
+// Remove empty string env vars so they don't block platform process.env variables
+for (const [key, value] of Object.entries(process.env)) {
+  if (value === '') {
+    delete process.env[key];
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,7 +52,7 @@ async function startServer() {
   const httpServer = createHttpServer(app);
 
   // MongoDB Connection setup
-  const MONGODB_URI = process.env.MONGODB_URI;
+  const MONGODB_URI = process.env.MONGODB_URI?.trim();
   let dbClient: MongoClient | null = null;
   let usersCollection: any = null;
   let verificationCodesCollection: any = null;
@@ -971,18 +978,30 @@ async function startServer() {
               const gameRecord = {
                  roomId,
                  players: gameState.players.map((p: any) => {
-                   const unplayedVPCards = (p.developmentCards?.filter((c: any) => c === 'victoryPoint').length) || 0;
+                   const unplayedVPCards = (p.devCards?.filter((c: any) => c === 'victoryPoint').length) || 
+                                           (p.developmentCards?.filter((c: any) => c === 'victoryPoint').length) || 0;
+                   const vpBoughtThisTurn = (p.devCardsBoughtThisTurn?.filter((c: any) => c === 'victoryPoint').length) || 0;
+                   const playedVPCards = (p.playedDevCards?.filter((c: any) => c === 'victoryPoint').length) || 0;
+                   const totalVpCards = unplayedVPCards + vpBoughtThisTurn + playedVPCards;
+
+                   const settlementsPts = (p.settlements || 0) * 1;
+                   const citiesPts = (p.cities || 0) * 2;
+                   const longestRoadPts = (gameState.longestRoadPlayerId === p.id) ? 2 : 0;
+                   const largestArmyPts = (gameState.largestArmyPlayerId === p.id) ? 2 : 0;
+                   const islandBonusPts = p.islandBonusPoints || p.victoryPoints || 0;
+                   const totalScore = settlementsPts + citiesPts + longestRoadPts + largestArmyPts + totalVpCards + islandBonusPts;
+
                    return {
                      id: p.id,
                      name: p.name,
                      isBot: p.isBot,
-                     score: (p.settlements || 0) + ((p.cities || 0) * 2) + (p.victoryPoints || 0) + unplayedVPCards,
+                     score: totalScore,
                      breakdown: {
                        settlements: p.settlements || 0,
                        cities: p.cities || 0,
                        longestRoad: gameState.longestRoadPlayerId === p.id,
                        largestArmy: gameState.largestArmyPlayerId === p.id,
-                       vpCards: (p.vpCardsCount || 0) + unplayedVPCards,
+                       vpCards: totalVpCards,
                        islandBonus: p.islandBonusPoints || 0
                      }
                    };
@@ -1139,7 +1158,7 @@ async function startServer() {
       }
     });
 
-    socket.on('get_active_rooms', (isAdmin?: boolean) => {
+    socket.on('get_active_rooms', (isAdmin?: boolean, callback?: (rooms: any[]) => void) => {
       let activeRooms = Array.from(rooms.values())
         .map(r => ({
           ...r,
@@ -1152,7 +1171,11 @@ async function startServer() {
       if (!isAdmin) {
         activeRooms = activeRooms.slice(0, globalSettings.maxVisibleRooms);
       }
-      socket.emit('active_rooms_list', activeRooms);
+      if (typeof callback === 'function') {
+        callback(activeRooms);
+      } else {
+        socket.emit('active_rooms_list', activeRooms);
+      }
     });
 
     socket.on('admin_delete_room', (roomId: string) => {

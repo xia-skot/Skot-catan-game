@@ -4,7 +4,31 @@ import { audioService } from './audioService';
 let isPreloaded = false;
 let isPreloading = false;
 
-function preloadSingleImage(src: string, timeoutMs: number = 3000): Promise<void> {
+const CACHE_KEY = 'catan_assets_cached_v2';
+
+export function checkIsAssetsCached(): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.location.search.toLowerCase().includes('resetcache')) {
+      clearAssetsCache();
+      return false;
+    }
+  } catch {}
+  if (isPreloaded) return true;
+  try {
+    return localStorage.getItem(CACHE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function clearAssetsCache(): void {
+  isPreloaded = false;
+  try {
+    localStorage.removeItem(CACHE_KEY);
+  } catch {}
+}
+
+function preloadSingleImage(src: string, timeoutMs: number = 4000): Promise<void> {
   return new Promise<void>((resolve) => {
     let resolved = false;
     const finish = () => {
@@ -20,14 +44,27 @@ function preloadSingleImage(src: string, timeoutMs: number = 3000): Promise<void
     img.crossOrigin = 'anonymous';
     img.src = src;
 
-    if (img.complete) {
-      clearTimeout(timer);
-      finish();
-    } else {
-      img.onload = () => {
+    const tryDecodeAndFinish = () => {
+      if ('decode' in img && typeof img.decode === 'function') {
+        img.decode()
+          .then(() => {
+            clearTimeout(timer);
+            finish();
+          })
+          .catch(() => {
+            clearTimeout(timer);
+            finish();
+          });
+      } else {
         clearTimeout(timer);
         finish();
-      };
+      }
+    };
+
+    if (img.complete) {
+      tryDecodeAndFinish();
+    } else {
+      img.onload = tryDecodeAndFinish;
       img.onerror = () => {
         clearTimeout(timer);
         finish();
@@ -39,7 +76,8 @@ function preloadSingleImage(src: string, timeoutMs: number = 3000): Promise<void
 export async function preloadAllAssets(
   onProgress?: (progressPercent: number, label: string) => void
 ): Promise<void> {
-  if (isPreloaded) {
+  if (checkIsAssetsCached()) {
+    isPreloaded = true;
     if (onProgress) onProgress(100, '资源已就绪');
     return;
   }
@@ -83,6 +121,11 @@ export async function preloadAllAssets(
 
   isPreloaded = true;
   isPreloading = false;
+  try {
+    localStorage.setItem(CACHE_KEY, 'true');
+  } catch {}
+
   if (onProgress) onProgress(100, '所有资源预加载完成');
 }
+
 

@@ -73,7 +73,7 @@ import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLOR
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { audioService } from './audioService';
-import { preloadAllAssets } from './assetPreloader';
+import { preloadAllAssets, checkIsAssetsCached } from './assetPreloader';
 import { 
   Dices, 
   User, 
@@ -126,7 +126,7 @@ import {
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
   HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, PIRATE_SHIP_IMG,
   DEV_CARD_ICON, RES_CARD_ICON, ROAD_ICON, MAP_ALBUM_ICON,
-  RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG 
+  RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES
 } from './images';
 
 const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
@@ -408,28 +408,66 @@ const seededRandom = (seed: number) => {
 };
 
 function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false, onCancel }: { onComplete: () => void, text?: string, loop?: boolean, onCancel?: () => void }) {
-  const [preloadProgress, setPreloadProgress] = useState(0);
-  const [preloadStatusText, setPreloadStatusText] = useState('正在缓冲资源...');
-  const [preloadFinished, setPreloadFinished] = useState(false);
+  const isCached = useRef(checkIsAssetsCached());
+  const [preloadProgress, setPreloadProgress] = useState(isCached.current ? 100 : 0);
+  const [preloadStatusText, setPreloadStatusText] = useState('资源加载中...');
+  const [preloadFinished, setPreloadFinished] = useState(isCached.current);
   const [boatLoaded, setBoatLoaded] = useState(false);
   const [showCancelBtn, setShowCancelBtn] = useState(false);
+  const [boatAnimKey, setBoatAnimKey] = useState(0);
+
+  const realProgressRef = useRef(isCached.current ? 100 : 0);
+  const finishTriggeredRef = useRef(isCached.current);
 
   useEffect(() => {
     let isMounted = true;
-    preloadAllAssets((percent, label) => {
-      if (isMounted) {
-        setPreloadProgress(percent);
-        if (label) setPreloadStatusText(label);
-      }
-    }).then(() => {
-      if (isMounted) {
-        setPreloadFinished(true);
-      }
-    });
+    if (!checkIsAssetsCached()) {
+      const ticker = setInterval(() => {
+        if (!isMounted) return;
+        setPreloadProgress(prev => {
+          const target = realProgressRef.current;
+          if (prev >= 100) {
+            clearInterval(ticker);
+            return 100;
+          }
+          const step = Math.max(1, Math.round((target - prev) * 0.15));
+          const next = Math.min(100, prev + step);
+          if (next >= 100 && !finishTriggeredRef.current && target >= 100) {
+            finishTriggeredRef.current = true;
+            setTimeout(() => {
+              if (isMounted) {
+                setPreloadFinished(true);
+                setBoatAnimKey(k => k + 1);
+              }
+            }, 300);
+          }
+          return next;
+        });
+      }, 50);
+
+      preloadAllAssets((percent, label) => {
+        if (isMounted) {
+          realProgressRef.current = percent;
+          if (label) setPreloadStatusText(label);
+        }
+      }).then(() => {
+        if (isMounted) {
+          realProgressRef.current = 100;
+        }
+      });
+
+      return () => {
+        isMounted = false;
+        clearInterval(ticker);
+      };
+    } else {
+      setPreloadFinished(true);
+      setPreloadProgress(100);
+    }
 
     const cancelTimer = setTimeout(() => {
       if (isMounted) setShowCancelBtn(true);
-    }, 6000);
+    }, 8000);
 
     return () => { 
       isMounted = false; 
@@ -499,49 +537,49 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
      };
   }, []);
 
+  const handleAnimCycleComplete = () => {
+    if (preloadFinished) {
+      onComplete();
+    }
+  };
+
   return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.5 }}
-      className="fixed inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto"
-    >
+    <div className="fixed inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto select-none">
         <div className="w-full h-full relative">
             <style>{`
               ${paths.framesCss}
             `}</style>
             
-            <div 
-                onAnimationIteration={() => {
-                  if (!loopRef.current && preloadFinished) {
-                    onComplete();
-                  }
-                }}
-                style={{
-                animation: 'sailBoatAnim 2.0s linear infinite',
-                position: 'absolute', left: 0, top: 0, zIndex: 10
-            }} className="will-change-transform pointer-events-none">
-                <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                    <img 
-                      src={SAILING_BOAT_IMG} 
-                      alt="Sailing Boat" 
-                      className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
-                      onLoad={() => setBoatLoaded(true)}
-                      onError={() => setBoatLoaded(false)}
-                      referrerPolicy="no-referrer"
-                    />
-                    {/* SVG Fallback boat so it is instantly visible before/if image loads */}
-                    {!boatLoaded && (
-                      <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" fill="none">
-                        <path d="M15 65 L85 65 L70 85 L30 85 Z" fill="#7c2d12" stroke="#451a03" strokeWidth="2" />
-                        <path d="M48 15 L48 65" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
-                        <path d="M50 18 L80 40 L50 48 Z" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="2" />
-                        <path d="M46 22 L22 42 L46 48 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2" />
-                      </svg>
-                    )}
-                </div>
-            </div>
+            {/* 资源加载完毕后再显示帆船并执行1次完整的驶过海域动画 */}
+            {preloadFinished && (
+              <div 
+                  key={boatAnimKey}
+                  onAnimationEnd={handleAnimCycleComplete}
+                  style={{
+                    animation: 'sailBoatAnim 2.5s linear 1 forwards',
+                    position: 'absolute', left: 0, top: 0, zIndex: 10
+                  }} className="will-change-transform pointer-events-none">
+                  <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
+                      <img 
+                        src={SAILING_BOAT_IMG} 
+                        alt="Sailing Boat" 
+                        className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
+                        onLoad={() => setBoatLoaded(true)}
+                        onError={() => setBoatLoaded(false)}
+                        referrerPolicy="no-referrer"
+                      />
+                      {/* SVG Fallback boat so it is instantly visible before/if image loads */}
+                      {!boatLoaded && (
+                        <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" fill="none">
+                          <path d="M15 65 L85 65 L70 85 L30 85 Z" fill="#7c2d12" stroke="#451a03" strokeWidth="2" />
+                          <path d="M48 15 L48 65" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
+                          <path d="M50 18 L80 40 L50 48 Z" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="2" />
+                          <path d="M46 22 L22 42 L46 48 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2" />
+                        </svg>
+                      )}
+                  </div>
+              </div>
+            )}
 
             <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
                 <defs>
@@ -555,39 +593,50 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
                 <path d={paths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
             </svg>
 
-            {/* Main centered text */}
-            <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4 pointer-events-none">
-                <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
-                    {text}
-                </span>
-            </div>
+            {/* When preload is finished: show main text ("正在驶入海域......") */}
+            {preloadFinished ? (
+              <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4 pointer-events-none">
+                  <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
+                      {text}
+                  </span>
+              </div>
+            ) : (
+              /* When preload is loading: show small text and simplified progress bar */
+              <div className="absolute bottom-8 sm:bottom-12 left-0 right-0 w-full flex flex-col items-center justify-center gap-2.5 z-[10000] px-6 sm:px-12 pointer-events-auto">
+                  <span className="text-xs sm:text-sm font-bold tracking-wider text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] animate-pulse">
+                    资源加载中...
+                  </span>
+                  
+                  {/* Minimalist ocean-style progress bar */}
+                  <div className="w-[85vw] max-w-3xl h-3.5 sm:h-4 bg-sky-950/50 rounded-full border border-sky-300/30 p-0.5 shadow-inner backdrop-blur-sm relative overflow-hidden">
+                      <div 
+                        className="h-full bg-sky-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_10px_rgba(56,189,248,0.5)]"
+                        style={{ width: `${preloadProgress}%` }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center text-[10px] sm:text-xs font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] tracking-wider">
+                        {preloadProgress}%
+                      </div>
+                  </div>
 
-            {/* Bottom-left small loading text and progress bar */}
-            <div className="absolute bottom-3 left-3 z-[10000] flex flex-col items-start gap-1 max-w-[200px] sm:max-w-[260px] pointer-events-auto">
-                {!preloadFinished && (
-                    <div className="flex flex-col gap-0.5 w-full">
-                        <span className="text-[10px] font-bold text-[#0369a1] tracking-tight">
-                          资源缓冲中 ({preloadProgress}%)
-                        </span>
-                        <div className="w-28 sm:w-36 h-1 bg-white/60 rounded-full overflow-hidden border border-sky-300/50 shadow-xs">
-                            <div 
-                              className="h-full bg-sky-600 rounded-full transition-all duration-200" 
-                              style={{ width: `${preloadProgress}%` }}
-                            />
-                        </div>
-                    </div>
-                )}
-                {showCancelBtn && onCancel && (
-                  <button 
-                    onClick={onCancel}
-                    className="mt-1 px-2.5 py-1 bg-white/90 text-slate-700 hover:bg-white text-[10px] font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
-                  >
-                    超时？点击返回大厅
-                  </button>
-                )}
+                  {showCancelBtn && onCancel && (
+                    <button 
+                      onClick={onCancel}
+                      className="mt-1 px-3 py-1 bg-white/95 text-slate-700 hover:bg-white text-xs font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
+                    >
+                      超时？点击返回大厅
+                    </button>
+                  )}
+              </div>
+            )}
+            
+            {/* Hidden pre-decoded DOM images to keep GPU textures warm */}
+            <div className="hidden" aria-hidden="true" style={{ display: 'none' }}>
+              {ALL_GAME_IMAGES.map((src) => (
+                <img key={src} src={src} decoding="sync" alt="" />
+              ))}
             </div>
         </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -956,6 +1005,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthAnimFinished, setIsAuthAnimFinished] = useState(false);
+  const [gameStarted, setGameStarted] = useState(() => {
+    return localStorage.getItem('catan_game_active') === 'true';
+  });
+  const gameStartedRef = useRef(gameStarted);
+  useEffect(() => {
+    gameStartedRef.current = gameStarted;
+  }, [gameStarted]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -995,13 +1051,13 @@ export default function App() {
   useEffect(() => {
     if (isAuthLoading) return;
 
-    if (!currentUser) {
+    if (!gameStarted) {
       audioService.stopBgm(true);
       return;
     }
 
-    const resumeBgm = () => {
-      if (!currentUser) return;
+    const checkAndPlayBgm = () => {
+      if (!gameStarted) return;
       if (!audioService.enabled) return;
 
       if (!audioService.isBgmPlaying) {
@@ -1010,29 +1066,29 @@ export default function App() {
     };
 
     // Try to play immediately (in case autoplay is permitted or we are already active)
-    resumeBgm();
+    checkAndPlayBgm();
 
     // Set up robust gesture listeners to start/resume BGM on any user interaction
     const handleUserGesture = () => {
-      resumeBgm();
+      checkAndPlayBgm();
     };
 
     document.addEventListener('click', handleUserGesture);
     document.addEventListener('keydown', handleUserGesture);
     document.addEventListener('mousedown', handleUserGesture);
     document.addEventListener('touchstart', handleUserGesture);
-    window.addEventListener('focus', resumeBgm);
-    document.addEventListener('visibilitychange', resumeBgm);
+    window.addEventListener('focus', checkAndPlayBgm);
+    document.addEventListener('visibilitychange', checkAndPlayBgm);
 
     return () => {
       document.removeEventListener('click', handleUserGesture);
       document.removeEventListener('keydown', handleUserGesture);
       document.removeEventListener('mousedown', handleUserGesture);
       document.removeEventListener('touchstart', handleUserGesture);
-      window.removeEventListener('focus', resumeBgm);
-      document.removeEventListener('visibilitychange', resumeBgm);
+      window.removeEventListener('focus', checkAndPlayBgm);
+      document.removeEventListener('visibilitychange', checkAndPlayBgm);
     };
-  }, [currentUser, isAuthLoading]);
+  }, [isAuthLoading, gameStarted]);
 
   const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
   
@@ -1064,13 +1120,6 @@ export default function App() {
   useEffect(() => {
     // We no longer remove catan_active_room here to ensure it's "locked" on the main interface
   }, [isJoinedLobby, activeLobbyTab]);
-  const [gameStarted, setGameStarted] = useState(() => {
-    return localStorage.getItem('catan_game_active') === 'true';
-  });
-  const gameStartedRef = useRef(gameStarted);
-  useEffect(() => {
-    gameStartedRef.current = gameStarted;
-  }, [gameStarted]);
   const isAutoReconnectingRef = useRef(!!localStorage.getItem('catan_active_room') && localStorage.getItem('catan_has_created_room') === 'true');
   const hasCreatedRoomRef = useRef(localStorage.getItem('catan_has_created_room') === 'true');
   const [spectatorFocusId, setSpectatorFocusId] = useState<number | null>(null);
@@ -1356,8 +1405,6 @@ export default function App() {
     window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
 
     socketService.joinRoom(finalRoomId, playerName);
-    setSailingText("正在驶入海域......");
-    setShowSailingScreen(true);
     setIsJoinedLobby(true);
   };
 
@@ -1490,8 +1537,53 @@ export default function App() {
     gameState?.phase === 'road_building') && isMyHumanTurn;
 
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [deviceOrientation, setDeviceOrientation] = useState<'portrait' | 'landscape'>(() => {
+    return window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      setWindowSize({ width: w, height: h });
+      if (w > h) {
+        setDeviceOrientation('landscape');
+      } else {
+        setDeviceOrientation('portrait');
+      }
+    };
+
+    const handleDeviceOrientation = (e: DeviceOrientationEvent) => {
+      if (window.innerWidth > window.innerHeight) {
+        setDeviceOrientation('landscape');
+        return;
+      }
+      if (e.gamma !== null && e.beta !== null) {
+        const absGamma = Math.abs(e.gamma);
+        const absBeta = Math.abs(e.beta);
+        if (absGamma > 40 && absBeta < 60) {
+          setDeviceOrientation('landscape');
+        } else if (absGamma < 25 && absBeta > 30) {
+          setDeviceOrientation('portrait');
+        }
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    window.addEventListener('deviceorientation', handleDeviceOrientation);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+      window.removeEventListener('deviceorientation', handleDeviceOrientation);
+    };
+  }, []);
+
   const isPortrait = windowSize.width < windowSize.height;
   const shouldApplyPortraitRotation = isPortrait;
+  const shouldRotateNonGame = isPortrait && deviceOrientation === 'landscape';
+
   const logicalWindowSize = {
     width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
     height: shouldApplyPortraitRotation ? windowSize.width : windowSize.height
@@ -1675,10 +1767,7 @@ export default function App() {
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isStartingGame, setIsStartingGame] = useState(false);
-  const [showSailingScreen, setShowSailingScreen] = useState(() => {
-    const wasInGame = localStorage.getItem('catan_game_active') === 'true';
-    return wasInGame;
-  });
+  const [showSailingScreen, setShowSailingScreen] = useState(false);
   const [sailingText, setSailingText] = useState(() => {
     const wasInGame = localStorage.getItem('catan_game_active') === 'true';
     const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
@@ -3193,24 +3282,101 @@ export default function App() {
     return <LoginScreen onLoginSuccess={user => setCurrentUser(user)} />;
   }
 
-  if (showSailingScreen) {
-    return (
-      <SailingLoadingScreen 
-        key="sailing-loader" 
-        onComplete={() => {
-          if (roomState) {
-            setShowSailingScreen(false);
-          }
-        }} 
-        onCancel={() => setShowSailingScreen(false)}
-        text={sailingText} 
-        loop={!roomState} 
-      />
-    );
-  }
+  const actingPlayer = gameState?.players ? gameState.players[activePlayerId] : undefined;
+  const settlementsCount = (gameState?.settlements || []).filter(s => s.playerId === activePlayerId).length;
+  const roadsCount = (gameState?.roads || []).filter(r => r.playerId === activePlayerId).length;
+  const shipsCount = (gameState?.ships || []).filter(s => s.playerId === activePlayerId).length;
+  const totalRoadsAndShips = roadsCount + shipsCount;
+  
+  const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
+  const canPlayDevCard = gameState?.phase === 'main' && isMyHumanTurn;
 
-  if (!isJoinedLobby) {
-    return (
+  const leftWidth = isMobile ? Math.max(logicalWindowSize.width * 0.18, 160) : 280;
+  const rightWidth = isMobile ? Math.max(logicalWindowSize.width * 0.20, 180) : 280;
+  const stageWidth = logicalWindowSize.width - leftWidth - rightWidth;
+  const headerHeight = isMobile ? 48 : 58;
+
+  const nextAction = (() => {
+    if (!gameState) return null;
+    const actingPlayerName = actingPlayer?.name || `玩家 ${activePlayerId + 1}`;
+    
+    if (gameState.phase === 'order_determination' || gameState.phase === 'initial_dice_roll') {
+      const myRolls = gameState.initialDiceRolls[myPlayerIndex];
+      const hasRolled = myRolls && myRolls.length > 0;
+      if (activePlayerId === myPlayerIndex) {
+        return hasRolled ? "等待结果..." : "请掷骰决定顺序";
+      }
+      return hasRolled ? "等待结果..." : `等待 ${actingPlayerName} 掷骰`;
+    }
+
+    if (gameState.phase === 'setup') {
+      return activePlayerId === myPlayerIndex 
+        ? "初始建设：请放置建筑" 
+        : `等待 ${actingPlayerName} 建设`;
+    }
+
+    if (activePlayerId === myPlayerIndex) {
+      if (!gameState.hasRolled && gameState.phase === 'main') return "请掷骰子回合开始";
+      if (gameState.phase === 'main') return "交易与建设中";
+      if (gameState.phase === 'discard') return "请弃置一半资源";
+      if (gameState.phase === 'robber' || gameState.phase === 'robber_move') return "请移动强盗";
+      if (gameState.phase === 'stealing') return "请选择窃取对象";
+      if (gameState.phase === 'road_building') return "建设道路/船只";
+      if (gameState.phase === 'year_of_plenty') return "领取丰收资源";
+      if (gameState.phase === 'monopoly') return "执行资源垄断";
+      if (gameState.phase === 'gold_selection') return "领取金矿奖励";
+    }
+
+    // Waiting for others
+    const phaseShortNames: Record<string, string> = {
+      'main': '回合中',
+      'discard': '弃牌中',
+      'robber': '移动强盗',
+      'robber_move': '移动强盗',
+      'stealing': '窃取中',
+      'road_building': '道路/船只建设',
+      'year_of_plenty': '丰收之年',
+      'monopoly': '垄断中',
+      'gold_selection': '奖励确认'
+    };
+    const phaseDesc = phaseShortNames[gameState.phase] || '行动中';
+    return `${actingPlayerName} ${phaseDesc}...`;
+  })();
+
+  const renderNonGameWrapper = (content: React.ReactNode) => {
+    if (shouldRotateNonGame) {
+      return (
+        <div style={{
+          width: '100vw',
+          height: '100vh',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          overflow: 'hidden',
+          backgroundColor: '#f8fafc'
+        }}>
+          <div style={{
+            width: windowSize.height,
+            height: windowSize.width,
+            transform: 'rotate(90deg)',
+            transformOrigin: 'top left',
+            position: 'absolute',
+            left: windowSize.width,
+            top: 0,
+            overflowY: 'auto'
+          }}>
+            {content}
+          </div>
+        </div>
+      );
+    }
+    return content;
+  };
+
+  let mainContent: React.ReactNode = null;
+
+  if (!roomState) {
+    mainContent = renderNonGameWrapper(
       <div className="flex flex-col h-screen w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
         
         {activeLobbyTab === 'lobby' && (
@@ -3249,19 +3415,15 @@ export default function App() {
                   onClick={() => {
                     const activeRoom = localStorage.getItem('catan_active_room');
                     const enteredCode = inputRoomId.trim();
+                    const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
                     
-                    if (isRoomLocked && activeRoom) {
-                      const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
-                      setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
-                      setShowSailingScreen(true);
-                      socketService.joinRoom(activeRoom, playerName, asSpec);
-                    } else {
-                      setActiveLobbyTab('rooms');
-                      setIsJoinedLobby(true);
-                      if (enteredCode) {
-                        localStorage.setItem('catan_active_room', enteredCode);
-                      }
+                    if (!inputRoomId.trim()) {
+                      setInputRoomId(targetRoom);
                     }
+                    
+                    const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                    localStorage.setItem('catan_active_room', targetRoom);
+                    socketService.joinRoom(targetRoom, playerName, asSpec);
                   }}
                   className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)]"
                 >
@@ -3292,8 +3454,6 @@ export default function App() {
                 if (activeRoom) {
                   setInputRoomId(activeRoom);
                   const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
-                  setSailingText(asSpec ? "正在驶入海域......" : "重新驶入海域......");
-                  setShowSailingScreen(true);
                   socketService.joinRoom(activeRoom, playerName, asSpec);
                 } else {
                   setActiveLobbyTab('lobby');
@@ -3302,8 +3462,6 @@ export default function App() {
               onJoinRoom={(roomId) => {
                 setInputRoomId(roomId);
                 localStorage.setItem('catan_active_room', roomId);
-                setSailingText("正在驶入海域......");
-                setShowSailingScreen(true);
                 socketService.joinRoom(roomId, playerName);
               }}
               onSpectateRoom={(roomId) => {
@@ -3311,17 +3469,9 @@ export default function App() {
                 localStorage.setItem('catan_player_name', playerName);
                 localStorage.setItem('catan_is_spectator', 'true');
                 setIsJoinSpectator(true);
-                setSailingText("正在驶入海域......");
-                setShowSailingScreen(true);
                 socketService.joinRoom(roomId, playerName, true);
               }}
              />
-             <button 
-               onClick={() => setActiveLobbyTab('lobby')}
-               className="mt-6 text-stone-500 hover:text-stone-900 transition-colors"
-             >
-               返回主页
-             </button>
            </div>
         )}
 
@@ -3399,14 +3549,8 @@ export default function App() {
         />
       </div>
     );
-  }
-
-  if (!roomState) {
-    return null;
-  }
-
-  if (!gameStarted) {
-    return (
+  } else if (!gameStarted) {
+    mainContent = renderNonGameWrapper(
       <>
       <MapAlbumModal
         isOpen={showMapAlbum}
@@ -3883,103 +4027,37 @@ export default function App() {
     </div>
     </>
     );
-  }
-
-
-
-  if (!gameState) {
-    return (
+  } else if (!gameState) {
+    mainContent = (
       <>
         <div style={lockedLandscapeStyle}>
-        <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
-      {/* Ocean atmosphere */}
-      <div className="absolute inset-0 bg-white/40 pointer-events-none" />
-      
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="text-center relative z-10"
-      >
-        <h1 className="text-6xl sm:text-8xl font-serif italic font-black mb-4 tracking-tighter text-[#0c4a6e] drop-shadow-[0_2px_10px_rgba(255,255,255,0.8)]">CATAN</h1>
-        <div className="w-24 h-1 bg-indigo-200 mx-auto mb-10 overflow-hidden rounded-full">
-          <motion.div 
-            initial={{ x: '-100%' }}
-            animate={{ x: '100%' }}
-            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-            className="w-full h-full bg-[#0369a1]"
-          />
+          <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
+            {/* Ocean atmosphere */}
+            <div className="absolute inset-0 bg-white/40 pointer-events-none" />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-center relative z-10"
+            >
+              <h1 className="text-6xl sm:text-8xl font-serif italic font-black mb-4 tracking-tighter text-[#0c4a6e] drop-shadow-[0_2px_10px_rgba(255,255,255,0.8)]">CATAN</h1>
+              <div className="w-24 h-1 bg-indigo-200 mx-auto mb-10 overflow-hidden rounded-full">
+                <motion.div 
+                  initial={{ x: '-100%' }}
+                  animate={{ x: '100%' }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  className="w-full h-full bg-[#0369a1]"
+                />
+              </div>
+              <p className="text-[10px] sm:text-xs uppercase tracking-[0.5em] font-black text-[#0369a1]">连接卡坦岛......</p>
+            </motion.div>
+          </div>
         </div>
-        <p className="text-[10px] sm:text-xs uppercase tracking-[0.5em] font-black text-[#0369a1]">连接卡坦岛......</p>
-      </motion.div>
-    </div>
-  </div>
-  </>
-  );
-}
-
-  const actingPlayer = gameState?.players ? gameState.players[activePlayerId] : undefined;
-  const settlementsCount = (gameState?.settlements || []).filter(s => s.playerId === activePlayerId).length;
-  const roadsCount = (gameState?.roads || []).filter(r => r.playerId === activePlayerId).length;
-  const shipsCount = (gameState?.ships || []).filter(s => s.playerId === activePlayerId).length;
-  const totalRoadsAndShips = roadsCount + shipsCount;
-  
-  const canTrade = gameState?.phase === 'main' && gameState.hasRolled && !gameState.hasBuiltThisTurn && isMyHumanTurn;
-  const canPlayDevCard = gameState?.phase === 'main' && isMyHumanTurn;
-
-  const leftWidth = isMobile ? Math.max(logicalWindowSize.width * 0.18, 160) : 280;
-  const rightWidth = isMobile ? Math.max(logicalWindowSize.width * 0.20, 180) : 280;
-  const stageWidth = logicalWindowSize.width - leftWidth - rightWidth;
-  const headerHeight = isMobile ? 48 : 58;
-
-  const nextAction = (() => {
-    if (!gameState) return null;
-    const actingPlayerName = actingPlayer?.name || `玩家 ${activePlayerId + 1}`;
-    
-    if (gameState.phase === 'order_determination' || gameState.phase === 'initial_dice_roll') {
-      const myRolls = gameState.initialDiceRolls[myPlayerIndex];
-      const hasRolled = myRolls && myRolls.length > 0;
-      if (activePlayerId === myPlayerIndex) {
-        return hasRolled ? "等待结果..." : "请掷骰决定顺序";
-      }
-      return hasRolled ? "等待结果..." : `等待 ${actingPlayerName} 掷骰`;
-    }
-
-    if (gameState.phase === 'setup') {
-      return activePlayerId === myPlayerIndex 
-        ? "初始建设：请放置建筑" 
-        : `等待 ${actingPlayerName} 建设`;
-    }
-
-    if (activePlayerId === myPlayerIndex) {
-      if (!gameState.hasRolled && gameState.phase === 'main') return "请掷骰子回合开始";
-      if (gameState.phase === 'main') return "交易与建设中";
-      if (gameState.phase === 'discard') return "请弃置一半资源";
-      if (gameState.phase === 'robber' || gameState.phase === 'robber_move') return "请移动强盗";
-      if (gameState.phase === 'stealing') return "请选择窃取对象";
-      if (gameState.phase === 'road_building') return "建设道路/船只";
-      if (gameState.phase === 'year_of_plenty') return "领取丰收资源";
-      if (gameState.phase === 'monopoly') return "执行资源垄断";
-      if (gameState.phase === 'gold_selection') return "领取金矿奖励";
-    }
-
-    // Waiting for others
-    const phaseShortNames: Record<string, string> = {
-      'main': '回合中',
-      'discard': '弃牌中',
-      'robber': '移动强盗',
-      'robber_move': '移动强盗',
-      'stealing': '窃取中',
-      'road_building': '道路/船只建设',
-      'year_of_plenty': '丰收之年',
-      'monopoly': '垄断中',
-      'gold_selection': '奖励确认'
-    };
-    const phaseDesc = phaseShortNames[gameState.phase] || '行动中';
-    return `${actingPlayerName} ${phaseDesc}...`;
-  })();
-
-  return (
-    <>
+      </>
+    );
+  } else {
+    mainContent = (
+      <>
     {/* {isSpectator && roomState && (
       <button 
         onClick={handleReturnToLobby}
@@ -6070,6 +6148,25 @@ export default function App() {
     </div>
   </div>
   </>
+  );
+  }
+
+  return (
+    <>
+      {mainContent}
+      {showSailingScreen && (
+        <SailingLoadingScreen 
+          key="sailing-loader" 
+          onComplete={() => {
+            if (roomState) {
+              setShowSailingScreen(false);
+            }
+          }} 
+          onCancel={() => setShowSailingScreen(false)}
+          text={sailingText} 
+        />
+      )}
+    </>
   );
 }
 
