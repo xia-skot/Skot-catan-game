@@ -833,6 +833,7 @@ async function startServer() {
         }
       }
       
+      socket.emit('room_state', room);
       io.to(roomId).emit('room_state', room);
       
       if (room.gameState) {
@@ -1176,6 +1177,14 @@ async function startServer() {
       } else {
         socket.emit('active_rooms_list', activeRooms);
       }
+    });
+
+    socket.on('get_my_active_room', (playerId: string, playerName: string, callback: (room: any) => void) => {
+      if (typeof callback !== 'function') return;
+      const userRoom = Array.from(rooms.values()).find(r => 
+        r.players?.some((p: any) => (playerId && p.id === playerId) || (playerName && p.name === playerName))
+      );
+      callback(userRoom || null);
     });
 
     socket.on('admin_delete_room', (roomId: string) => {

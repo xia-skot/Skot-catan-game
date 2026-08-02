@@ -1372,18 +1372,9 @@ export default function App() {
       // Don't interrupt if we are already in a room or currently in the game view
       if (roomState || gameStarted || isJoinedLobby) return;
       
-      const isAdmin = currentUser.isAdmin || currentUser.role === 'admin';
-      socketService.getActiveRooms(isAdmin, (rooms) => {
-        if (!rooms) return;
-        const myId = currentUser.id;
-        const myName = currentUser.username;
-        
-        const userRoom = rooms.find((r: any) => 
-          r.status !== 'finished' && 
-          r.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName))
-        );
-        
-        if (userRoom && (!isRoomLocked || inputRoomId !== userRoom.roomId)) {
+      socketService.getMyActiveRoom(playerName, (userRoom: any) => {
+        if (!userRoom) return;
+        if (!isRoomLocked || inputRoomId !== userRoom.roomId) {
           setInputRoomId(userRoom.roomId);
           setIsRoomLocked(true);
           localStorage.setItem('catan_active_room', userRoom.roomId);
@@ -1398,7 +1389,7 @@ export default function App() {
     // Then periodically
     const interval = setInterval(checkUserRoom, 10000);
     return () => clearInterval(interval);
-  }, [currentUser, isAuthLoading, roomState, gameStarted, isJoinedLobby, isRoomLocked, inputRoomId]);
+  }, [currentUser, isAuthLoading, roomState, gameStarted, isJoinedLobby, isRoomLocked, inputRoomId, playerName]);
 
   useEffect(() => {
     if (isAuthLoading || !currentUser) return;
@@ -1453,6 +1444,40 @@ export default function App() {
     socketService.joinRoom(finalRoomId, playerName);
     setIsJoinedLobby(true);
   };
+
+  const handleFullLogout = useCallback(() => {
+    const activeRoom = roomState?.roomId || localStorage.getItem('catan_active_room');
+    if (activeRoom) {
+      socketService.leaveRoom(activeRoom);
+    }
+
+    localStorage.removeItem('catan_auth_token');
+    localStorage.removeItem('catan_player_name');
+    localStorage.removeItem('catan_guest_id');
+    localStorage.removeItem('catan_active_room');
+    localStorage.removeItem('catan_has_created_room');
+    localStorage.removeItem('catan_game_active');
+    localStorage.removeItem('catan_is_spectator');
+
+    const freshGuestId = Math.random().toString(36).substring(2, 10);
+    localStorage.setItem('catan_player_id', freshGuestId);
+    socketService.playerId = freshGuestId;
+
+    setCurrentUser(null);
+    setRoomState(null);
+    setIsRoomLocked(false);
+    setIsJoinedLobby(false);
+    setIsJoinSpectator(false);
+    setGameStarted(false);
+    setShowSailingScreen(false);
+    audioService.stopAllSfx();
+
+    const newRoomId = Math.floor(100000 + Math.random() * 900000).toString();
+    setInputRoomId(newRoomId);
+    setActiveLobbyTab('lobby');
+
+    window.history.replaceState({}, '', window.location.pathname);
+  }, [roomState?.roomId]);
 
   const handleCopyRoomCode = () => {
     const url = new URL(window.location.href);
@@ -3449,6 +3474,15 @@ export default function App() {
                       localStorage.removeItem('catan_is_spectator');
                     }
                     localStorage.setItem('catan_active_room', targetRoom);
+                    localStorage.setItem('catan_has_created_room', 'true');
+                    setIsRoomLocked(true);
+
+                    const newUrl = new URL(window.location.href);
+                    newUrl.searchParams.set('room', targetRoom);
+                    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+
+                    setIsJoinedLobby(true);
+                    socketService.connect();
                     socketService.joinRoom(targetRoom, playerName, asSpec);
                   }}
                   className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
@@ -3480,6 +3514,8 @@ export default function App() {
                 if (activeRoom) {
                   setInputRoomId(activeRoom);
                   const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                  setIsJoinedLobby(true);
+                  socketService.connect();
                   socketService.joinRoom(activeRoom, playerName, asSpec);
                 } else {
                   setActiveLobbyTab('lobby');
@@ -3488,6 +3524,10 @@ export default function App() {
               onJoinRoom={(roomId) => {
                 setInputRoomId(roomId);
                 localStorage.setItem('catan_active_room', roomId);
+                localStorage.setItem('catan_has_created_room', 'true');
+                setIsRoomLocked(true);
+                setIsJoinedLobby(true);
+                socketService.connect();
                 socketService.joinRoom(roomId, playerName);
               }}
               onSpectateRoom={(roomId) => {
@@ -3495,6 +3535,8 @@ export default function App() {
                 localStorage.setItem('catan_player_name', playerName);
                 localStorage.setItem('catan_is_spectator', 'true');
                 setIsJoinSpectator(true);
+                setIsJoinedLobby(true);
+                socketService.connect();
                 socketService.joinRoom(roomId, playerName, true);
               }}
              />
@@ -3513,14 +3555,7 @@ export default function App() {
               currentUser={currentUser}
               onClose={() => {}}
               onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
-              onLogout={() => {
-                localStorage.removeItem('catan_auth_token');
-                localStorage.removeItem('catan_player_name');
-                setCurrentUser(null);
-                setRoomState(null);
-                setInputRoomId(Math.floor(100000 + Math.random() * 900000).toString());
-                setActiveLobbyTab('lobby');
-              }}
+              onLogout={handleFullLogout}
               inline={true}
             />
           </div>

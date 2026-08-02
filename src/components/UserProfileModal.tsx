@@ -280,7 +280,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
             >
               <AdminDashboard 
                 onClose={() => {}} 
-                onLogout={() => {}}
+                onLogout={onLogout || (() => {})}
                 inline={true}
               />
             </motion.div>

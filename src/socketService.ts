@@ -104,29 +104,65 @@ class SocketService {
   }
 
   private emit(event: string, ...args: any[]) {
-    if (!this.socket?.connected) {
-      console.warn(`Socket not connected. Buffering ${event}...`);
-      this.connect();
-      
-      // Wait for connect event to flush this emit
-      if (this.socket) {
-        const flushEvent = () => {
-          this.socket?.emit(event, ...args);
-          this.socket?.off('connect', flushEvent);
-        };
-        this.socket.on('connect', flushEvent);
+    this.connect();
+
+    if (this.socket && this.socket.connected) {
+      try {
+        this.socket.emit(event, ...args);
+      } catch (err) {
+        console.error(`Error emitting ${event}:`, err);
       }
       return;
     }
-    try {
-      this.socket.emit(event, ...args);
-    } catch (err) {
-      console.error(`Error emitting ${event}:`, err);
+
+    if (this.socket) {
+      const flushEvent = () => {
+        try {
+          this.socket?.emit(event, ...args);
+        } catch (err) {
+          console.error(`Error flushing ${event}:`, err);
+        }
+      };
+      this.socket.once('connect', flushEvent);
+
+      // Immediately check if socket connected right as listener was attached
+      if (this.socket.connected) {
+        this.socket.off('connect', flushEvent);
+        try {
+          this.socket.emit(event, ...args);
+        } catch (err) {
+          console.error(`Error emitting ${event}:`, err);
+        }
+      }
     }
   }
 
   joinRoom(roomId: string, playerName: string, asSpectator: boolean = false) {
     this.emit('join_room', roomId, this.playerId, playerName, asSpectator);
+  }
+
+  getMyActiveRoom(playerName: string, callback: (room: RoomState | null) => void) {
+    this.connect();
+    if (!this.socket) {
+      setTimeout(() => this.getMyActiveRoom(playerName, callback), 100);
+      return;
+    }
+
+    let handled = false;
+    const timeout = setTimeout(() => {
+      if (!handled) {
+        handled = true;
+        callback(null);
+      }
+    }, 1500);
+
+    this.socket.emit('get_my_active_room', this.playerId, playerName, (room: RoomState | null) => {
+      if (!handled) {
+        handled = true;
+        clearTimeout(timeout);
+        callback(room || null);
+      }
+    });
   }
 
   getActiveRooms(isAdmin: boolean, callback: (rooms: RoomState[]) => void) {
