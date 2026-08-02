@@ -63,7 +63,7 @@ class SocketService {
       reconnectionDelayMax: 5000,
       timeout: 20000,
       autoConnect: true,
-      transports: ['websocket', 'polling']
+      transports: ['polling', 'websocket']
     });
 
     // Re-bind all sticky listeners whenever a new socket is created
@@ -138,6 +138,11 @@ class SocketService {
   }
 
   joinRoom(roomId: string, playerName: string, asSpectator: boolean = false) {
+    if (!this.playerId) {
+      this.playerId = localStorage.getItem('catan_player_id') || Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('catan_player_id', this.playerId);
+    }
+    console.log('[Socket] joinRoom emitted:', roomId, 'playerId:', this.playerId, 'playerName:', playerName);
     this.emit('join_room', roomId, this.playerId, playerName, asSpectator);
   }
 

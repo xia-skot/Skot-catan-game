@@ -5,7 +5,7 @@ const URL = typeof window !== 'undefined' ? window.location.origin : '';
 
 export const socket: Socket = io(URL, {
   autoConnect: false,
-  transports: ['websocket', 'polling'],
+  transports: ['polling', 'websocket'],
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,

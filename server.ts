@@ -120,7 +120,7 @@ async function startServer() {
     pingTimeout: 60000,
     pingInterval: 25000,
     connectTimeout: 45000,
-    transports: ['websocket', 'polling']
+    transports: ['polling', 'websocket']
   });
 
   // Log socket errors - but handle 'Session ID unknown' as a warning instead of error log
@@ -775,6 +775,8 @@ async function startServer() {
 
     socket.on('join_room', (roomId: string, playerId: string, playerName: string, asSpectator?: boolean) => {
       touchRoom(roomId);
+      if (!playerId) playerId = socket.id;
+      if (!playerName) playerName = '玩家';
       console.log('User joining room:', roomId, playerId, 'asSpectator:', asSpectator);
       socket.join(roomId);
       
