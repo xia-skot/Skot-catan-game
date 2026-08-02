@@ -100,8 +100,8 @@ export async function preloadAllAssets(
   // Step 1: Priority load sailboat and logo first
   broadcastProgress(5, '正在初始化关键动画资源...');
   await Promise.allSettled([
-    preloadSingleImage(SAILING_BOAT_IMG, 10000),
-    preloadSingleImage(CATAN_LOGO_IMG, 10000),
+    preloadSingleImage(SAILING_BOAT_IMG, 8000),
+    preloadSingleImage(CATAN_LOGO_IMG, 8000),
   ]);
 
   const totalImages = ALL_GAME_IMAGES.length;
@@ -112,13 +112,13 @@ export async function preloadAllAssets(
 
   const notifyProgress = (label: string) => {
     loadedAssets++;
-    const percent = Math.min(99, Math.round((loadedAssets / totalAssets) * 100));
+    const percent = Math.min(98, Math.round(5 + (loadedAssets / totalAssets) * 93));
     broadcastProgress(percent, label);
   };
 
-  // Preload all remaining images with 12s timeout each
+  // Preload all remaining images with 8s timeout each
   const imagePromises = ALL_GAME_IMAGES.map((src) => {
-    return preloadSingleImage(src, 12000).then(() => {
+    return preloadSingleImage(src, 8000).then(() => {
       notifyProgress('正在加载游戏贴图与图标...');
     });
   });

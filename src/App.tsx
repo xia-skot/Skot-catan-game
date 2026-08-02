@@ -434,13 +434,21 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
         if (!isMounted) return;
         setPreloadProgress(prev => {
           const target = realProgressRef.current;
-          if (prev >= 100) {
-            clearInterval(ticker);
+          
+          if (prev >= 100 && target >= 100) {
             return 100;
           }
-          const step = Math.max(1, Math.round((target - prev) * 0.15));
-          const next = Math.min(100, prev + step);
-          if (next >= 100 && !finishTriggeredRef.current && target >= 100) {
+
+          // Cap display progress at 99% until real target reaches 100%
+          const maxAllowed = target >= 100 ? 100 : 99;
+
+          let next = prev;
+          if (prev < target || (target >= 100 && prev < 100)) {
+            const step = Math.max(1, Math.round((target - prev) * 0.15));
+            next = Math.min(maxAllowed, prev + step);
+          }
+
+          if (next >= 100 && target >= 100 && !finishTriggeredRef.current) {
             finishTriggeredRef.current = true;
             setTimeout(() => {
               if (isMounted) {
@@ -449,24 +457,37 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
               }
             }, 200);
           }
+
           return next;
         });
       }, 50);
 
       preloadAllAssets((percent, label) => {
         if (isMounted) {
-          realProgressRef.current = percent;
+          realProgressRef.current = Math.max(realProgressRef.current, percent);
           if (label) setPreloadStatusText(label);
         }
       }).then(() => {
         if (isMounted) {
           realProgressRef.current = 100;
         }
+      }).catch(() => {
+        if (isMounted) {
+          realProgressRef.current = 100;
+        }
       });
+
+      // Safety timeout: Ensure realProgressRef becomes 100 after 6s so slow network never hangs forever
+      const safetyTimeout = setTimeout(() => {
+        if (isMounted && !finishTriggeredRef.current) {
+          realProgressRef.current = 100;
+        }
+      }, 6000);
 
       return () => {
         isMounted = false;
         clearInterval(ticker);
+        clearTimeout(safetyTimeout);
       };
     } else {
       setPreloadFinished(true);
@@ -475,7 +496,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
     const cancelTimer = setTimeout(() => {
       if (isMounted) setShowCancelBtn(true);
-    }, 8000);
+    }, 6000);
 
     return () => { 
       isMounted = false; 
@@ -2131,22 +2152,6 @@ export default function App() {
   }, [showSailingScreen, gameStarted, centerMap]);
 
   useEffect(() => {
-    const tryLockOrientation = () => {
-      try {
-        if (window.screen && window.screen.orientation && typeof (window.screen.orientation as any).lock === 'function') {
-          (window.screen.orientation as any).lock('landscape').catch(() => {});
-        }
-      } catch (e) {}
-    };
-
-    const unlockOrientation = () => {
-      try {
-        if (window.screen && window.screen.orientation && typeof (window.screen.orientation as any).unlock === 'function') {
-          (window.screen.orientation as any).unlock();
-        }
-      } catch (e) {}
-    };
-
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -2157,25 +2162,18 @@ export default function App() {
       setShowRightPanel(true);
       
       // Center map on screen resize
-      hasManuallyInteractedRef.current = false;
-      centerMap(true);
-
-      if (gameStarted && !showSailingScreen) {
-        tryLockOrientation();
-      } else if (!gameStarted && !isJoinedLobby) {
-        unlockOrientation();
+      if (gameStarted) {
+        hasManuallyInteractedRef.current = false;
+        centerMap(true);
       }
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
 
     // Initial enter game center
-    if (gameStarted && !showSailingScreen) {
+    if (gameStarted) {
       hasManuallyInteractedRef.current = false;
       centerMap(true);
-      tryLockOrientation();
-    } else if (!gameStarted && !isJoinedLobby) {
-      unlockOrientation();
     }
 
     return () => {
