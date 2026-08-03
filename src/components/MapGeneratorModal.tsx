@@ -35,7 +35,7 @@ export function MapGeneratorModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-transparent">
+    <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-transparent">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}

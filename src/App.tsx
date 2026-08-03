@@ -67,11 +67,106 @@ Konva.Stage.prototype.setPointersPositions = function (evt: any) {
     this._changedPointerPositions = [{ x: pos.x, y: pos.y, id: firstId }];
   }
 };
+
+// Global patch to fix native touch scrolling when the UI is CSS rotated 90deg
+if (typeof window !== 'undefined') {
+  let activeScrollTarget = null;
+  let startX = 0;
+  let startY = 0;
+  let scrollTopStart = 0;
+  let scrollLeftStart = 0;
+
+  const getScrollableParent = (node) => {
+    if (node == null) {
+      return null;
+    }
+    if (node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth) {
+      const style = window.getComputedStyle(node);
+      if (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowX === 'auto' || style.overflowX === 'scroll') {
+        return node;
+      }
+    }
+    return getScrollableParent(node.parentNode);
+  };
+
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    
+    // Check if we are inside a rotated container
+    const rotatedContainer = e.target.closest && e.target.closest('[data-portrait-rotated="true"]');
+    if (!rotatedContainer) return;
+
+    activeScrollTarget = getScrollableParent(e.target);
+    if (activeScrollTarget) {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      scrollTopStart = activeScrollTarget.scrollTop;
+      scrollLeftStart = activeScrollTarget.scrollLeft;
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1 || !activeScrollTarget) return;
+
+    const rotatedContainer = e.target.closest && e.target.closest('[data-portrait-rotated="true"]');
+    if (!rotatedContainer) return;
+    
+    const dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+
+    // Physical right (dx > 0) -> App up (scrollTop increases)
+    // Physical down (dy > 0) -> App right (scrollLeft increases)
+    const style = window.getComputedStyle(activeScrollTarget);
+    
+    let hasScrolled = false;
+    
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+      const maxScrollTop = activeScrollTarget.scrollHeight - activeScrollTarget.clientHeight;
+      const newScrollTop = scrollTopStart + dx;
+      
+      // Only prevent default if we are actually scrolling within bounds
+      if (maxScrollTop > 0) {
+          activeScrollTarget.scrollTop = newScrollTop;
+          hasScrolled = true;
+      }
+    }
+    
+    if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
+      const maxScrollLeft = activeScrollTarget.scrollWidth - activeScrollTarget.clientWidth;
+      // physical down (dy > 0) -> App Right. But wait, App Left is Physical Top.
+      // So physical down (dy > 0) is movement towards App Left.
+      // So scrollLeft should DECREASE?
+      // Let's re-verify X axis.
+      // App is rotated 90deg clockwise. Top is Right. Left is Top.
+      // Finger moves DOWN (towards App Left). dy > 0.
+      // Content should move towards App Left.
+      // Moving content towards left = scrolling right = scrollLeft INCREASES.
+      // So dy > 0 -> scrollLeft increases.
+      const newScrollLeft = scrollLeftStart - dy;
+      if (maxScrollLeft > 0) {
+          activeScrollTarget.scrollLeft = newScrollLeft;
+          hasScrolled = true;
+      }
+    }
+    
+    if (hasScrolled && e.cancelable) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+  
+  window.addEventListener('touchend', () => {
+    activeScrollTarget = null;
+  });
+  window.addEventListener('touchcancel', () => {
+    activeScrollTarget = null;
+  });
+}
+
 import { useCatanGame, getHexesForEdge, getHexesForVertex } from './useCatanGame';
 import { HexType, ResourceType, DevCardType, MapType, GameState } from './types';
 import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLORS, COSTS } from './constants';
 import { GameOverModal } from './components/GameOverModal';
-import { motion, AnimatePresence, useDragControls } from 'motion/react';
+import { motion, AnimatePresence, useDragControls, MotionConfig } from 'motion/react';
 import { audioService } from './audioService';
 import { preloadAllAssets, checkIsAssetsCached } from './assetPreloader';
 import { 
@@ -218,7 +313,7 @@ const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, fl
 };
 
 const PortraitOverlay = () => (
-  <div className="fixed inset-0 z-[9999] bg-stone-900/80 flex flex-col items-center justify-center text-white px-8 text-center animate-in fade-in duration-500 pointer-events-auto">
+  <div className="absolute inset-0 z-[9999] bg-stone-900/80 flex flex-col items-center justify-center text-white px-8 text-center animate-in fade-in duration-500 pointer-events-auto">
     <motion.div
       animate={{ rotate: [0, 90, 90, 0] }}
       transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", times: [0, 0.4, 0.6, 1] }}
@@ -593,7 +688,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto select-none">
+    <div className="absolute inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto select-none">
         <div className="w-full h-full relative">
             <style>{`
               ${paths.framesCss}
@@ -3694,7 +3789,7 @@ export default function App() {
       />
 
       {confirmAction && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-transparent transition-all">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-transparent transition-all">
           <div className="bg-white/95 border border-slate-200/90 rounded-xl p-4 shadow-xl max-w-[280px] sm:max-w-xs w-full mx-auto animate-in fade-in zoom-in-95 duration-150">
             <h3 className="text-xs sm:text-sm font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block shrink-0" />
@@ -3726,7 +3821,7 @@ export default function App() {
       <div style={flexibleContainerStyle}>
         <div className="flex flex-col sm:flex-row h-full w-full bg-[#f8fafc] font-sans overflow-y-auto sm:overflow-hidden no-scrollbar relative selection:bg-indigo-600 selection:text-white">
         {/* Decorative Background Gradient */}
-        <div className="fixed inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_rgba(79,70,229,0)_60%)] pointer-events-none z-0" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,_rgba(79,70,229,0.08)_0%,_rgba(79,70,229,0)_60%)] pointer-events-none z-0" />
         
         {/* Left Side: Branding & Controls */}
         <motion.div 
@@ -4563,7 +4658,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[100] bg-transparent flex items-center justify-center pointer-events-auto"
+                className="absolute inset-0 z-[100] bg-transparent flex items-center justify-center pointer-events-auto"
               >
                 <motion.div 
                   drag
@@ -5069,7 +5164,7 @@ export default function App() {
 {/* Exit Options Modal */}
       <AnimatePresence>
         {showExitOptions && (
-          <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+          <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
             <motion.div 
               drag
               dragListener={false}
@@ -5141,7 +5236,7 @@ export default function App() {
       {/* Reserve Room Modal */}
       <AnimatePresence>
         {showReserveRoomModal && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+          <div className="absolute inset-0 z-[300] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5277,7 +5372,7 @@ export default function App() {
 {/* Dissolve Room Confirmation Modal */}
       <AnimatePresence>
         {showDissolveRoomConfirm && (
-          <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+          <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
             <motion.div 
               drag
               dragListener={false}
@@ -5361,7 +5456,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+                className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
               >
                 <motion.div
                   key={`trade-alert-${offer.id}`}
@@ -5553,7 +5648,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-white flex flex-col items-center justify-center"
+            className="absolute inset-0 z-[200] bg-white flex flex-col items-center justify-center"
           >
             <motion.div 
                initial={{ scale: 0.8, opacity: 0 }}
@@ -5775,7 +5870,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
           >
             <motion.div 
               drag
@@ -5952,7 +6047,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
             onClick={() => setShowPlayerTradeModal(false)}
           >
             <motion.div 
@@ -6081,7 +6176,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
             onClick={() => setShowTradeModal(false)}
           >
             <motion.div 
@@ -6207,7 +6302,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"
+            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"
           >
             <motion.div 
               drag
@@ -6412,8 +6507,6 @@ export default function App() {
         </motion.aside>
       )}
     </AnimatePresence>
-    </div>
-
       <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
       <SoundSettingsModal 
         isOpen={showSoundModal} 
@@ -6434,14 +6527,24 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+    </div>
   </div>
   </>
   );
   }
 
   return (
-    <>
-      {mainContent}
+    <MotionConfig transformPagePoint={(point) => {
+      if (shouldApplyPortraitRotation) {
+        return {
+          x: point.y,
+          y: windowSize.width - point.x
+        };
+      }
+      return point;
+    }}>
+      <>
+        {mainContent}
       {showSailingScreen && (
         <SailingLoadingScreen 
           key="sailing-loader" 
@@ -6454,7 +6557,8 @@ export default function App() {
           text={sailingText} 
         />
       )}
-    </>
+      </>
+    </MotionConfig>
   );
 }
 

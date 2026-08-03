@@ -58,7 +58,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
-      className="fixed inset-0 z-[120] flex flex-col bg-stone-50 overflow-hidden w-full h-full"
+      className="absolute inset-0 z-[120] flex flex-col bg-stone-50 overflow-hidden w-full h-full"
     >
       {/* Header - More Compact */}
       <div className="px-3 py-2 sm:px-4 sm:py-3 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">

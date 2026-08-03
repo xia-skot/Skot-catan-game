@@ -245,7 +245,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
   }
 
   return (
-    <div className="fixed inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+    <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
       <motion.div
         drag
         dragListener={false}

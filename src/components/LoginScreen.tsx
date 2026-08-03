@@ -369,7 +369,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       {/* 游客自定义昵称弹框 (不依赖浏览器原生prompt，避免退出全屏) */}
       <AnimatePresence>
         {showGuestModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
             <motion.div
               initial={{ opacity: 0, scale: 0.9, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}

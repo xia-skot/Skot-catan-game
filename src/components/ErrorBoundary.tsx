@@ -26,7 +26,7 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="fixed inset-0 z-[9999] bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center font-sans">
+        <div className="absolute inset-0 z-[9999] bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center font-sans">
           <div className="max-w-md w-full bg-slate-800 border border-slate-700/80 rounded-2xl p-6 shadow-2xl animate-in fade-in duration-200">
             <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
               ⚠️

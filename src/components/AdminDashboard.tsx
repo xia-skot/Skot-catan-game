@@ -652,7 +652,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
         />
       )}
       {inspectingLoading && (
-        <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-xs z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-xs z-50 flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
         </div>
       )}

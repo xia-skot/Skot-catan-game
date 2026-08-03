@@ -739,7 +739,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 sm:p-6">
+      <div className="absolute inset-0 z-[500] flex items-center justify-center p-4 sm:p-6">
         <motion.div 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
