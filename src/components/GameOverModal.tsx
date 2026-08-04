@@ -73,47 +73,47 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
       className="absolute inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       {/* Header - More Compact */}
-      <div className="px-4 py-3 sm:px-6 sm:py-4 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
+      <div className="px-6 py-3.5 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg sm:rounded-xl flex items-center justify-center shadow-md rotate-3 ring-2 ring-yellow-400/10 shrink-0">
-            <Trophy size={18} className="text-white drop-shadow-sm sm:w-5 sm:h-5" />
+          <div className="w-10 h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-xl flex items-center justify-center shadow-md rotate-3 ring-2 ring-yellow-400/10 shrink-0">
+            <Trophy size={20} className="text-white drop-shadow-sm" />
           </div>
           <div className="text-left">
-            <h2 className="text-base sm:text-xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
-            <p className="text-[8px] sm:text-[10px] opacity-40 uppercase tracking-[0.2em] font-bold mt-0.5">The Golden Victory of Catan</p>
+            <h2 className="text-xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
+            <p className="text-[10px] opacity-40 uppercase tracking-[0.2em] font-bold mt-0.5">The Golden Victory of Catan</p>
           </div>
         </div>
 
         <button 
           onClick={onReturnToMap}
-          className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors shrink-0 cursor-pointer"
+          className="w-10 h-10 rounded-full flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors shrink-0 cursor-pointer"
           title="关闭/查看地图"
         >
-          <X size={20} className="sm:w-5 sm:h-5" />
+          <X size={20} />
         </button>
       </div>
 
       {/* Vertical & Horizontal Rankings Container */}
       <RotatedScroll 
         shouldApplyPortraitRotation={shouldApplyPortraitRotation}
-        className="flex-1 overflow-auto bg-white no-scrollbar relative z-10 px-2 pb-2 sm:px-4 sm:pb-4"
+        className="flex-1 overflow-auto bg-white no-scrollbar relative z-10 px-4 pb-4"
       >
-        <div className="min-w-max flex flex-col gap-2">
+        <div className="w-full flex flex-col gap-2">
           {/* Header Row */}
           {sortedPlayers.length > 0 && (
-            <div className="sticky top-0 z-40 flex items-end mb-1 border-b border-black/5 pb-2 pt-2 sm:pt-4 bg-white">
-              <div className="sticky left-0 z-50 w-28 sm:w-36 lg:w-48 shrink-0 bg-white" />
-              <div className="flex items-center gap-3 sm:gap-5 px-3 sm:px-4 bg-white flex-1">
+            <div className="sticky top-0 z-40 flex items-end mb-1 border-b border-black/5 pb-2 pt-3 bg-white">
+              <div className="sticky left-0 z-50 w-44 shrink-0 bg-white" />
+              <div className="grid grid-cols-6 items-center px-4 bg-white flex-1 min-w-[300px]">
                 {sortedPlayers[0].stats.vpBreakdown.map((item) => (
-                  <div key={item.id} className="flex flex-col items-center gap-1 min-w-[32px] sm:min-w-[40px]">
-                    <item.icon size={14} className="sm:w-4 sm:h-4 text-stone-400" />
-                    <span className="text-[8px] sm:text-[9px] font-bold text-stone-400 uppercase tracking-widest whitespace-nowrap">
+                  <div key={item.id} className="flex flex-col items-center justify-center gap-1">
+                    <item.icon size={16} className="text-stone-400" />
+                    <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest whitespace-nowrap">
                       {item.label}
                     </span>
                   </div>
                 ))}
               </div>
-              <div className="sticky right-0 z-50 w-16 sm:w-20 shrink-0 bg-white" />
+              <div className="sticky right-0 z-50 w-20 shrink-0 bg-white" />
             </div>
           )}
           {sortedPlayers.map((player, index) => {
@@ -132,42 +132,42 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
                 }`}
               >
                 {/* Left Section: Rank & Player Info (Sticky) */}
-                <div className={`sticky left-0 z-20 flex items-center gap-3 shrink-0 w-28 sm:w-36 lg:w-48 py-2 px-2 sm:px-3 transition-colors ${
+                <div className={`sticky left-0 z-20 flex items-center gap-3 shrink-0 w-44 py-2.5 px-3 transition-colors ${
                   isWinner ? 'bg-amber-50/90 rounded-l-xl' : 'bg-white group-hover:bg-stone-50'
                 }`}>
                   <div className="relative flex-shrink-0">
                     <div 
-                      className={`flex items-center justify-center text-white font-serif font-black italic shadow-sm relative z-10 w-7 h-7 sm:w-8 sm:h-8 rounded-md sm:rounded-lg text-xs sm:text-sm`}
+                      className={`flex items-center justify-center text-white font-serif font-black italic shadow-sm relative z-10 w-8 h-8 rounded-lg text-sm`}
                       style={{ backgroundColor: player.color }}
                     >
                       #{index + 1}
                     </div>
                     {isWinner && (
-                      <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-black w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] shadow-sm border border-white z-20">
+                      <div className="absolute -top-1.5 -right-1.5 bg-yellow-400 text-black w-5 h-5 rounded-full flex items-center justify-center text-[11px] shadow-sm border border-white z-20">
                         👑
                       </div>
                     )}
                   </div>
                   
                   <div className="flex flex-col min-w-0 justify-center">
-                    <span className="text-xs sm:text-sm font-black text-slate-900 truncate leading-tight">
+                    <span className="text-sm font-black text-slate-900 truncate leading-tight">
                       {player.name}
                     </span>
                   </div>
                 </div>
 
                 {/* Middle Section: Horizontal Score Breakdown */}
-                <div className="flex items-center gap-3 sm:gap-5 px-3 sm:px-4 py-2 sm:py-3 bg-transparent flex-1">
+                <div className="grid grid-cols-6 items-center px-4 py-2.5 bg-transparent flex-1 min-w-[300px]">
                   {player.stats.vpBreakdown.map((item) => (
                     <div 
                       key={item.id} 
-                      className={`flex flex-col items-center justify-center min-w-[32px] sm:min-w-[40px] transition-opacity ${
+                      className={`flex flex-col items-center justify-center transition-opacity ${
                         item.points > 0 
                         ? 'opacity-100' 
                         : 'opacity-30 grayscale'
                       }`}
                     >
-                      <span className={`text-[12px] sm:text-[14px] font-serif font-black italic leading-none ${item.points > 0 ? 'text-amber-600' : 'text-stone-400'}`}>
+                      <span className={`text-[14px] font-serif font-black italic leading-none ${item.points > 0 ? 'text-amber-600' : 'text-stone-400'}`}>
                         {item.points > 0 ? `+${item.points}` : '0'}
                       </span>
                     </div>
@@ -175,10 +175,10 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
                 </div>
 
                 {/* Right Section: Total Score (Sticky) */}
-                <div className={`sticky right-0 z-20 flex items-center justify-end w-16 sm:w-20 shrink-0 py-2 px-2 sm:px-4 transition-colors ${
+                <div className={`sticky right-0 z-20 flex items-center justify-end w-20 shrink-0 py-2.5 px-4 transition-colors ${
                   isWinner ? 'bg-amber-50/90 rounded-r-xl' : 'bg-white group-hover:bg-stone-50'
                 }`}>
-                  <span className={`text-xl sm:text-2xl font-serif font-black italic tabular-nums leading-none ${isWinner ? 'text-amber-600' : 'text-slate-800'}`}>
+                  <span className={`text-2xl font-serif font-black italic tabular-nums leading-none ${isWinner ? 'text-amber-600' : 'text-slate-800'}`}>
                     {player.stats.totalVp}
                   </span>
                 </div>
