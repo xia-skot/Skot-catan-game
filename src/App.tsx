@@ -93,10 +93,10 @@ if (typeof window !== 'undefined') {
     if (e.touches.length !== 1) return;
     
     // Check if we are inside a rotated container
-    const rotatedContainer = e.target.closest && e.target.closest('[data-portrait-rotated="true"]');
+    const rotatedContainer = (e.target as Element).closest && (e.target as Element).closest('[data-portrait-rotated="true"]');
     if (!rotatedContainer) return;
 
-    activeScrollTarget = getScrollableParent(e.target);
+    activeScrollTarget = getScrollableParent(e.target as Element);
     if (activeScrollTarget) {
       startX = e.touches[0].clientX;
       startY = e.touches[0].clientY;
@@ -108,7 +108,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('touchmove', (e) => {
     if (e.touches.length !== 1 || !activeScrollTarget) return;
 
-    const rotatedContainer = e.target.closest && e.target.closest('[data-portrait-rotated="true"]');
+    const rotatedContainer = (e.target as Element).closest && (e.target as Element).closest('[data-portrait-rotated="true"]');
     if (!rotatedContainer) return;
     
     const dx = e.touches[0].clientX - startX;
@@ -3558,14 +3558,14 @@ export default function App() {
         </div>
       );
     }
-    return content;
+    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }}>{content}</div>;
   };
 
   let mainContent: React.ReactNode = null;
 
   if (!roomState) {
     mainContent = renderNonGameWrapper(
-      <div className="flex flex-col h-[100dvh] w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
+      <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
         
         {activeLobbyTab === 'lobby' && (
           <motion.div 
@@ -3796,7 +3796,7 @@ export default function App() {
       />
 
       {confirmAction && (
-        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-transparent transition-all">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-transparent transition-all pointer-events-auto">
           <div className="bg-white/95 border border-slate-200/90 rounded-xl p-4 shadow-xl max-w-[280px] sm:max-w-xs w-full mx-auto animate-in fade-in zoom-in-95 duration-150">
             <h3 className="text-xs sm:text-sm font-black text-slate-800 mb-1.5 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block shrink-0" />
@@ -4471,7 +4471,7 @@ export default function App() {
               initial={{ width: leftWidth }}
               animate={{ width: leftWidth }}
               exit={{ width: 0 }}
-              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white h-full max-h-full min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden shrink-0 z-50 relative`}
+              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white h-full max-h-full min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
             >
               <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
             <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
@@ -4564,7 +4564,7 @@ export default function App() {
                                   ) : (
                                     <button 
                                       onClick={() => setConfirmDevCard(type)}
-                                      disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn || visiblePlayer.id !== me.id}
+                                      disabled={!canPlayDevCard || gameState.hasPlayedDevCardThisTurn || visiblePlayer.id !== me.id || confirmDevCard !== null}
                                       className="text-[10px] font-black uppercase tracking-wider bg-red-600 text-white px-2.5 py-1.5 rounded-full hover:bg-red-700 transition-all shadow-sm active:scale-95 disabled:opacity-20 disabled:grayscale disabled:cursor-not-allowed"
                                     >
                                       使用
@@ -4659,70 +4659,7 @@ export default function App() {
 
           <main className="flex-1 relative flex flex-col min-h-0 bg-stone-100/50">
             <AnimatePresence>
-              {confirmDevCard && (
-              <motion.div 
-                ref={devCardOverlayRef}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-[100] bg-transparent flex items-center justify-center pointer-events-auto"
-              >
-                <motion.div 
-                  drag
-                  dragConstraints={devCardOverlayRef}
-                  dragElastic={0.1}
-                  dragMomentum={false}
-                  onClick={(e) => e.stopPropagation()}
-                  initial={{ scale: 0.9, y: 20 }}
-                  animate={{ scale: 1, y: 0 }}
-                  exit={{ scale: 0.9, y: 20 }}
-                  className="bg-white border-2 border-red-200 w-[150px] sm:w-[170px] rounded-2xl shadow-2xl p-3 sm:p-4 pt-2.5 sm:pt-3 text-center pointer-events-auto cursor-grab active:cursor-grabbing select-none"
-                >
-                  {/* Poker Card Visual Header / Illustration */}
-                  <div className="w-12 h-18 sm:w-14 sm:h-20 rounded-lg bg-white border border-stone-100 shadow-sm mx-auto flex items-center justify-center p-1 mb-2 relative overflow-hidden group">
-                    <SmartImg src={getDevCardImg(confirmDevCard)} alt="dev card" className="w-full h-full object-contain transform group-hover:scale-105 transition-transform duration-300" />
-                    <div className="absolute top-0.5 left-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">CATAN</div>
-                    <div className="absolute bottom-0.5 right-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">DEV</div>
-                  </div>
-
-                  <h2 className="text-[11px] sm:text-xs font-serif font-black text-stone-900 mb-0.5">
-                    {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
-                     confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
-                     confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
-                     confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '资源垄断'}
-                  </h2>
-                  <p className="text-[8px] sm:text-[9px] font-medium text-stone-500 mb-2 leading-tight px-0.5">
-                    {confirmDevCard === DevCardType.Knight ? '移动强盗并偷取资源卡。' : 
-                     confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
-                     confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
-                     confirmDevCard === DevCardType.YearOfPlenty ? '免费领取 2 张资源。' : '选择资源，玩家必须交出。'}
-                  </p>
-                  
-                  <div className="space-y-1.5 pointer-events-auto">
-                    <button 
-                      onClick={() => {
-                        playDevCard(confirmDevCard);
-                        setConfirmDevCard(null);
-                      }}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-black uppercase tracking-widest text-[11px] shadow-sm transition-all active:scale-95 pointer-events-auto cursor-pointer"
-                    >
-                      确认使用
-                    </button>
-                    <button 
-                      onClick={() => setConfirmDevCard(null)}
-                      className="w-full bg-stone-50 hover:bg-stone-100 text-stone-500 py-2.5 rounded-lg font-bold uppercase tracking-wider text-[11px] transition-colors pointer-events-auto cursor-pointer"
-                    >
-                      取消
-                    </button>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-
-          <AnimatePresence>
-            {devCardOverlay && (
+              {devCardOverlay && (
               <motion.div 
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -4766,7 +4703,7 @@ export default function App() {
 
           {/* Connection Error Banner */}
           {!isConnected && (
-            <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-auto">
+            <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-transparent pointer-events-auto">
               <div className="bg-red-500 text-white px-8 py-6 rounded-[2rem] shadow-2xl shadow-red-500/20 text-center flex flex-col items-center animate-pulse">
                 <RefreshCw size={48} className="animate-spin mb-4" />
                 <h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-sm">连接已断开</h3>
@@ -5168,10 +5105,137 @@ export default function App() {
             )}
           </AnimatePresence>
         
+</main>
+
+        {/* Right Panel */}
+        <AnimatePresence>
+          {showRightPanel && (
+            <motion.aside 
+              initial={{ width: rightWidth }}
+              animate={{ width: rightWidth }}
+              exit={{ width: 0 }}
+              className={`border-l border-black/5 ${isMobile ? 'p-1' : 'p-2 lg:p-2.5'} flex flex-col h-full bg-white overflow-hidden shrink-0 z-50 relative`}
+            >
+              <section className="flex-1 flex flex-col min-h-0">
+                <div className="flex items-center justify-between mb-1 shrink-0">
+                  <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
+                </div>
+                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
+              {gameState?.phase === 'road_building' ? (
+                <div className="flex-1 flex items-center justify-center text-center p-4">
+                  <p className="text-xs font-bold text-gray-500">
+                    道路建设：<br/>请在地图上点击建设 2 条免资源的道路
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <BuildItem 
+                    id="build-road"
+                    compact={isMobile}
+                    icon={<Hammer size={16} />} 
+                    label="道路" 
+                    cost={COSTS.road} 
+                    active={buildMode === 'road'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.road) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
+                  />
+                  <BuildItem 
+                    id="build-ship"
+                    compact={isMobile}
+                    icon={<ShipIcon size={16} />} 
+                    label="船只" 
+                    cost={COSTS.ship} 
+                    active={buildMode === 'ship'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.ship) || gameState?.mapType === 'standard') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
+                  />
+                  <BuildItem 
+                    id="build-settlement"
+                    compact={isMobile}
+                    icon={<Home size={16} />} 
+                    label="村庄" 
+                    cost={COSTS.settlement} 
+                    active={buildMode === 'settlement'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || (!canAfford(COSTS.settlement) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount > totalRoadsAndShips)}
+                    onClick={() => handleSetBuildMode(buildMode === 'settlement' ? null : 'settlement')} 
+                  />
+                  <BuildItem 
+                    id="build-city"
+                    compact={isMobile}
+                    icon={<Trophy size={16} />} 
+                    label="城市" 
+                    cost={COSTS.city} 
+                    active={buildMode === 'city'}
+                    activeColor={currentPlayer?.color}
+                    disabled={!canBuild || !canAfford(COSTS.city) || gameState?.phase === 'setup'}
+                    onClick={() => handleSetBuildMode(buildMode === 'city' ? null : 'city')} 
+                  />
+                  <BuildItem 
+                    id="buy-dev-card"
+                    compact={isMobile}
+                    icon={<BookOpen size={16} />} 
+                    label="发展卡" 
+                    cost={COSTS.devCard} 
+                    disabled={!canBuild || !canAfford(COSTS.devCard) || gameState?.phase === 'setup'}
+                    onClick={buyDevCard} 
+                  />
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* Removed duplicate development cards section here */}
+
+          <section className="pt-1.5 mt-auto border-t border-black/5 space-y-1">
+            <div className={`flex ${isMobile ? 'flex-col gap-1' : 'gap-1.5'}`}>
+              <button 
+                id="trade-bank-button"
+                onClick={() => setShowTradeModal(true)}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Repeat size={isMobile ? 12 : 14} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>银行兑换</span>
+              </button>
+              <button 
+                id="trade-player-button"
+                onClick={openPlayerTradeModal}
+                disabled={!canTrade}
+                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              >
+                <Users size={isMobile ? 12 : 14} className="opacity-40" />
+                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>玩家交易</span>
+              </button>
+            </div>
+            <div className="relative">
+               <div className="relative group">
+                <button 
+                  id="end-turn-button"
+                  onClick={nextTurn}
+                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination' || isDiceRolling}
+                  className={`w-full flex items-center justify-center gap-1 ${isMobile ? 'rounded-lg h-7' : 'rounded-lg h-10'} bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed`}
+                >
+                  <ChevronRight size={14} className="opacity-40" />
+                  <span className={`${isMobile ? 'text-[9px]' : 'text-xs'} font-bold uppercase tracking-widest`}>结束回合</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </motion.aside>
+      )}
+    </AnimatePresence>
+
+      {/* Game Modals (Moved to root of gameContainerRef to cover full viewport including header and panels) */}
 {/* Exit Options Modal */}
       <AnimatePresence>
         {showExitOptions && (
-          <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+          <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}>
             <motion.div 
               drag
               dragListener={false}
@@ -5243,7 +5307,11 @@ export default function App() {
       {/* Reserve Room Modal */}
       <AnimatePresence>
         {showReserveRoomModal && (
-          <div className="absolute inset-0 z-[300] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}>
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -5379,7 +5447,7 @@ export default function App() {
 {/* Dissolve Room Confirmation Modal */}
       <AnimatePresence>
         {showDissolveRoomConfirm && (
-          <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+          <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
             <motion.div 
               drag
               dragListener={false}
@@ -5463,7 +5531,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+                className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
               >
                 <motion.div
                   key={`trade-alert-${offer.id}`}
@@ -5477,7 +5545,7 @@ export default function App() {
                   initial={{ scale: 0.95, y: 10 }}
                   animate={{ scale: 1, y: 0 }}
                   exit={{ scale: 0.95, y: 10 }}
-                  className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[90vh] w-[300px] sm:w-[325px] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+                  className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[90%] w-[300px] sm:w-[325px] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
                 >
                   <div 
                     onPointerDown={(e) => activeTradeDragControls.start(e)}
@@ -5683,7 +5751,7 @@ export default function App() {
             initial={{ opacity: 0, x: 300 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 300 }}
-            className="fixed top-20 right-4 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-black/5 w-80 z-[300] max-h-[80vh] overflow-y-auto no-scrollbar"
+            className="fixed top-20 right-4 bg-white/90 backdrop-blur-xl p-6 rounded-3xl shadow-2xl border border-black/5 w-80 z-[300] max-h-[80%] overflow-y-auto no-scrollbar"
           >
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-black uppercase tracking-widest text-xs">调试控制台</h3>
@@ -5877,7 +5945,11 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <motion.div 
               drag
@@ -5890,7 +5962,7 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 rounded-2xl w-[90%] max-w-[280px] sm:max-w-[300px] max-h-[92vh] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              className="bg-white border border-slate-200 rounded-2xl w-[90%] max-w-[280px] sm:max-w-[300px] max-h-[92%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               {/* Header */}
               <div 
@@ -6054,8 +6126,11 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
-            onClick={() => setShowPlayerTradeModal(false)}
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setShowPlayerTradeModal(false); }}
           >
             <motion.div 
               drag
@@ -6183,8 +6258,11 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
-            onClick={() => setShowTradeModal(false)}
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setShowTradeModal(false); }}
           >
             <motion.div 
               drag
@@ -6309,7 +6387,11 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <motion.div 
               drag
@@ -6392,128 +6474,89 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-</main>
 
-        {/* Right Panel */}
-        <AnimatePresence>
-          {showRightPanel && (
-            <motion.aside 
-              initial={{ width: rightWidth }}
-              animate={{ width: rightWidth }}
-              exit={{ width: 0 }}
-              className={`border-l border-black/5 ${isMobile ? 'p-1' : 'p-2 lg:p-2.5'} flex flex-col h-full bg-white overflow-hidden shrink-0 z-50 relative`}
+
+      {/* Dev Card Confirmation Backdrop & Modal */}
+      <AnimatePresence>
+        {confirmDevCard && (
+          <>
+            {/* Transparent click blocker backdrop positioned under left panel but above main UI */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[99998] bg-transparent pointer-events-auto cursor-default select-none"
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            />
+            {/* Confirmation Card Popup Modal on absolute top layer */}
+            <motion.div 
+              ref={devCardOverlayRef}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100002] bg-transparent flex items-center justify-center p-4 pointer-events-none"
             >
-              <section className="flex-1 flex flex-col min-h-0">
-                <div className="flex items-center justify-between mb-1 shrink-0">
-                  <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
-                </div>
-                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
-              {gameState?.phase === 'road_building' ? (
-                <div className="flex-1 flex items-center justify-center text-center p-4">
-                  <p className="text-xs font-bold text-gray-500">
-                    道路建设：<br/>请在地图上点击建设 2 条免资源的道路
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <BuildItem 
-                    id="build-road"
-                    compact={isMobile}
-                    icon={<Hammer size={16} />} 
-                    label="道路" 
-                    cost={COSTS.road} 
-                    active={buildMode === 'road'}
-                    activeColor={currentPlayer?.color}
-                    disabled={!canBuild || (!canAfford(COSTS.road) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
-                    onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
-                  />
-                  <BuildItem 
-                    id="build-ship"
-                    compact={isMobile}
-                    icon={<ShipIcon size={16} />} 
-                    label="船只" 
-                    cost={COSTS.ship} 
-                    active={buildMode === 'ship'}
-                    activeColor={currentPlayer?.color}
-                    disabled={!canBuild || (!canAfford(COSTS.ship) || gameState?.mapType === 'standard') || (gameState?.phase === 'setup' && settlementsCount <= totalRoadsAndShips)}
-                    onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
-                  />
-                  <BuildItem 
-                    id="build-settlement"
-                    compact={isMobile}
-                    icon={<Home size={16} />} 
-                    label="村庄" 
-                    cost={COSTS.settlement} 
-                    active={buildMode === 'settlement'}
-                    activeColor={currentPlayer?.color}
-                    disabled={!canBuild || (!canAfford(COSTS.settlement) && gameState?.phase !== 'setup') || (gameState?.phase === 'setup' && settlementsCount > totalRoadsAndShips)}
-                    onClick={() => handleSetBuildMode(buildMode === 'settlement' ? null : 'settlement')} 
-                  />
-                  <BuildItem 
-                    id="build-city"
-                    compact={isMobile}
-                    icon={<Trophy size={16} />} 
-                    label="城市" 
-                    cost={COSTS.city} 
-                    active={buildMode === 'city'}
-                    activeColor={currentPlayer?.color}
-                    disabled={!canBuild || !canAfford(COSTS.city) || gameState?.phase === 'setup'}
-                    onClick={() => handleSetBuildMode(buildMode === 'city' ? null : 'city')} 
-                  />
-                  <BuildItem 
-                    id="buy-dev-card"
-                    compact={isMobile}
-                    icon={<BookOpen size={16} />} 
-                    label="发展卡" 
-                    cost={COSTS.devCard} 
-                    disabled={!canBuild || !canAfford(COSTS.devCard) || gameState?.phase === 'setup'}
-                    onClick={buyDevCard} 
-                  />
-                </>
-              )}
-            </div>
-          </section>
-
-          {/* Removed duplicate development cards section here */}
-
-          <section className="pt-1.5 mt-auto border-t border-black/5 space-y-1">
-            <div className={`flex ${isMobile ? 'flex-col gap-1' : 'gap-1.5'}`}>
-              <button 
-                id="trade-bank-button"
-                onClick={() => setShowTradeModal(true)}
-                disabled={!canTrade}
-                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
+              <motion.div 
+                drag
+                dragConstraints={devCardOverlayRef}
+                dragElastic={0.1}
+                dragMomentum={false}
+                onClick={(e) => e.stopPropagation()}
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white border-2 border-red-200 w-[160px] sm:w-[190px] rounded-2xl shadow-2xl p-3.5 sm:p-5 text-center pointer-events-auto cursor-grab active:cursor-grabbing select-none"
               >
-                <Repeat size={isMobile ? 12 : 14} className="opacity-40 group-hover:rotate-180 transition-transform duration-500" />
-                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>银行兑换</span>
-              </button>
-              <button 
-                id="trade-player-button"
-                onClick={openPlayerTradeModal}
-                disabled={!canTrade}
-                className={`flex-1 flex items-center justify-center ${isMobile ? 'gap-1 p-2 rounded-lg h-6' : 'gap-1.5 p-1 rounded-lg h-9'} bg-white border border-black/5 ${!canTrade ? 'cursor-not-allowed text-black' : 'hover:border-black/20 hover:shadow-xl group'} transition-all`}
-              >
-                <Users size={isMobile ? 12 : 14} className="opacity-40" />
-                <span className={`${isMobile ? 'text-[8px]' : 'text-xs'} font-bold uppercase tracking-widest whitespace-nowrap`}>玩家交易</span>
-              </button>
-            </div>
-            <div className="relative">
-               <div className="relative group">
-                <button 
-                  id="end-turn-button"
-                  onClick={nextTurn}
-                  disabled={!isMyHumanTurn || (gameState?.phase === 'main' && !gameState.hasRolled) || gameState?.playingDevCard != null || (gameState?.phase === 'robber') || gameState?.phase === 'discard' || gameState?.phase === 'initial_dice_roll' || gameState?.phase === 'order_determination' || isDiceRolling}
-                  className={`w-full flex items-center justify-center gap-1 ${isMobile ? 'rounded-lg h-7' : 'rounded-lg h-10'} bg-black text-white hover:bg-zinc-800 transition-all group disabled:opacity-30 disabled:cursor-not-allowed`}
-                >
-                  <ChevronRight size={14} className="opacity-40" />
-                  <span className={`${isMobile ? 'text-[9px]' : 'text-xs'} font-bold uppercase tracking-widest`}>结束回合</span>
-                </button>
-              </div>
-            </div>
-          </section>
-        </motion.aside>
-      )}
-    </AnimatePresence>
+                {/* Poker Card Visual Header / Illustration */}
+                <div className="w-12 h-18 sm:w-14 sm:h-20 rounded-lg bg-white border border-stone-100 shadow-sm mx-auto flex items-center justify-center p-1 mb-2 relative overflow-hidden group">
+                  <SmartImg src={getDevCardImg(confirmDevCard)} alt="dev card" className="w-full h-full object-contain transform group-hover:scale-105 transition-transform duration-300" />
+                  <div className="absolute top-0.5 left-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">CATAN</div>
+                  <div className="absolute bottom-0.5 right-1 text-[5px] font-black text-red-600/20 uppercase tracking-tighter">DEV</div>
+                </div>
+
+                <h2 className="text-xs sm:text-sm font-serif font-black text-stone-900 mb-0.5">
+                  {confirmDevCard === DevCardType.Knight ? '发动骑士' : 
+                   confirmDevCard === DevCardType.VictoryPoint ? '使用胜利点' :
+                   confirmDevCard === DevCardType.RoadBuilding ? '道路建设' :
+                   confirmDevCard === DevCardType.YearOfPlenty ? '丰收之年' : '资源垄断'}
+                </h2>
+                <p className="text-[9px] sm:text-[10px] font-medium text-stone-500 mb-3 leading-tight px-0.5">
+                  {confirmDevCard === DevCardType.Knight ? '移动强盗并偷取资源卡。' : 
+                   confirmDevCard === DevCardType.VictoryPoint ? '直接获得 1 点胜利点。' :
+                   confirmDevCard === DevCardType.RoadBuilding ? '免费建造 2 条道路。' :
+                   confirmDevCard === DevCardType.YearOfPlenty ? '免费领取 2 张资源。' : '选择资源，玩家必须交出。'}
+                </p>
+                
+                <div className="space-y-1.5 pointer-events-auto">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playDevCard(confirmDevCard);
+                      setConfirmDevCard(null);
+                    }}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl font-black uppercase tracking-widest text-[11px] shadow-md transition-all active:scale-95 pointer-events-auto cursor-pointer"
+                  >
+                    确认使用
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDevCard(null);
+                    }}
+                    className="w-full bg-stone-100 hover:bg-stone-200 text-stone-600 py-2 rounded-xl font-bold uppercase tracking-wider text-[11px] transition-colors pointer-events-auto cursor-pointer"
+                  >
+                    取消
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
       <SoundSettingsModal 
         isOpen={showSoundModal} 
@@ -6521,21 +6564,21 @@ export default function App() {
         isAdmin={currentUser?.role === 'admin'}
         gameContainerRef={gameContainerRef}
       />
-      
-      {/* Game Over Modal */}
-      <AnimatePresence>
-        {showGameOver && (
-          <GameOverModal 
-            gameState={gameState} 
-            maxWidth={stageWidth}
-            onReturnToLobby={handleReturnToLobby}
-            onReturnToMap={handleReturnToMap}
-          />
-        )}
-      </AnimatePresence>
     </div>
     </div>
   </div>
+
+  {/* Game Over Modal (Root level for full screen overlay & iOS compatibility) */}
+  <AnimatePresence>
+    {showGameOver && (
+      <GameOverModal 
+        gameState={gameState} 
+        maxWidth={stageWidth}
+        onReturnToLobby={handleReturnToLobby}
+        onReturnToMap={handleReturnToMap}
+      />
+    )}
+  </AnimatePresence>
   </>
   );
   }

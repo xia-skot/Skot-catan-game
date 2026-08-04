@@ -187,7 +187,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90vh]'}`}
+      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90%]'}`}
     >
       {/* Header Profile Section */}
       <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-4 shadow-sm'}`}>
@@ -705,7 +705,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4"
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}>
       <motion.div 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="absolute inset-0 bg-transparent"

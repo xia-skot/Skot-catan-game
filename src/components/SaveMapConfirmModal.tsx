@@ -25,7 +25,11 @@ export function SaveMapConfirmModal({ isOpen, onClose, defaultName, isAdmin, onS
   if (!isOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}>
       <div className="absolute inset-0 bg-transparent" onClick={onClose} />
       
       <motion.div 

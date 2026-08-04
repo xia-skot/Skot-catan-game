@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, useDragControls } from 'motion/react';
-import { X, Volume2, VolumeX, Music, BellRing, Sliders, Play, RotateCcw, Shield } from 'lucide-react';
+import { X, Volume2, VolumeX, Music, BellRing, Sliders, RotateCcw, Shield } from 'lucide-react';
 import { audioService, SoundEqualizer, DEFAULT_EQUALIZER, SoundType } from '../audioService';
 import { socketService } from '../socketService';
 
@@ -43,6 +43,21 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
 
   if (!isOpen) return null;
 
+  const lastPreviewRef = React.useRef<{ [key: string]: number }>({});
+
+  const previewAudio = (type: SoundType) => {
+    if (!enabled) return;
+    const now = Date.now();
+    if (!lastPreviewRef.current[type] || now - lastPreviewRef.current[type] > 150) {
+      lastPreviewRef.current[type] = now;
+      if (type === 'bgm') {
+        audioService.playBgm();
+      } else {
+        audioService.play(type);
+      }
+    }
+  };
+
   const handleToggle = () => {
     const nextEnabled = !enabled;
     audioService.enabled = nextEnabled;
@@ -56,16 +71,14 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
     const val = Number(e.target.value);
     setBgmVol(val);
     audioService.bgmVolume = val / 100;
+    previewAudio('bgm');
   };
 
   const handleSfxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value);
     setSfxVol(val);
     audioService.sfxVolume = val / 100;
-  };
-
-  const handleSfxMouseUp = () => {
-    audioService.play('click');
+    previewAudio('resource');
   };
 
   const handleEqChange = (key: keyof SoundEqualizer, val: number) => {
@@ -73,6 +86,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
     setEqualizer(newEq);
     audioService.setEqualizer(newEq);
     socketService.updateSoundSettings(newEq);
+    previewAudio(key as SoundType);
 
     const token = localStorage.getItem('catan_auth_token');
     if (token) {
@@ -171,8 +185,6 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
           max="100"
           value={sfxVol}
           onChange={handleSfxChange}
-          onMouseUp={handleSfxMouseUp}
-          onTouchEnd={handleSfxMouseUp}
           disabled={!enabled}
           className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
         />
@@ -197,7 +209,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
             </button>
           </div>
 
-          <div className="space-y-2.5 bg-slate-50/30 border border-slate-100/50 p-3 rounded-xl max-h-[160px] overflow-y-auto no-scrollbar">
+          <div className="space-y-2.5 bg-slate-50/30 border border-slate-100/50 p-3 rounded-xl max-h-[280px] sm:max-h-[320px] overflow-y-auto no-scrollbar">
             {SFX_ITEMS.map((item) => {
               const val = equalizer[item.key] ?? 100;
               return (
@@ -206,16 +218,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
                     <span className="font-bold text-slate-700 flex items-center gap-1">
                       <span>{item.icon}</span> {item.label}
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono font-bold text-indigo-600">{val}%</span>
-                      <button
-                        onClick={() => audioService.play(item.key as SoundType)}
-                        className="p-1 hover:bg-slate-200 text-slate-500 rounded transition-colors cursor-pointer"
-                        title="试听音效"
-                      >
-                        <Play size={10} className="fill-slate-500 text-slate-500" />
-                      </button>
-                    </div>
+                    <span className="font-mono font-bold text-indigo-600">{val}%</span>
                   </div>
                   <input
                     type="range"
@@ -253,7 +256,11 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
   }
 
   return (
-    <div className="absolute inset-0 z-[10001] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full">
+    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}>
       <motion.div
         drag
         dragListener={false}

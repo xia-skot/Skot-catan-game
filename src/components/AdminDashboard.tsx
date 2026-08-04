@@ -527,7 +527,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                 <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-2">
                   <span className="w-2 h-6 bg-emerald-500 rounded-full" /> 最近游戏记录
                 </h3>
-                <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
+                <div className="flex flex-col gap-4 max-h-[70%] overflow-y-auto pr-1">
                   {data.latestGames.map((g: any) => {
                     const sortedPlayers = [...(g.players || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
                     return (

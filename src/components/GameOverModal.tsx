@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Trophy, Home, Map as MapIcon, Award, Castle, Waypoints, Swords, Flag, User, X } from 'lucide-react';
+import { Trophy, Home, Award, Castle, Waypoints, Swords, Flag, User, X } from 'lucide-react';
 import { GameState, DevCardType } from '../types';
 
 const CircleOne = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
@@ -58,25 +58,30 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
-      className="absolute inset-0 z-[120] flex flex-col bg-stone-50 overflow-hidden w-full h-full"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      className="fixed inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full h-[100dvh] pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       {/* Header - More Compact */}
-      <div className="px-3 py-2 sm:px-4 sm:py-3 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg sm:rounded-xl flex items-center justify-center shadow-md rotate-3 ring-2 ring-yellow-400/10">
-            <Trophy size={16} className="text-white drop-shadow-sm sm:w-4 sm:h-4" />
+      <div className="px-4 py-3 sm:px-6 sm:py-4 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg sm:rounded-xl flex items-center justify-center shadow-md rotate-3 ring-2 ring-yellow-400/10 shrink-0">
+            <Trophy size={18} className="text-white drop-shadow-sm sm:w-5 sm:h-5" />
           </div>
           <div className="text-left">
             <h2 className="text-base sm:text-xl font-serif font-black italic tracking-tighter text-slate-900 leading-none">卡坦岛盛大闭幕</h2>
-            <p className="text-[7px] sm:text-[9px] opacity-40 uppercase tracking-[0.2em] font-bold mt-0.5">The Golden Victory of Catan</p>
+            <p className="text-[8px] sm:text-[10px] opacity-40 uppercase tracking-[0.2em] font-bold mt-0.5">The Golden Victory of Catan</p>
           </div>
         </div>
 
         <button 
           onClick={onReturnToMap}
-          className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-colors shrink-0 cursor-pointer"
+          title="关闭/查看地图"
         >
-          <X size={18} className="sm:w-5 sm:h-5" />
+          <X size={20} className="sm:w-5 sm:h-5" />
         </button>
       </div>
 

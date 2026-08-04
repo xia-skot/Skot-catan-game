@@ -65,7 +65,7 @@ export function MapAlbumModal({
   if (!isOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-[100] bg-[#f8fafc] flex flex-col overflow-hidden animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100000] bg-[#f8fafc] pointer-events-auto flex flex-col overflow-hidden animate-in fade-in duration-200">
       {/* Top Header Navigation Bar */}
       <div className="px-4 sm:px-8 py-3 sm:py-4 bg-white/90 backdrop-blur-xl border-b border-slate-200/80 flex items-center justify-between shrink-0 shadow-2xs">
         <div className="flex items-center gap-3">

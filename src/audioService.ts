@@ -13,7 +13,7 @@ export const DEFAULT_EQUALIZER: SoundEqualizer = {
   dice: 100,
   resource: 100,
   pirate: 100,
-  click: 130,
+  click: 100,
   build: 100,
   bgm: 85,
 };
@@ -239,15 +239,30 @@ class AudioService {
     if (type !== 'click' && !this.roomActive) {
       return;
     }
+
+    // Special handling for button click sound: reuse dedicated audio instance to avoid clone stacking
+    if (type === 'click') {
+      const clickAudio = this.audios['click'];
+      if (clickAudio) {
+        try {
+          clickAudio.pause();
+          clickAudio.currentTime = 0;
+        } catch (e) {}
+        const eqValue = Number(this._sfxEqualizer.click ?? 100);
+        const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
+        clickAudio.volume = Math.min(1, Math.max(0, this._sfxVolume * eqRatio));
+        clickAudio.play().catch(e => console.warn('Click audio play prevented:', e));
+      }
+      return;
+    }
     
-    // Stop existing loop of this type if requested again
+    // Stop existing loop/instance of this type if requested again
     if (this.activeLoops[type]) {
-        this.stop(type);
+      this.stop(type);
     }
 
     const audio = this.audios[type];
     if (audio) {
-      // Clone the node to allow overlapping sounds of the same type
       const clone = audio.cloneNode() as HTMLAudioElement;
       const eqValue = Number(this._sfxEqualizer[type as keyof SoundEqualizer]);
       const eqRatio = (isNaN(eqValue) ? 100 : eqValue) / 100;
@@ -259,18 +274,15 @@ class AudioService {
       clone.addEventListener('ended', removeClone);
       clone.addEventListener('pause', removeClone);
 
+      this.activeLoops[type] = clone;
       clone.play().catch(e => console.warn('Audio play prevented:', e));
-      
-      if (loop) {
-          this.activeLoops[type] = clone;
-      } else {
-          // If it's a non-looping continuous sound we might want to stop early (like dice)
-          this.activeLoops[type] = clone;
-          clone.addEventListener('ended', () => {
-              if (this.activeLoops[type] === clone) {
-                  delete this.activeLoops[type];
-              }
-          });
+
+      if (!loop) {
+        clone.addEventListener('ended', () => {
+          if (this.activeLoops[type] === clone) {
+            delete this.activeLoops[type];
+          }
+        });
       }
     }
   }

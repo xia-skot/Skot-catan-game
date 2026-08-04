@@ -1910,7 +1910,7 @@ export function useCatanGame() {
 
       let bonusPoints = 0;
       if (!isSetup && newlyDiscoveredIds.length > 0) {
-        bonusPoints = newlyDiscoveredIds.length * 2; // 2 points per newly discovered island
+        bonusPoints = newlyDiscoveredIds.length > 0 ? 2 : 0; // 2 points per newly discovered island
       }
 
       const updatedPlayers = [...prev.players];

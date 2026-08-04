@@ -170,7 +170,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   };
 
   return (
-    <div className="flex flex-col min-h-[100dvh] w-full bg-slate-50 font-sans items-center justify-center p-4 relative selection:bg-indigo-600 selection:text-white overflow-hidden">
+    <div className="flex flex-col min-h-[100%] w-full bg-slate-50 font-sans items-center justify-center p-4 relative selection:bg-indigo-600 selection:text-white overflow-hidden">
       
       {/* 数据库状态指示器 */}
       <div className="absolute top-4 right-4 z-50 flex items-center gap-2">

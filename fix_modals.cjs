@@ -1,22 +1,9 @@
 const fs = require('fs');
-const files = [
-  'src/components/AdminDashboard.tsx',
-  'src/components/ErrorBoundary.tsx',
-  'src/components/GameOverModal.tsx',
-  'src/components/LoginScreen.tsx',
-  'src/components/MapAlbumModal.tsx',
-  'src/components/MapGeneratorModal.tsx',
-  'src/components/RulesModal.tsx',
-  'src/components/SaveMapConfirmModal.tsx',
-  'src/components/SoundSettingsModal.tsx',
-  'src/App.tsx'
-];
+let content = fs.readFileSync('src/App.tsx', 'utf8');
 
-files.forEach(file => {
-  if (fs.existsSync(file)) {
-    let content = fs.readFileSync(file, 'utf8');
-    content = content.replace(/className="(.*?)fixed inset-0(.*?)"/g, 'className="$1absolute inset-0$2"');
-    fs.writeFileSync(file, content);
-  }
-});
-console.log("Fixed absolute inset-0");
+content = content.replace(/className="absolute inset-0 z-\[10001\] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"/g, `className="absolute inset-0 z-[10001] bg-black/40 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"`);
+
+content = content.replace(/className="absolute inset-0 z-\[10001\] bg-transparent pointer-events-auto flex items-center justify-center p-4 w-full"/g, `className="absolute inset-0 z-[10001] bg-black/40 backdrop-blur-sm pointer-events-auto flex items-center justify-center p-4 w-full"`);
+
+fs.writeFileSync('src/App.tsx', content);
+console.log("Fixed modals overlay");

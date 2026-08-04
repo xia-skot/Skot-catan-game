@@ -35,12 +35,16 @@ export function MapGeneratorModal({
   if (!isOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-transparent">
+    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4 sm:p-6"
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: -10 }}
-        className="w-full max-w-5xl max-h-[90vh] bg-stone-50 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-stone-200"
+        className="w-full max-w-5xl max-h-[90%] bg-stone-50 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-stone-200"
       >
         <div className="p-4 sm:p-6 pb-4 flex justify-between items-center border-b border-stone-200 bg-white">
           <h2 className="text-lg sm:text-2xl font-serif font-black italic text-stone-800">地图生成与预览</h2>
