@@ -2635,6 +2635,17 @@ export default function App() {
     showRulesModalRef.current = showRulesModal;
   }, [showRulesModal]);
 
+  const showSoundModalRef = useRef(showSoundModal);
+  useEffect(() => {
+    showSoundModalRef.current = showSoundModal;
+  }, [showSoundModal]);
+
+  const [rulesActiveView, setRulesActiveView] = useState<'menu' | string>('menu');
+  const rulesActiveViewRef = useRef(rulesActiveView);
+  useEffect(() => {
+    rulesActiveViewRef.current = rulesActiveView;
+  }, [rulesActiveView]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -2645,16 +2656,26 @@ export default function App() {
       // Re-push state immediately to block navigation
       window.history.pushState({ preventBack: true }, "");
 
-      // Pro-actively request fullscreen on Android Chrome if game is active to combat gesture-exit fullscreen
-      if (gameStartedRef.current && !document.fullscreenElement) {
-        const elem = document.documentElement as any;
-        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-        if (request) {
-          request.call(elem).catch(() => {});
+      // 1. In game
+      if (gameStartedRef.current) {
+        if (showSoundModalRef.current) {
+          setShowSoundModal(false);
+          return;
         }
+        if (showRulesModalRef.current) {
+          if (rulesActiveViewRef.current !== 'menu') {
+            setRulesActiveView('menu');
+            return;
+          }
+          setShowRulesModal(false);
+          setRulesActiveView('menu');
+          return;
+        }
+        // In game and no modals open -> do nothing (suppress exit / fullscreen interception prompt)
+        return;
       }
 
-      // 1、匹配界面，返回操作执行离开房间
+      // 2. Matching screen
       const inMatchingScreen = (roomStateRef.current !== null || isJoinedLobbyRef.current) && !gameStartedRef.current;
       if (inMatchingScreen) {
         if (handleReturnToLobbyRef.current) {
@@ -2663,18 +2684,27 @@ export default function App() {
         return;
       }
 
-      // 2、打开“我的”以及“规则”的菜单栏后，手势返回操作执行返回上一层界面功能
-      // Case A: Rules Modal is open
+      // 3. Modals open in lobby
+      if (showSoundModalRef.current) {
+        setShowSoundModal(false);
+        return;
+      }
       if (showRulesModalRef.current) {
+        if (rulesActiveViewRef.current !== 'menu') {
+          setRulesActiveView('menu');
+          return;
+        }
         setShowRulesModal(false);
+        setRulesActiveView('menu');
         return;
       }
 
-      // Case B: Lobby tabs (My or Rules)
+      // 4. Lobby non-main tabs (rooms, profile, rules) -> return to lobby main tab
       const inLobby = !roomStateRef.current && !isJoinedLobbyRef.current;
       if (inLobby) {
-        if (activeLobbyTabRef.current === 'profile' || activeLobbyTabRef.current === 'rules') {
+        if (activeLobbyTabRef.current !== 'lobby') {
           setActiveLobbyTab('lobby');
+          setRulesActiveView('menu');
           return;
         }
       }
@@ -4019,7 +4049,7 @@ export default function App() {
           {/* Tab 4: rules */}
           <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
             <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
-              <RulesModal isOpen={true} onClose={() => {}} inline={true} />
+              <RulesModal isOpen={true} onClose={() => {}} inline={true} activeView={rulesActiveView} onActiveViewChange={setRulesActiveView} />
             </div>
           </div>
         </div>
@@ -7062,7 +7092,12 @@ export default function App() {
         {/* Global Rules and Sound Settings Modals (rendered at root to bypass any rotated wrapper and remain upright/portrait on vertical screens) */}
         <AnimatePresence>
           {showRulesModal && (
-            <RulesModal isOpen={showRulesModal} onClose={() => setShowRulesModal(false)} />
+            <RulesModal 
+              isOpen={showRulesModal} 
+              onClose={() => { setShowRulesModal(false); setRulesActiveView('menu'); }} 
+              activeView={rulesActiveView} 
+              onActiveViewChange={setRulesActiveView} 
+            />
           )}
         </AnimatePresence>
         <AnimatePresence>

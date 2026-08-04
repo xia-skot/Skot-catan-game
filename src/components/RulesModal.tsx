@@ -23,6 +23,8 @@ interface RulesModalProps {
   isOpen?: boolean;
   onClose?: () => void;
   inline?: boolean;
+  activeView?: string;
+  onActiveViewChange?: (view: any) => void;
 }
 
 const HexImg = ({ src, alt }: { src: string, alt: string }) => {
@@ -92,8 +94,13 @@ const MockPort = ({ type }: { type: '3:1' | 'wood' | 'brick' | 'wool' | 'grain' 
   );
 };
 
-export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline = false }) => {
-  const [activeView, setActiveView] = useState<'menu' | 'resources' | 'flow' | 'scoring' | 'building' | 'devcards'>('menu');
+export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline = false, activeView: propActiveView, onActiveViewChange }) => {
+  const [internalActiveView, setInternalActiveView] = useState<'menu' | 'resources' | 'flow' | 'scoring' | 'building' | 'devcards'>('menu');
+  const activeView = propActiveView !== undefined ? propActiveView : internalActiveView;
+  const setActiveView = (v: any) => {
+    setInternalActiveView(v);
+    if (onActiveViewChange) onActiveViewChange(v);
+  };
   const [isPortrait, setIsPortrait] = useState(true);
 
   useEffect(() => {
@@ -601,7 +608,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   </div>
                   <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                     <div className="flex items-center gap-3">
-                      <span className="text-lg leading-none grayscale opacity-60">ğŸ†</span>
+                      <span className="text-lg leading-none grayscale opacity-60">í ¼í¿†</span>
                       <div>
                         <div className="font-bold text-slate-700 text-sm">èƒœåˆ©ç‚¹å¡</div>
                         <div className="text-[9px] text-slate-400">éšè—åœ¨æ‰‹ä¸­</div>

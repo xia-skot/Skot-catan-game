@@ -328,12 +328,23 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       
       {/* Backdrop tap to close */}
       <div 
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            handleClose();
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (e.target === e.currentTarget) {
+            e.stopPropagation();
+            handleClose();
+          }
+        }}
         onPointerDown={(e) => {
           if (e.target === e.currentTarget) {
             handleClose();
           }
         }}
-        className="absolute inset-0 bg-transparent cursor-pointer"
+        className="absolute inset-0 bg-transparent cursor-pointer z-10"
       />
 
       <motion.div
@@ -343,6 +354,10 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
         dragConstraints={gameContainerRef}
         dragElastic={0}
         dragMomentum={false}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         initial={{ scale: 0.95, y: 10, opacity: 0 }}
         animate={{ scale: 1, y: 0, opacity: 1 }}
@@ -350,10 +365,10 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
         style={contentStyle}
         className={
           isMobileDevice
-            ? 'bg-white w-full h-full rounded-none overflow-hidden flex flex-col pointer-events-auto shadow-none select-none cursor-default'
+            ? 'bg-white w-full h-full rounded-none overflow-hidden flex flex-col pointer-events-auto shadow-none select-none cursor-default relative z-20'
             : `bg-white border-none sm:border border-slate-200 rounded-none sm:rounded-2xl w-full ${
                 isAdmin ? 'max-w-full sm:max-w-[370px]' : 'max-w-full sm:max-w-[330px]'
-              } h-full sm:h-auto sm:max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default`
+              } h-full sm:h-auto sm:max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default relative z-20`
         }
       >
         {/* Standard drag handle bar & Header */}
