@@ -46,19 +46,6 @@ export function PwaGuideModal({ isOpen, onClose, onInstall, hasDeferredPrompt }:
         {/* Scrollable Content */}
         <div className="p-6 overflow-y-auto max-h-[70vh] space-y-5 font-sans scrollbar-thin">
           
-          {/* Benefit Card */}
-          <div className="bg-gradient-to-br from-indigo-50 to-sky-50 border border-indigo-100/50 rounded-xl p-4 flex items-start gap-3">
-            <Check className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
-            <div className="text-xs text-indigo-950 leading-relaxed">
-              <p className="font-bold mb-1">为什么要添加到主屏幕？</p>
-              <ul className="list-disc list-inside space-y-0.5 opacity-90">
-                <li><strong className="text-indigo-600 font-black">100% 纯净全屏</strong>：完美隐藏浏览器顶部网址栏和底部控制栏。</li>
-                <li><strong className="text-indigo-600 font-black">防误触、防退 fullscreen</strong>：彻底避免手势返回（左滑侧滑）导致浏览器退出全屏的烦恼。</li>
-                <li><strong className="text-indigo-600 font-black">秒级启动</strong>：如同原生 App 一样，直接从桌面一击即玩。</li>
-              </ul>
-            </div>
-          </div>
-
           {/* Conditional Guidance */}
           {isIOS ? (
             <div className="space-y-4">

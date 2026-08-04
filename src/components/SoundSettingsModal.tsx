@@ -328,7 +328,11 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       
       {/* Backdrop tap to close */}
       <div 
-        onClick={handleClose}
+        onPointerDown={(e) => {
+          if (e.target === e.currentTarget) {
+            handleClose();
+          }
+        }}
         className="absolute inset-0 bg-transparent cursor-pointer"
       />
 

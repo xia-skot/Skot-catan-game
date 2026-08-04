@@ -811,7 +811,11 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          onClick={onClose}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) {
+              onClose();
+            }
+          }}
           className="absolute inset-0 bg-transparent cursor-pointer"
         />
         {content}

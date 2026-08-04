@@ -1972,94 +1972,90 @@ export default function App() {
       } catch (err) {
         console.error('PWA install error:', err);
       }
-      setDeferredPrompt(null);
-    } else {
-      setShowPwaGuide(true);
-    }
-  };
+       setDeferredPrompt(null);
+     } else {
+       setShowPwaGuide(true);
+     }
+   };
+ 
+   const lobbyTouchStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const showRulesModalRef = useRef(showRulesModal);
-  const showSoundModalRef = useRef(showSoundModal);
+   const handleLobbyTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+     const touch = e.touches[0];
+     if (touch) {
+       lobbyTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
+     }
+   };
 
+   const handleLobbyTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+     if (!lobbyTouchStartRef.current) return;
+     const touch = e.changedTouches[0];
+     if (!touch) return;
+
+     const deltaX = touch.clientX - lobbyTouchStartRef.current.x;
+     const deltaY = touch.clientY - lobbyTouchStartRef.current.y;
+     lobbyTouchStartRef.current = null;
+
+     // Ignore swipe gesture inside inputs, textareas, sliders, or maps
+     const target = e.target as HTMLElement;
+     if (
+       target.tagName === 'INPUT' || 
+       target.tagName === 'TEXTAREA' || 
+       target.closest('input') || 
+       target.closest('textarea') ||
+       target.closest('[role="slider"]') ||
+       target.closest('.no-swipe')
+     ) {
+       return;
+     }
+
+     const minDistance = 50; // Threshold in pixels
+     // Ensure horizontal swipe is dominant
+     if (Math.abs(deltaX) > minDistance && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) {
+       const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
+       const currentIndex = tabs.indexOf(activeLobbyTab);
+       if (currentIndex === -1) return;
+
+       if (deltaX < 0) {
+         // Swipe left -> next tab
+         const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
+         if (nextIndex !== currentIndex) {
+           setActiveLobbyTab(tabs[nextIndex]);
+         }
+       } else {
+         // Swipe right -> previous tab
+         const prevIndex = Math.max(0, currentIndex - 1);
+         if (prevIndex !== currentIndex) {
+           setActiveLobbyTab(tabs[prevIndex]);
+         }
+       }
+     }
+   };
+
+  // Auto-restore fullscreen on any user click/touch during active gameplay if exited by system gestures
   useEffect(() => {
-    showRulesModalRef.current = showRulesModal;
-  }, [showRulesModal]);
+    if (!gameStarted || isStandalone) return;
 
-  useEffect(() => {
-    showSoundModalRef.current = showSoundModal;
-  }, [showSoundModal]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    // Push state to protect the stack
-    window.history.pushState({ preventBack: true }, '');
-
-    const handlePopState = () => {
-      // Re-push state immediately to block navigation
-      window.history.pushState({ preventBack: true }, '');
-
-      // Pro-actively request fullscreen on Android Chrome if game is active to combat gesture-exit fullscreen
-      if (gameStartedRef.current && !document.fullscreenElement) {
+    const handleAutoFullscreenRestore = (e: MouseEvent | TouchEvent) => {
+      // Don't auto-restore if the user explicitly clicked an action that handles its own fullscreen or modals
+      if (!document.fullscreenElement) {
+        console.log("Auto-restoring fullscreen on gameplay interaction...");
         const elem = document.documentElement as any;
         const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
         if (request) {
           request.call(elem).catch(() => {});
         }
       }
-
-      // Execute custom back actions
-      if (showRulesModalRef.current) {
-        setShowRulesModal(false);
-      } else if (showSoundModalRef.current) {
-        setShowSoundModal(false);
-      } else {
-        // Show back intercept toast
-        setShowBackInterceptToast(true);
-        if (backToastTimeoutRef.current) {
-          clearTimeout(backToastTimeoutRef.current);
-        }
-        backToastTimeoutRef.current = setTimeout(() => {
-          setShowBackInterceptToast(false);
-        }, 2500);
-      }
     };
 
-    window.addEventListener('popstate', handlePopState);
-
-    // Active touch interceptor near screen edges to block swipe-to-back/forward gesture on iOS and Android
-    let startX = 0;
-    let isEdgeTouch = false;
-
-    const handleTouchStart = (e: TouchEvent) => {
-      const touch = e.touches[0];
-      if (!touch) return;
-      startX = touch.clientX;
-      const edgeThreshold = 40; // Pixels from left/right edges
-      isEdgeTouch = startX < edgeThreshold || startX > (window.innerWidth - edgeThreshold);
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (isEdgeTouch) {
-        // Prevent default swipe-back or pull-to-navigate gestures
-        if (e.cancelable) {
-          e.preventDefault();
-        }
-      }
-    };
-
-    window.addEventListener('touchstart', handleTouchStart, { passive: false });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('click', handleAutoFullscreenRestore, { capture: true, passive: true });
+    window.addEventListener('touchstart', handleAutoFullscreenRestore, { capture: true, passive: true });
 
     return () => {
-      window.removeEventListener('popstate', handlePopState);
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchmove', handleTouchMove);
-      if (backToastTimeoutRef.current) {
-        clearTimeout(backToastTimeoutRef.current);
-      }
+      window.removeEventListener('click', handleAutoFullscreenRestore, { capture: true });
+      window.removeEventListener('touchstart', handleAutoFullscreenRestore, { capture: true });
     };
-  }, []);
+  }, [gameStarted, isStandalone]);
 
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isStartingGame, setIsStartingGame] = useState(false);
@@ -2565,6 +2561,126 @@ export default function App() {
     });
   }, [savedMaps, albumFilter]);
   const [previewBoard, setPreviewBoard] = useState<any[]>([]);
+
+  // Unified list of active modal close handlers for back gesture
+  const activeModalsRef = useRef<(() => boolean)[]>([]);
+
+  useEffect(() => {
+    activeModalsRef.current = [
+      // 1. High priority dialogs / confirmations
+      () => { if (confirmAction) { setConfirmAction(null); return true; } return false; },
+      () => { if (mapSaveDialog) { setMapSaveDialog(null); return true; } return false; },
+      () => { if (confirmDevCard) { setConfirmDevCard(null); return true; } return false; },
+      () => { if (showDissolveRoomConfirm) { setShowDissolveRoomConfirm(false); return true; } return false; },
+      () => { if (showExitOptions) { setShowExitOptions(false); return true; } return false; },
+
+      // 2. Main Modals
+      () => { if (showSoundModal) { setShowSoundModal(false); return true; } return false; },
+      () => { if (showRulesModal) { setShowRulesModal(false); return true; } return false; },
+      () => { if (showPwaGuide) { setShowPwaGuide(false); return true; } return false; },
+      () => { if (showPlayerTradeModal) { setShowPlayerTradeModal(false); return true; } return false; },
+      () => { if (showTradeModal) { setShowTradeModal(false); return true; } return false; },
+      () => { if (showDiscardModal) { setShowDiscardModal(false); return true; } return false; },
+      () => { if (showMapGenerator) { setShowMapGenerator(false); return true; } return false; },
+      () => { if (showMapAlbum) { setShowMapAlbum(false); return true; } return false; },
+      () => { if (showReserveRoomModal) { setShowReserveRoomModal(false); return true; } return false; },
+      () => { if (showDebugConsole) { setShowDebugConsole(false); return true; } return false; }
+    ];
+  }, [
+    confirmAction,
+    mapSaveDialog,
+    confirmDevCard,
+    showDissolveRoomConfirm,
+    showExitOptions,
+    showSoundModal,
+    showRulesModal,
+    showPwaGuide,
+    showPlayerTradeModal,
+    showTradeModal,
+    showDiscardModal,
+    showMapGenerator,
+    showMapAlbum,
+    showReserveRoomModal,
+    showDebugConsole
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // Push state to protect the stack
+    window.history.pushState({ preventBack: true }, "");
+
+    const handlePopState = () => {
+      // Re-push state immediately to block navigation
+      window.history.pushState({ preventBack: true }, "");
+
+      // Pro-actively request fullscreen on Android Chrome if game is active to combat gesture-exit fullscreen
+      if (gameStartedRef.current && !document.fullscreenElement) {
+        const elem = document.documentElement as any;
+        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+        if (request) {
+          request.call(elem).catch(() => {});
+        }
+      }
+
+      // Execute custom back actions
+      let consumed = false;
+      for (const tryClose of activeModalsRef.current) {
+        if (tryClose()) {
+          consumed = true;
+          break;
+        }
+      }
+
+      if (!consumed) {
+        // Show back intercept toast
+        setShowBackInterceptToast(true);
+        if (backToastTimeoutRef.current) {
+          clearTimeout(backToastTimeoutRef.current);
+        }
+        backToastTimeoutRef.current = setTimeout(() => {
+          setShowBackInterceptToast(false);
+        }, 2500);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    // Active touch interceptor near screen edges to block swipe-to-back/forward gesture on iOS and Android
+    let startX = 0;
+    let isEdgeTouch = false;
+
+    const handleTouchStart = (e) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      const edgeThreshold = 40; // Pixels from left/right edges
+      isEdgeTouch = startX < edgeThreshold || startX > (window.innerWidth - edgeThreshold);
+    };
+
+    const handleTouchMove = (e) => {
+      if (isEdgeTouch) {
+        // Prevent default swipe-back or pull-to-navigate gestures
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener("touchstart", handleTouchStart, { passive: false });
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchmove", handleTouchMove);
+      if (backToastTimeoutRef.current) {
+        clearTimeout(backToastTimeoutRef.current);
+      }
+    };
+  }, []);
+
+
 
   const canAfford = useCallback((cost: Record<string, number>) => {
     if (!gameState || !me) return false;
@@ -3703,7 +3819,11 @@ export default function App() {
 
   if (!roomState && !isJoinedLobby) {
     mainContent = renderNonGameWrapper(
-      <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
+      <div 
+        onTouchStart={handleLobbyTouchStart}
+        onTouchEnd={handleLobbyTouchEnd}
+        className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900"
+      >
         
         {activeLobbyTab === 'lobby' && (
           <motion.div 
@@ -3723,7 +3843,7 @@ export default function App() {
                 className="mb-6 -mt-3 px-3.5 py-2 rounded-full bg-indigo-50 hover:bg-indigo-100/60 border border-indigo-100/50 text-[11px] sm:text-xs font-bold text-indigo-600 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-600/5 cursor-pointer"
               >
                 <Smartphone size={13} className="text-indigo-500 animate-pulse" />
-                <span>添加到主屏幕 (沉浸全屏/防侧滑误触)</span>
+                <span>为获取最佳体验，建议添加到主屏幕</span>
               </motion.button>
             )}
             
@@ -6808,6 +6928,37 @@ export default function App() {
               </motion.div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {!isStandalone && !isFullscreen && gameStarted && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 20 }}
+            className="absolute top-[54px] sm:top-[64px] left-1/2 -translate-x-1/2 z-[100003] px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-sans text-[10px] sm:text-xs font-black shadow-lg shadow-amber-500/30 flex items-center gap-2 max-w-[90%] border border-amber-400/30 select-none cursor-pointer transition-colors active:scale-98"
+            onClick={(e) => {
+              e.stopPropagation();
+              const elem = document.documentElement as any;
+              const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+              if (request) {
+                request.call(elem).catch(() => {});
+              }
+            }}
+          >
+            <Smartphone className="w-3.5 h-3.5 shrink-0 text-white animate-bounce" />
+            <div className="flex items-center gap-1">
+              <span className="text-amber-100 font-extrabold text-[8px] sm:text-[9px] bg-amber-600/50 px-1.5 py-0.5 rounded-full uppercase tracking-wider">退出全屏拦截</span>
+              <span className="text-white font-black truncate max-w-[220px] sm:max-w-none">
+                系统检测到返回手势退出了全屏。点击此处或屏幕任意位置，立即恢复！
+              </span>
+            </div>
+            <span className="ml-1 px-2.5 py-0.5 bg-white text-amber-600 rounded-full text-[9px] sm:text-[10px] font-black shadow-sm shrink-0">
+              恢复
+            </span>
+          </motion.div>
         )}
       </AnimatePresence>
 
