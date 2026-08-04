@@ -1979,24 +1979,11 @@ export default function App() {
    };
  
    const lobbyTouchStartRef = useRef<{ x: number; y: number } | null>(null);
+   const [lobbyDragOffset, setLobbyDragOffset] = useState(0);
+   const [isLobbyDragging, setIsLobbyDragging] = useState(false);
+   const lobbySwipeLockedRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
 
    const handleLobbyTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-     const touch = e.touches[0];
-     if (touch) {
-       lobbyTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
-     }
-   };
-
-   const handleLobbyTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-     if (!lobbyTouchStartRef.current) return;
-     const touch = e.changedTouches[0];
-     if (!touch) return;
-
-     const deltaX = touch.clientX - lobbyTouchStartRef.current.x;
-     const deltaY = touch.clientY - lobbyTouchStartRef.current.y;
-     lobbyTouchStartRef.current = null;
-
-     // Ignore swipe gesture inside inputs, textareas, sliders, or maps
      const target = e.target as HTMLElement;
      if (
        target.tagName === 'INPUT' || 
@@ -2009,25 +1996,85 @@ export default function App() {
        return;
      }
 
-     const minDistance = 50; // Threshold in pixels
-     // Ensure horizontal swipe is dominant
-     if (Math.abs(deltaX) > minDistance && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) {
+     const touch = e.touches[0];
+     if (touch) {
+       lobbyTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
+       lobbySwipeLockedRef.current = 'none';
+       setIsLobbyDragging(false);
+       setLobbyDragOffset(0);
+     }
+   };
+
+   const handleLobbyTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+     if (!lobbyTouchStartRef.current) return;
+     const touch = e.touches[0];
+     if (!touch) return;
+
+     const deltaX = touch.clientX - lobbyTouchStartRef.current.x;
+     const deltaY = touch.clientY - lobbyTouchStartRef.current.y;
+
+     if (lobbySwipeLockedRef.current === 'none') {
+       const xDist = Math.abs(deltaX);
+       const yDist = Math.abs(deltaY);
+       if (xDist > 8 || yDist > 8) {
+         if (xDist > yDist * 1.2) {
+           lobbySwipeLockedRef.current = 'horizontal';
+           setIsLobbyDragging(true);
+         } else {
+           lobbySwipeLockedRef.current = 'vertical';
+         }
+       }
+     }
+
+     if (lobbySwipeLockedRef.current === 'vertical') {
+       return;
+     }
+
+     if (lobbySwipeLockedRef.current === 'horizontal') {
+       if (e.cancelable) {
+         e.preventDefault();
+       }
        const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
        const currentIndex = tabs.indexOf(activeLobbyTab);
-       if (currentIndex === -1) return;
 
-       if (deltaX < 0) {
-         // Swipe left -> next tab
-         const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
-         if (nextIndex !== currentIndex) {
-           setActiveLobbyTab(tabs[nextIndex]);
-         }
-       } else {
-         // Swipe right -> previous tab
-         const prevIndex = Math.max(0, currentIndex - 1);
-         if (prevIndex !== currentIndex) {
-           setActiveLobbyTab(tabs[prevIndex]);
-         }
+       let currentDrag = deltaX;
+       if (currentIndex === 0 && deltaX > 0) {
+         currentDrag = deltaX * 0.25; // rubber band
+       } else if (currentIndex === tabs.length - 1 && deltaX < 0) {
+         currentDrag = deltaX * 0.25; // rubber band
+       }
+       setLobbyDragOffset(currentDrag);
+     }
+   };
+
+   const handleLobbyTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+     if (!lobbyTouchStartRef.current) return;
+     
+     const finalDrag = lobbyDragOffset;
+     const wasHorizontal = lobbySwipeLockedRef.current === 'horizontal';
+
+     lobbyTouchStartRef.current = null;
+     lobbySwipeLockedRef.current = 'none';
+     setIsLobbyDragging(false);
+     setLobbyDragOffset(0);
+
+     if (!wasHorizontal) return;
+
+     const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
+     const currentIndex = tabs.indexOf(activeLobbyTab);
+     if (currentIndex === -1) return;
+
+     const threshold = window.innerWidth * 0.15; // 15% of screen width
+
+     if (finalDrag < -threshold) {
+       const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
+       if (nextIndex !== currentIndex) {
+         setActiveLobbyTab(tabs[nextIndex]);
+       }
+     } else if (finalDrag > threshold) {
+       const prevIndex = Math.max(0, currentIndex - 1);
+       if (prevIndex !== currentIndex) {
+         setActiveLobbyTab(tabs[prevIndex]);
        }
      }
    };
@@ -2562,47 +2609,31 @@ export default function App() {
   }, [savedMaps, albumFilter]);
   const [previewBoard, setPreviewBoard] = useState<any[]>([]);
 
-  // Unified list of active modal close handlers for back gesture
-  const activeModalsRef = useRef<(() => boolean)[]>([]);
-
+  // Synchronize state values for popstate event handler closures without trigger re-renders or stale variables
+  const roomStateRef = useRef(roomState);
   useEffect(() => {
-    activeModalsRef.current = [
-      // 1. High priority dialogs / confirmations
-      () => { if (confirmAction) { setConfirmAction(null); return true; } return false; },
-      () => { if (mapSaveDialog) { setMapSaveDialog(null); return true; } return false; },
-      () => { if (confirmDevCard) { setConfirmDevCard(null); return true; } return false; },
-      () => { if (showDissolveRoomConfirm) { setShowDissolveRoomConfirm(false); return true; } return false; },
-      () => { if (showExitOptions) { setShowExitOptions(false); return true; } return false; },
+    roomStateRef.current = roomState;
+  }, [roomState]);
 
-      // 2. Main Modals
-      () => { if (showSoundModal) { setShowSoundModal(false); return true; } return false; },
-      () => { if (showRulesModal) { setShowRulesModal(false); return true; } return false; },
-      () => { if (showPwaGuide) { setShowPwaGuide(false); return true; } return false; },
-      () => { if (showPlayerTradeModal) { setShowPlayerTradeModal(false); return true; } return false; },
-      () => { if (showTradeModal) { setShowTradeModal(false); return true; } return false; },
-      () => { if (showDiscardModal) { setShowDiscardModal(false); return true; } return false; },
-      () => { if (showMapGenerator) { setShowMapGenerator(false); return true; } return false; },
-      () => { if (showMapAlbum) { setShowMapAlbum(false); return true; } return false; },
-      () => { if (showReserveRoomModal) { setShowReserveRoomModal(false); return true; } return false; },
-      () => { if (showDebugConsole) { setShowDebugConsole(false); return true; } return false; }
-    ];
-  }, [
-    confirmAction,
-    mapSaveDialog,
-    confirmDevCard,
-    showDissolveRoomConfirm,
-    showExitOptions,
-    showSoundModal,
-    showRulesModal,
-    showPwaGuide,
-    showPlayerTradeModal,
-    showTradeModal,
-    showDiscardModal,
-    showMapGenerator,
-    showMapAlbum,
-    showReserveRoomModal,
-    showDebugConsole
-  ]);
+  const isJoinedLobbyRef = useRef(isJoinedLobby);
+  useEffect(() => {
+    isJoinedLobbyRef.current = isJoinedLobby;
+  }, [isJoinedLobby]);
+
+  const activeLobbyTabRef = useRef(activeLobbyTab);
+  useEffect(() => {
+    activeLobbyTabRef.current = activeLobbyTab;
+  }, [activeLobbyTab]);
+
+  const handleReturnToLobbyRef = useRef(handleReturnToLobby);
+  useEffect(() => {
+    handleReturnToLobbyRef.current = handleReturnToLobby;
+  }, [handleReturnToLobby]);
+
+  const showRulesModalRef = useRef(showRulesModal);
+  useEffect(() => {
+    showRulesModalRef.current = showRulesModal;
+  }, [showRulesModal]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2623,24 +2654,29 @@ export default function App() {
         }
       }
 
-      // Execute custom back actions
-      let consumed = false;
-      for (const tryClose of activeModalsRef.current) {
-        if (tryClose()) {
-          consumed = true;
-          break;
+      // 1、匹配界面，返回操作执行离开房间
+      const inMatchingScreen = (roomStateRef.current !== null || isJoinedLobbyRef.current) && !gameStartedRef.current;
+      if (inMatchingScreen) {
+        if (handleReturnToLobbyRef.current) {
+          handleReturnToLobbyRef.current();
         }
+        return;
       }
 
-      if (!consumed) {
-        // Show back intercept toast
-        setShowBackInterceptToast(true);
-        if (backToastTimeoutRef.current) {
-          clearTimeout(backToastTimeoutRef.current);
+      // 2、打开“我的”以及“规则”的菜单栏后，手势返回操作执行返回上一层界面功能
+      // Case A: Rules Modal is open
+      if (showRulesModalRef.current) {
+        setShowRulesModal(false);
+        return;
+      }
+
+      // Case B: Lobby tabs (My or Rules)
+      const inLobby = !roomStateRef.current && !isJoinedLobbyRef.current;
+      if (inLobby) {
+        if (activeLobbyTabRef.current === 'profile' || activeLobbyTabRef.current === 'rules') {
+          setActiveLobbyTab('lobby');
+          return;
         }
-        backToastTimeoutRef.current = setTimeout(() => {
-          setShowBackInterceptToast(false);
-        }, 2500);
       }
     };
 
@@ -3821,158 +3857,172 @@ export default function App() {
     mainContent = renderNonGameWrapper(
       <div 
         onTouchStart={handleLobbyTouchStart}
+        onTouchMove={handleLobbyTouchMove}
         onTouchEnd={handleLobbyTouchEnd}
         className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900"
       >
-        
-        {activeLobbyTab === 'lobby' && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }} 
-            animate={{ opacity: 1, y: 0 }}
-            className="relative z-10 flex flex-col items-center h-full w-full px-6 max-w-sm mx-auto pt-[15vh]"
-          >
-            <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
-            <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
-            
-            {!isStandalone && (
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowPwaGuide(true)}
-                className="mb-6 -mt-3 px-3.5 py-2 rounded-full bg-indigo-50 hover:bg-indigo-100/60 border border-indigo-100/50 text-[11px] sm:text-xs font-bold text-indigo-600 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-600/5 cursor-pointer"
-              >
-                <Smartphone size={13} className="text-indigo-500 animate-pulse" />
-                <span>为获取最佳体验，建议添加到主屏幕</span>
-              </motion.button>
-            )}
-            
-            <div className="flex flex-col gap-4 text-left w-full">
-                <div className="group">
-                  <label className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-0.5 block group-focus-within:text-indigo-600 transition-colors">房间代码</label>
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      value={inputRoomId}
-                      readOnly={isRoomLocked}
-                      onChange={e => {
-                        if (isRoomLocked) return;
-                        const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
-                        setInputRoomId(val);
-                      }}
-                      placeholder="6位房间代码"
-                      className={`w-full ${isRoomLocked ? 'bg-slate-100 text-slate-500 cursor-not-allowed opacity-80' : 'bg-white focus:bg-white'} border-2 border-slate-200 px-4 py-3 rounded-xl outline-none font-black font-mono tracking-[0.3em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-600 text-sm shadow-sm`}
-                    />
-                  </div>
-                </div>
-                
-                <button 
-                  id="join-room-button"
+        <div
+          style={{
+            width: '400%',
+            display: 'flex',
+            height: '100%',
+            transform: `translate3d(calc(-${['lobby', 'rooms', 'profile', 'rules'].indexOf(activeLobbyTab) * 25}% + ${lobbyDragOffset}px), 0, 0)`,
+            transition: isLobbyDragging ? 'none' : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
+          {/* Tab 1: lobby */}
+          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }} 
+              animate={{ opacity: 1, y: 0 }}
+              className="relative z-10 flex flex-col items-center h-full w-full px-6 max-w-sm mx-auto pt-[15vh]"
+            >
+              <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
+              <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
+              
+              {!isStandalone && (
+                <motion.button
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const activeRoom = localStorage.getItem('catan_active_room');
-                    const enteredCode = inputRoomId.trim();
-                    const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
-                    
-                    if (!inputRoomId.trim()) {
-                      setInputRoomId(targetRoom);
-                    }
-                    
-                    const asSpec = (isRoomLocked && activeRoom) ? (isSpectator || localStorage.getItem('catan_is_spectator') === 'true') : false;
-                    if (!asSpec) {
-                      setIsJoinSpectator(false);
-                      localStorage.removeItem('catan_is_spectator');
-                    }
-                    localStorage.setItem('catan_active_room', targetRoom);
-                    localStorage.setItem('catan_has_created_room', 'true');
-                    setIsRoomLocked(true);
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => setShowPwaGuide(true)}
+                  className="mb-6 -mt-3 px-3.5 py-2 rounded-full bg-indigo-50 hover:bg-indigo-100/60 border border-indigo-100/50 text-[11px] sm:text-xs font-bold text-indigo-600 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-600/5 cursor-pointer"
+                >
+                  <Smartphone size={13} className="text-indigo-500 animate-pulse" />
+                  <span>为获取最佳体验，建议添加到主屏幕</span>
+                </motion.button>
+              )}
+              
+              <div className="flex flex-col gap-4 text-left w-full">
+                  <div className="group">
+                    <label className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-0.5 block group-focus-within:text-indigo-600 transition-colors">房间代码</label>
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        value={inputRoomId}
+                        readOnly={isRoomLocked}
+                        onChange={e => {
+                          if (isRoomLocked) return;
+                          const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+                          setInputRoomId(val);
+                        }}
+                        placeholder="6位房间代码"
+                        className={`w-full ${isRoomLocked ? 'bg-slate-100 text-slate-500 cursor-not-allowed opacity-80' : 'bg-white focus:bg-white'} border-2 border-slate-200 px-4 py-3 rounded-xl outline-none font-black font-mono tracking-[0.3em] text-center transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-600 text-sm shadow-sm`}
+                      />
+                    </div>
+                  </div>
+                  
+                  <button 
+                    id="join-room-button"
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const activeRoom = localStorage.getItem('catan_active_room');
+                      const enteredCode = inputRoomId.trim();
+                      const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
+                      
+                      if (!inputRoomId.trim()) {
+                        setInputRoomId(targetRoom);
+                      }
+                      
+                      const asSpec = (isRoomLocked && activeRoom) ? (isSpectator || localStorage.getItem('catan_is_spectator') === 'true') : false;
+                      if (!asSpec) {
+                        setIsJoinSpectator(false);
+                        localStorage.removeItem('catan_is_spectator');
+                      }
+                      localStorage.setItem('catan_active_room', targetRoom);
+                      localStorage.setItem('catan_has_created_room', 'true');
+                      setIsRoomLocked(true);
 
-                    const newUrl = new URL(window.location.href);
-                    newUrl.searchParams.set('room', targetRoom);
-                    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                      const newUrl = new URL(window.location.href);
+                      newUrl.searchParams.set('room', targetRoom);
+                      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
 
+                      setIsJoinedLobby(true);
+                      socketService.connect();
+                      socketService.joinRoom(targetRoom, playerName, asSpec);
+                    }}
+                    className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
+                  >
+                    <span className="relative z-10 flex items-center justify-center gap-2">
+                      <Swords size={16} />
+                      进入海域
+                    </span>
+                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                  </button>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Tab 2: rooms */}
+          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+             <div className="w-full h-full flex flex-col items-center justify-center p-6">
+               <GameRoomsTab 
+                 currentUser={currentUser} 
+                 isRoomLocked={isRoomLocked}
+                 activeRoomId={localStorage.getItem('catan_active_room')}
+                 onUserFoundInRoom={(roomId) => {
+                   setInputRoomId(roomId);
+                   setIsRoomLocked(true);
+                   localStorage.setItem('catan_active_room', roomId);
+                   localStorage.setItem('catan_has_created_room', 'true');
+                 }}
+                 onReturnToGame={(roomId) => {
+                  const activeRoom = roomId || localStorage.getItem('catan_active_room');
+                  if (activeRoom) {
+                    setInputRoomId(activeRoom);
+                    const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
                     setIsJoinedLobby(true);
                     socketService.connect();
-                    socketService.joinRoom(targetRoom, playerName, asSpec);
-                  }}
-                  className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
-                >
-                  <span className="relative z-10 flex items-center justify-center gap-2">
-                    <Swords size={16} />
-                    进入海域
-                  </span>
-                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
-                </button>
-            </div>
-          </motion.div>
-        )}
-
-        {activeLobbyTab === 'rooms' && (
-           <div className="w-full h-full flex flex-col items-center justify-center p-6">
-             <GameRoomsTab 
-               currentUser={currentUser} 
-               isRoomLocked={isRoomLocked}
-               activeRoomId={localStorage.getItem('catan_active_room')}
-               onUserFoundInRoom={(roomId) => {
-                 setInputRoomId(roomId);
-                 setIsRoomLocked(true);
-                 localStorage.setItem('catan_active_room', roomId);
-                 localStorage.setItem('catan_has_created_room', 'true');
-               }}
-               onReturnToGame={(roomId) => {
-                const activeRoom = roomId || localStorage.getItem('catan_active_room');
-                if (activeRoom) {
-                  setInputRoomId(activeRoom);
-                  const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
+                    socketService.joinRoom(activeRoom, playerName, asSpec);
+                  } else {
+                    setActiveLobbyTab('lobby');
+                  }
+                }}
+                onJoinRoom={(roomId) => {
+                  setInputRoomId(roomId);
+                  localStorage.setItem('catan_active_room', roomId);
+                  localStorage.setItem('catan_has_created_room', 'true');
+                  setIsRoomLocked(true);
                   setIsJoinedLobby(true);
                   socketService.connect();
-                  socketService.joinRoom(activeRoom, playerName, asSpec);
-                } else {
-                  setActiveLobbyTab('lobby');
-                }
-              }}
-              onJoinRoom={(roomId) => {
-                setInputRoomId(roomId);
-                localStorage.setItem('catan_active_room', roomId);
-                localStorage.setItem('catan_has_created_room', 'true');
-                setIsRoomLocked(true);
-                setIsJoinedLobby(true);
-                socketService.connect();
-                socketService.joinRoom(roomId, playerName);
-              }}
-              onSpectateRoom={(roomId) => {
-                setInputRoomId(roomId);
-                localStorage.setItem('catan_player_name', playerName);
-                localStorage.setItem('catan_is_spectator', 'true');
-                setIsJoinSpectator(true);
-                setIsJoinedLobby(true);
-                socketService.connect();
-                socketService.joinRoom(roomId, playerName, true);
-              }}
-             />
-           </div>
-        )}
-
-        {activeLobbyTab === 'rules' && (
-          <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
-            <RulesModal isOpen={true} onClose={() => {}} inline={true} />
+                  socketService.joinRoom(roomId, playerName);
+                }}
+                onSpectateRoom={(roomId) => {
+                  setInputRoomId(roomId);
+                  localStorage.setItem('catan_player_name', playerName);
+                  localStorage.setItem('catan_is_spectator', 'true');
+                  setIsJoinSpectator(true);
+                  setIsJoinedLobby(true);
+                  socketService.connect();
+                  socketService.joinRoom(roomId, playerName, true);
+                }}
+               />
+             </div>
           </div>
-        )}
 
-        {activeLobbyTab === 'profile' && (
-          <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
-            <UserProfileModal
-              currentUser={currentUser}
-              onClose={() => {}}
-              onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
-              onLogout={handleFullLogout}
-              inline={true}
-              onRestoreGame={handleRestoreGame}
-            />
+          {/* Tab 3: profile */}
+          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
+              <UserProfileModal
+                currentUser={currentUser}
+                onClose={() => {}}
+                onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
+                onLogout={handleFullLogout}
+                inline={true}
+                onRestoreGame={handleRestoreGame}
+              />
+            </div>
           </div>
-        )}
+
+          {/* Tab 4: rules */}
+          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
+              <RulesModal isOpen={true} onClose={() => {}} inline={true} />
+            </div>
+          </div>
+        </div>
         {/* Bottom Tab Bar */}
         <div className="absolute bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-1.5 px-6 flex justify-center gap-10 sm:gap-16 z-50">
            <button
