@@ -2646,6 +2646,12 @@ export default function App() {
     rulesActiveViewRef.current = rulesActiveView;
   }, [rulesActiveView]);
 
+  const [profileActiveView, setProfileActiveView] = useState<'menu' | string>('menu');
+  const profileActiveViewRef = useRef(profileActiveView);
+  useEffect(() => {
+    profileActiveViewRef.current = profileActiveView;
+  }, [profileActiveView]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -2699,12 +2705,29 @@ export default function App() {
         return;
       }
 
-      // 4. Lobby non-main tabs (rooms, profile, rules) -> return to lobby main tab
+      // 4. Lobby tabs (profile sub-views, rules sub-views, or non-main tabs -> return to profile/rules main view or lobby 'lobby')
       const inLobby = !roomStateRef.current && !isJoinedLobbyRef.current;
       if (inLobby) {
+        if (activeLobbyTabRef.current === 'profile') {
+          if (profileActiveViewRef.current !== 'menu') {
+            setProfileActiveView('menu');
+            return;
+          }
+          setActiveLobbyTab('lobby');
+          return;
+        }
+        if (activeLobbyTabRef.current === 'rules') {
+          if (rulesActiveViewRef.current !== 'menu') {
+            setRulesActiveView('menu');
+            return;
+          }
+          setActiveLobbyTab('lobby');
+          return;
+        }
         if (activeLobbyTabRef.current !== 'lobby') {
           setActiveLobbyTab('lobby');
           setRulesActiveView('menu');
+          setProfileActiveView('menu');
           return;
         }
       }
@@ -4042,6 +4065,8 @@ export default function App() {
                 onLogout={handleFullLogout}
                 inline={true}
                 onRestoreGame={handleRestoreGame}
+                activeView={profileActiveView}
+                onActiveViewChange={setProfileActiveView}
               />
             </div>
           </div>

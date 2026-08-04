@@ -12,10 +12,17 @@ interface UserProfileModalProps {
   inline?: boolean;
   onPlayerClick?: (username: string) => void;
   onRestoreGame?: (roomId: string) => void;
+  activeView?: string;
+  onActiveViewChange?: (view: any) => void;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick, onRestoreGame }: UserProfileModalProps) {
-  const [activeView, setActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug'>('menu');
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange }: UserProfileModalProps) {
+  const [internalActiveView, setInternalActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug'>('menu');
+  const activeView = propActiveView !== undefined ? propActiveView : internalActiveView;
+  const setActiveView = (v: any) => {
+    setInternalActiveView(v);
+    if (onActiveViewChange) onActiveViewChange(v);
+  };
   const [username, setUsername] = useState(currentUser?.username || '');
   const [oldPassword, setOldPassword] = useState('');
   const [password, setPassword] = useState('');
