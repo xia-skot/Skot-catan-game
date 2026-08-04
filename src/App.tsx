@@ -205,7 +205,8 @@ import {
   Swords,
   Clock,
   LogOut as LogOutIcon,
-  Bug
+  Bug,
+  Smartphone
 } from 'lucide-react';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
@@ -218,6 +219,7 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { RulesModal } from './components/RulesModal';
 import { SoundSettingsModal } from './components/SoundSettingsModal';
 import { GameRoomsTab } from './components/GameRoomsTab';
+import { PwaGuideModal } from './components/PwaGuideModal';
 import { socketService, RoomState } from './socketService';
 import { 
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
@@ -1934,6 +1936,48 @@ export default function App() {
   const [showBackInterceptToast, setShowBackInterceptToast] = useState(false);
   const backToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showPwaGuide, setShowPwaGuide] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleMediaChange = (e: MediaQueryListEvent) => {
+      setIsStandalone(e.matches);
+    };
+    mediaQuery.addEventListener('change', handleMediaChange);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      mediaQuery.removeEventListener('change', handleMediaChange);
+    };
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      try {
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`PWA install prompt outcome: ${outcome}`);
+      } catch (err) {
+        console.error('PWA install error:', err);
+      }
+      setDeferredPrompt(null);
+    } else {
+      setShowPwaGuide(true);
+    }
+  };
+
   const showRulesModalRef = useRef(showRulesModal);
   const showSoundModalRef = useRef(showSoundModal);
 
@@ -1954,6 +1998,15 @@ export default function App() {
     const handlePopState = () => {
       // Re-push state immediately to block navigation
       window.history.pushState({ preventBack: true }, '');
+
+      // Pro-actively request fullscreen on Android Chrome if game is active to combat gesture-exit fullscreen
+      if (gameStartedRef.current && !document.fullscreenElement) {
+        const elem = document.documentElement as any;
+        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+        if (request) {
+          request.call(elem).catch(() => {});
+        }
+      }
 
       // Execute custom back actions
       if (showRulesModalRef.current) {
@@ -3660,6 +3713,19 @@ export default function App() {
           >
             <SmartImg src={CATAN_LOGO_IMG} alt="Catan Logo" className="w-14 h-14 sm:w-20 sm:h-20 object-contain drop-shadow-lg mb-4 cursor-pointer" onClick={handleLogoClick} />
             <h1 className="text-lg sm:text-xl font-serif font-black italic mb-8 text-slate-800 tracking-tight leading-none">CATAN</h1>
+            
+            {!isStandalone && (
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setShowPwaGuide(true)}
+                className="mb-6 -mt-3 px-3.5 py-2 rounded-full bg-indigo-50 hover:bg-indigo-100/60 border border-indigo-100/50 text-[11px] sm:text-xs font-bold text-indigo-600 transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-600/5 cursor-pointer"
+              >
+                <Smartphone size={13} className="text-indigo-500 animate-pulse" />
+                <span>添加到主屏幕 (沉浸全屏/防侧滑误触)</span>
+              </motion.button>
+            )}
             
             <div className="flex flex-col gap-4 text-left w-full">
                 <div className="group">
@@ -6805,6 +6871,16 @@ export default function App() {
               onClose={() => setShowSoundModal(false)} 
               isAdmin={currentUser?.role === 'admin'}
               gameContainerRef={gameContainerRef}
+            />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showPwaGuide && (
+            <PwaGuideModal 
+              isOpen={showPwaGuide} 
+              onClose={() => setShowPwaGuide(false)} 
+              onInstall={handleInstallPwa}
+              hasDeferredPrompt={!!deferredPrompt}
             />
           )}
         </AnimatePresence>
