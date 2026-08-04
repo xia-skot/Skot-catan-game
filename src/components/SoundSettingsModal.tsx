@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, useDragControls } from 'motion/react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { X, Volume2, VolumeX, Music, BellRing, Sliders, RotateCcw, Shield } from 'lucide-react';
 import { audioService, SoundEqualizer, DEFAULT_EQUALIZER, SoundType } from '../audioService';
 import { socketService } from '../socketService';
@@ -22,8 +22,37 @@ const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = 
 ];
 
 export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = false, gameContainerRef }: SoundSettingsModalProps) {
+  const [isPortrait, setIsPortrait] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => {
+      setIsPortrait(window.innerWidth < window.innerHeight);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+  const isMobileDevice = typeof window !== 'undefined' && 
+    (window.innerWidth < 1024 || window.innerHeight < 1024);
+
+  const containerStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
+    position: 'fixed',
+    top: '100dvh',
+    left: 0,
+    width: '100dvh',
+    height: '100vw',
+    transform: 'rotate(-90deg)',
+    transformOrigin: 'top left',
+    zIndex: 100000,
+  } : {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100000,
+  };
 
   const [enabled, setEnabled] = useState(audioService.enabled);
   const [bgmVol, setBgmVol] = useState(Math.round(audioService.bgmVolume * 100));
@@ -281,31 +310,54 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
     );
   }
 
+  const contentStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
+    width: '100dvh',
+    height: '100vw',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    borderRadius: 0,
+    boxShadow: 'none',
+  } : {};
+
   return (
-    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+    <div 
+      style={containerStyle}
+      className={`bg-black/50 backdrop-blur-sm pointer-events-auto flex items-center justify-center w-full h-full ${isMobileDevice ? 'p-0' : 'sm:p-4'}`}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}>
+      
+      {/* Backdrop tap to close */}
+      <div 
+        onClick={handleClose}
+        className="absolute inset-0 bg-transparent cursor-pointer"
+      />
+
       <motion.div
-        drag
+        drag={typeof window !== 'undefined' && window.innerWidth >= 640 && !isMobileDevice}
         dragListener={false}
         dragControls={dragControls}
         dragConstraints={gameContainerRef}
         dragElastic={0}
         dragMomentum={false}
         onClick={(e) => e.stopPropagation()}
-        initial={{ scale: 0.95, y: 10 }}
-        animate={{ scale: 1, y: 0 }}
+        initial={{ scale: 0.95, y: 10, opacity: 0 }}
+        animate={{ scale: 1, y: 0, opacity: 1 }}
         exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        className={`bg-white border border-slate-200 rounded-2xl w-full ${
-          isAdmin ? 'max-w-[340px] sm:max-w-[370px]' : 'max-w-[300px] sm:max-w-[330px]'
-        } max-h-[calc(100%-16px)] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default`}
+        style={contentStyle}
+        className={
+          isMobileDevice
+            ? 'bg-white w-full h-full rounded-none overflow-hidden flex flex-col pointer-events-auto shadow-none select-none cursor-default'
+            : `bg-white border-none sm:border border-slate-200 rounded-none sm:rounded-2xl w-full ${
+                isAdmin ? 'max-w-full sm:max-w-[370px]' : 'max-w-full sm:max-w-[330px]'
+              } h-full sm:h-auto sm:max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default`
+        }
       >
         {/* Standard drag handle bar & Header */}
         <div 
-          onPointerDown={(e) => dragControls.start(e)}
-          className="p-2 sm:p-2.5 px-3 sm:px-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+          onPointerDown={(e) => typeof window !== 'undefined' && window.innerWidth >= 640 && dragControls.start(e)}
+          className="p-3 sm:p-3.5 px-4 sm:px-4.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 sm:cursor-grab active:sm:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
         >
           <div>
             <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
@@ -320,14 +372,14 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
           </div>
           <button 
             onClick={handleClose}
-            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
+            className="w-8 h-8 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
           >
-            <X size={14} />
+            <X size={16} />
           </button>
         </div>
 
         {/* Scrollable Content */}
-        <div className="p-3 sm:p-4 space-y-4 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+        <div className="p-4 sm:p-4 space-y-4 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
           {mainContent}
         </div>
       </motion.div>

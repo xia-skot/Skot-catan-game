@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, BookOpen, Map, Users, Star, Hammer, Ship as ShipIcon, Home, Castle, Trophy, Anchor, ArrowLeft, ArrowRight } from 'lucide-react';
 import {
@@ -94,14 +94,59 @@ const MockPort = ({ type }: { type: '3:1' | 'wood' | 'brick' | 'wool' | 'grain' 
 
 export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline = false }) => {
   const [activeView, setActiveView] = useState<'menu' | 'resources' | 'flow' | 'scoring' | 'building' | 'devcards'>('menu');
+  const [isPortrait, setIsPortrait] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => {
+      setIsPortrait(window.innerWidth < window.innerHeight);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   if (!inline && !isOpen) return null;
+
+  const isMobileDevice = typeof window !== 'undefined' && 
+    (window.innerWidth < 1024 || window.innerHeight < 1024);
+
+  const containerStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
+    position: 'fixed',
+    top: '100dvh',
+    left: 0,
+    width: '100dvh',
+    height: '100vw',
+    transform: 'rotate(-90deg)',
+    transformOrigin: 'top left',
+    zIndex: 100000,
+  } : {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100000,
+  };
+
+  const contentStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
+    width: '100dvh',
+    height: '100vw',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    borderRadius: 0,
+    boxShadow: 'none',
+  } : {};
 
   const content = (
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full max-w-lg shadow-2xl max-h-[90%]'}`}
+      style={contentStyle}
+      className={`relative z-10 flex flex-col overflow-hidden ${
+        inline 
+          ? 'w-full h-full bg-transparent' 
+          : isMobileDevice
+            ? 'bg-slate-50 w-full h-full rounded-none shadow-none'
+            : 'bg-slate-50 w-full h-full sm:h-auto sm:max-h-[90%] sm:max-w-lg sm:rounded-3xl rounded-none shadow-2xl'
+      }`}
     >
       {/* Header Profile Section */}
       <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-4 shadow-sm'}`}>
@@ -755,7 +800,9 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4 sm:p-6"
+      <div 
+        style={containerStyle}
+        className={`bg-black/50 backdrop-blur-sm pointer-events-auto flex items-center justify-center w-full h-full ${isMobileDevice ? 'p-0' : 'sm:p-4'}`}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
@@ -765,7 +812,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="absolute inset-0 bg-transparent"
+          className="absolute inset-0 bg-transparent cursor-pointer"
         />
         {content}
       </div>
