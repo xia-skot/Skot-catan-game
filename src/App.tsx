@@ -1084,7 +1084,7 @@ export default function App() {
       clearRoom = false;
       lockRoom = true;
       keepGameActive = true;
-    } else if (isJoinedLobby && roomState) {
+    } else if (isJoinedLobby) {
       // In lobby/matching interface: Keep room code but DO NOT lock it
       clearRoom = false;
       lockRoom = false;
@@ -3412,7 +3412,7 @@ export default function App() {
     }
   };
 
-  const isHostInLobby = !isSpectator && roomState?.hostId === socketService.playerId;
+  const isHostInLobby = !isSpectator && (!roomState || roomState.hostId === socketService.playerId);
 
   const standard2PlayerMap = useMemo(() => {
     const originalMathRandom = Math.random;
@@ -3564,7 +3564,7 @@ export default function App() {
 
   let mainContent: React.ReactNode = null;
 
-  if (!roomState) {
+  if (!roomState && !isJoinedLobby) {
     mainContent = renderNonGameWrapper(
       <div className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
         
@@ -3630,8 +3630,8 @@ export default function App() {
                   className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
                 >
                   <span className="relative z-10 flex items-center justify-center gap-2">
-                    {isRoomLocked ? <RotateCcw size={16} /> : <Swords size={16} />}
-                    {isRoomLocked ? "返回游戏" : "进入海域"}
+                    <Swords size={16} />
+                    进入海域
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                 </button>
@@ -5308,7 +5308,11 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[280px] sm:max-w-[300px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(300, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               {/* Standard drag handle bar & Header */}
               <div 
@@ -5520,7 +5524,11 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[280px] sm:max-w-[300px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(300, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               {/* Standard drag handle bar & Header */}
               <div 
@@ -5606,7 +5614,11 @@ export default function App() {
                   initial={{ scale: 0.95, y: 10 }}
                   animate={{ scale: 1, y: 0 }}
                   exit={{ scale: 0.95, y: 10 }}
-                  className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[90%] w-[300px] sm:w-[325px] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+                  style={{
+                    width: '100%',
+                    maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
+                  }}
+                  className="bg-white border border-slate-200 rounded-2xl max-h-[90%] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
                 >
                   <div 
                     onPointerDown={(e) => activeTradeDragControls.start(e)}
@@ -6023,7 +6035,11 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 rounded-2xl w-[90%] max-w-[280px] sm:max-w-[300px] max-h-[92%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(300, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl max-h-[92%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               {/* Header */}
               <div 
@@ -6204,7 +6220,11 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl max-h-[calc(100%-16px)] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               <div 
                 onPointerDown={(e) => playerTradeDragControls.start(e)}
@@ -6336,7 +6356,11 @@ export default function App() {
               initial={{ scale: 0.95, y: 10 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 10 }}
-              className="bg-white border border-slate-200 w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] rounded-2xl shadow-2xl overflow-hidden flex flex-col pointer-events-auto select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl shadow-2xl max-h-[calc(100%-16px)] overflow-hidden flex flex-col pointer-events-auto select-none cursor-default"
             >
               <div 
                 onPointerDown={(e) => bankTradeDragControls.start(e)}
@@ -6465,25 +6489,29 @@ export default function App() {
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}
-              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[calc(100%-16px)] max-h-[calc(100%-16px)] w-[300px] sm:w-[325px] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+              style={{
+                width: '100%',
+                maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
+              }}
+              className="bg-white border border-slate-200 rounded-2xl max-h-[calc(100%-16px)] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
             >
               {/* Header */}
               <div 
                 onPointerDown={(e) => stealDragControls.start(e)}
-                className="p-2.5 sm:p-3 px-3.5 sm:px-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
+                className="p-2.5 sm:p-3 px-3 sm:px-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0 cursor-grab active:cursor-grabbing hover:bg-slate-100/50 transition-colors select-none"
               >
-                <div>
-                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5 truncate">
                     选择一位玩家偷取卡牌
                   </h2>
-                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium truncate">
                     从相邻建筑的玩家手中抽取随机资源
                   </p>
                 </div>
               </div>
 
               {/* Body */}
-              <div className="p-3 sm:p-4 flex-1 pointer-events-auto space-y-2">
+              <div className="p-2.5 sm:p-4 flex-1 pointer-events-auto space-y-2">
                 <div className="grid grid-cols-1 gap-2 w-full pointer-events-auto">
                 {gameState.pendingStealFrom.map(pid => (
                   <button
@@ -6494,7 +6522,7 @@ export default function App() {
                       }
                     }}
                     disabled={!isMyHumanTurn || gameState.selectedStealTarget != null}
-                    className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl border transition-all relative overflow-hidden group pointer-events-auto cursor-pointer ${
+                    className={`flex items-center justify-between px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl border transition-all relative overflow-hidden group pointer-events-auto cursor-pointer ${
                       gameState.selectedStealTarget === pid
                         ? "bg-black text-white border-black scale-[1.01] shadow-md"
                         : gameState.selectedStealTarget != null
@@ -6504,18 +6532,18 @@ export default function App() {
                             : "opacity-40 bg-slate-50 border-slate-200 cursor-not-allowed"
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 relative z-10 text-left">
+                    <div className="flex items-center gap-2 relative z-10 text-left min-w-0 flex-1 mr-2">
                       <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: gameState.players[pid].color }} />
-                      <span className={`font-bold tracking-tight text-xs truncate max-w-[130px] ${gameState.selectedStealTarget === pid ? 'text-white' : 'text-slate-800'}`}>{gameState.players[pid].name}</span>
+                      <span className={`font-bold tracking-tight text-xs truncate max-w-[100px] sm:max-w-[130px] ${gameState.selectedStealTarget === pid ? 'text-white' : 'text-slate-800'}`}>{gameState.players[pid].name}</span>
                     </div>
                     
-                    <div className="flex items-center gap-2 relative z-10">
-                      <span className={`text-[10px] font-medium ${gameState.selectedStealTarget === pid ? 'text-slate-200' : 'text-slate-500'}`}>卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
+                    <div className="flex items-center gap-1.5 sm:gap-2 relative z-10 shrink-0">
+                      <span className={`text-[10px] font-medium whitespace-nowrap ${gameState.selectedStealTarget === pid ? 'text-slate-200' : 'text-slate-500'}`}>卡牌 {Object.values(gameState.players[pid].resources).reduce((a,b)=>a+b,0)}</span>
                       {isMyHumanTurn && gameState.selectedStealTarget === null && (
-                        <ChevronRight size={12} className="text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                        <ChevronRight size={12} className="text-slate-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
                       )}
                       {gameState.selectedStealTarget === pid && (
-                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse">
+                        <div className="w-4 h-4 bg-white/20 rounded-full flex items-center justify-center animate-pulse shrink-0">
                           <Check size={10} className="text-white" />
                         </div>
                       )}
