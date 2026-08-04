@@ -22,6 +22,9 @@ const SFX_ITEMS: { key: keyof SoundEqualizer; label: string; icon: string }[] = 
 ];
 
 export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = false, gameContainerRef }: SoundSettingsModalProps) {
+  
+  const isIOS = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
   const [enabled, setEnabled] = useState(audioService.enabled);
   const [bgmVol, setBgmVol] = useState(Math.round(audioService.bgmVolume * 100));
   const [sfxVol, setSfxVol] = useState(Math.round(audioService.sfxVolume * 100));
@@ -131,6 +134,11 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       </div>
 
       {/* BGM Slider */}
+            {isIOS && (
+        <div className="text-[9px] sm:text-[10px] text-orange-500 bg-orange-50 p-2 rounded-lg mb-2 text-left leading-relaxed">
+          <span className="font-bold">🍎 苹果设备提示：</span><br/>由于 iOS 系统限制，网页无法直接调节音量大小。请使用手机侧边的<b>实体音量按键</b>来控制声音大小。此处滑块仅供参考。
+        </div>
+      )}
       <div className={`space-y-1.5 transition-all duration-300 ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">

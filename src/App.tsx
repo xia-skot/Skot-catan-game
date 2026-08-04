@@ -1028,7 +1028,14 @@ export default function App() {
         // should resolve the dice roll to push to others. 
         // Spectators should just wait for the sync.
         if (!isSpectator) {
-          resolveDiceRoll();
+          // Fix: only the active player (or the host if the active player is a bot) should resolve the dice.
+          const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerIndex;
+          const isActivePlayerBot = gameState.players[gameState.currentPlayerIndex]?.isBot;
+          const amIHost = roomState?.hostId === socketService.playerId || currentUser?.role === 'admin';
+          
+          if (isMyTurn || (isActivePlayerBot && amIHost)) {
+            resolveDiceRoll();
+          }
         }
       }, 2500); // 2.5 seconds animation duration
     }
@@ -3431,7 +3438,7 @@ export default function App() {
   // Flexible style for Login and Lobby
   const flexibleContainerStyle: React.CSSProperties = {
     width: '100vw',
-    height: '100vh',
+    height: '100dvh',
     position: 'relative',
     overflow: 'hidden'
   };
@@ -3439,7 +3446,7 @@ export default function App() {
   // Locked landscape style for the Game
   const lockedLandscapeStyle: React.CSSProperties = {
     width: '100vw',
-    height: '100vh',
+    height: '100dvh',
     position: 'fixed',
     top: 0,
     left: 0,
@@ -3529,7 +3536,7 @@ export default function App() {
       return (
         <div style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           position: 'fixed',
           top: 0,
           left: 0,
@@ -3558,7 +3565,7 @@ export default function App() {
 
   if (!roomState) {
     mainContent = renderNonGameWrapper(
-      <div className="flex flex-col h-screen w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
+      <div className="flex flex-col h-[100dvh] w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900">
         
         {activeLobbyTab === 'lobby' && (
           <motion.div 
