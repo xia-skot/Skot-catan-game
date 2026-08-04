@@ -1146,7 +1146,7 @@ export default function App() {
     setShowSailingScreen(false);
     syncGameState(null as any);
     resetGame();
-    audioService.stopAllSfx();
+    audioService.stopAll(true);
     setIsStartingGame(false);
   };
 
@@ -1209,47 +1209,7 @@ export default function App() {
     checkAuth();
   }, []);
 
-  useEffect(() => {
-    if (isAuthLoading) return;
 
-    if (!gameStarted && !isJoinedLobby && !roomState?.roomId) {
-      audioService.stopBgm(true);
-      return;
-    }
-
-    const checkAndPlayBgm = () => {
-      if (!gameStarted && !isJoinedLobby && !roomState?.roomId) return;
-      if (!audioService.enabled) return;
-
-      if (!audioService.isBgmPlaying) {
-        audioService.playBgm();
-      }
-    };
-
-    // Try to play immediately (in case autoplay is permitted or we are already active)
-    checkAndPlayBgm();
-
-    // Set up robust gesture listeners to start/resume BGM on any user interaction
-    const handleUserGesture = () => {
-      checkAndPlayBgm();
-    };
-
-    document.addEventListener('click', handleUserGesture);
-    document.addEventListener('keydown', handleUserGesture);
-    document.addEventListener('mousedown', handleUserGesture);
-    document.addEventListener('touchstart', handleUserGesture);
-    window.addEventListener('focus', checkAndPlayBgm);
-    document.addEventListener('visibilitychange', checkAndPlayBgm);
-
-    return () => {
-      document.removeEventListener('click', handleUserGesture);
-      document.removeEventListener('keydown', handleUserGesture);
-      document.removeEventListener('mousedown', handleUserGesture);
-      document.removeEventListener('touchstart', handleUserGesture);
-      window.removeEventListener('focus', checkAndPlayBgm);
-      document.removeEventListener('visibilitychange', checkAndPlayBgm);
-    };
-  }, [isAuthLoading, gameStarted]);
 
   const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
   
@@ -2013,8 +1973,35 @@ export default function App() {
     };
 
     window.addEventListener('popstate', handlePopState);
+
+    // Active touch interceptor near screen edges to block swipe-to-back/forward gesture on iOS and Android
+    let startX = 0;
+    let isEdgeTouch = false;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      const edgeThreshold = 40; // Pixels from left/right edges
+      isEdgeTouch = startX < edgeThreshold || startX > (window.innerWidth - edgeThreshold);
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (isEdgeTouch) {
+        // Prevent default swipe-back or pull-to-navigate gestures
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: false });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+
     return () => {
       window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
       if (backToastTimeoutRef.current) {
         clearTimeout(backToastTimeoutRef.current);
       }
@@ -2039,6 +2026,51 @@ export default function App() {
       audioService.roomActive = true;
     }
   }, [showSailingScreen, isJoinedLobby]);
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+
+    // BGM only plays after fully entering the game screen (gameStarted is true, sailing loading is finished, and we are joined in lobby)
+    const isFullyInGame = gameStarted && !showSailingScreen && isJoinedLobby;
+
+    if (!isFullyInGame) {
+      audioService.stopBgm(true);
+      return;
+    }
+
+    const checkAndPlayBgm = () => {
+      if (!isFullyInGame) return;
+      if (!audioService.enabled) return;
+
+      if (!audioService.isBgmPlaying) {
+        audioService.playBgm();
+      }
+    };
+
+    // Try to play immediately (in case autoplay is permitted or we are already active)
+    checkAndPlayBgm();
+
+    // Set up robust gesture listeners to start/resume BGM on any user interaction
+    const handleUserGesture = () => {
+      checkAndPlayBgm();
+    };
+
+    document.addEventListener('click', handleUserGesture);
+    document.addEventListener('keydown', handleUserGesture);
+    document.addEventListener('mousedown', handleUserGesture);
+    document.addEventListener('touchstart', handleUserGesture);
+    window.addEventListener('focus', checkAndPlayBgm);
+    document.addEventListener('visibilitychange', checkAndPlayBgm);
+
+    return () => {
+      document.removeEventListener('click', handleUserGesture);
+      document.removeEventListener('keydown', handleUserGesture);
+      document.removeEventListener('mousedown', handleUserGesture);
+      document.removeEventListener('touchstart', handleUserGesture);
+      window.removeEventListener('focus', checkAndPlayBgm);
+      document.removeEventListener('visibilitychange', checkAndPlayBgm);
+    };
+  }, [isAuthLoading, gameStarted, showSailingScreen, isJoinedLobby]);
 
   const sailingStartTimeRef = useRef(0);
   const [showDebugConsole, setShowDebugConsole] = useState(false);
@@ -3491,7 +3523,8 @@ export default function App() {
     width: '100vw',
     height: '100dvh',
     position: 'relative',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    touchAction: 'pan-y'
   };
 
   // Locked landscape style for the Game
@@ -3501,7 +3534,8 @@ export default function App() {
     position: 'fixed',
     top: 0,
     left: 0,
-    overflow: 'hidden'
+    overflow: 'hidden',
+    touchAction: 'none'
   };
 
   if (isAuthLoading || !isAuthAnimFinished) {

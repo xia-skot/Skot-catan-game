@@ -86,6 +86,10 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       audioService.stopAll(false);
     } else {
       audioService.stopAllSfx();
+      // If we are in-game and audio is enabled, resume background music
+      if (audioService.enabled) {
+        audioService.playBgm();
+      }
     }
     currentPreviewTypeRef.current = null;
     onClose();
@@ -96,20 +100,14 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
   const previewAudio = (type: SoundType) => {
     if (!enabled) return;
 
-    // Stop currently playing music or sound when switching to a NEW sound or music type (unless in game)
-    if (currentPreviewTypeRef.current !== type) {
-      if (!audioService.roomActive) {
-        audioService.stopAll(false);
-      } else {
-        audioService.stopAllSfx();
-      }
-      currentPreviewTypeRef.current = type;
-    }
-
     if (type === 'bgm') {
       audioService.playBgm();
+      currentPreviewTypeRef.current = 'bgm';
     } else {
+      // The user wants BGM to stop playing when adjusting sound effects: "以及调节音效时应该停止播放背景音乐"
+      audioService.stopBgm(false);
       audioService.play(type, false, true);
+      currentPreviewTypeRef.current = type;
     }
   };
 
