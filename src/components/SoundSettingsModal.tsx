@@ -31,6 +31,8 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
   const [equalizer, setEqualizer] = useState<SoundEqualizer>(audioService.sfxEqualizer);
 
   const dragControls = useDragControls();
+  const lastPreviewRef = React.useRef<{ [key: string]: number }>({});
+  const currentPreviewTypeRef = React.useRef<SoundType | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -38,23 +40,47 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       setBgmVol(Math.round(audioService.bgmVolume * 100));
       setSfxVol(Math.round(audioService.sfxVolume * 100));
       setEqualizer(audioService.sfxEqualizer);
+      currentPreviewTypeRef.current = null;
     }
+    return () => {
+      if (!audioService.roomActive) {
+        audioService.stopAll(false);
+      } else {
+        audioService.stopAllSfx();
+      }
+      currentPreviewTypeRef.current = null;
+    };
   }, [isOpen]);
+
+  const handleClose = () => {
+    if (!audioService.roomActive) {
+      audioService.stopAll(false);
+    } else {
+      audioService.stopAllSfx();
+    }
+    currentPreviewTypeRef.current = null;
+    onClose();
+  };
 
   if (!isOpen) return null;
 
-  const lastPreviewRef = React.useRef<{ [key: string]: number }>({});
-
   const previewAudio = (type: SoundType) => {
     if (!enabled) return;
-    const now = Date.now();
-    if (!lastPreviewRef.current[type] || now - lastPreviewRef.current[type] > 150) {
-      lastPreviewRef.current[type] = now;
-      if (type === 'bgm') {
-        audioService.playBgm();
+
+    // Stop currently playing music or sound when switching to a NEW sound or music type (unless in game)
+    if (currentPreviewTypeRef.current !== type) {
+      if (!audioService.roomActive) {
+        audioService.stopAll(false);
       } else {
-        audioService.play(type);
+        audioService.stopAllSfx();
       }
+      currentPreviewTypeRef.current = type;
+    }
+
+    if (type === 'bgm') {
+      audioService.playBgm();
+    } else {
+      audioService.play(type, false, true);
     }
   };
 
@@ -293,7 +319,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
             <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">调整背景音乐和音效音量</p>
           </div>
           <button 
-            onClick={onClose}
+            onClick={handleClose}
             className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors pointer-events-auto cursor-pointer"
           >
             <X size={14} />

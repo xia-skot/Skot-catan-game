@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { Trophy, Home, Award, Castle, Waypoints, Swords, Flag, User, X } from 'lucide-react';
 import { GameState, DevCardType } from '../types';
+import { RotatedScroll } from './RotatedScroll';
 
 const CircleOne = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -15,9 +16,16 @@ interface GameOverModalProps {
   onReturnToLobby: () => void;
   onReturnToMap: () => void;
   maxWidth?: number;
+  shouldApplyPortraitRotation?: boolean;
 }
 
-export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onReturnToLobby, onReturnToMap, maxWidth }) => {
+export const GameOverModal: React.FC<GameOverModalProps> = ({ 
+  gameState, 
+  onReturnToLobby, 
+  onReturnToMap, 
+  maxWidth,
+  shouldApplyPortraitRotation = false 
+}) => {
   if (!gameState) return null;
 
   // Helper to calculate specific player stats
@@ -55,14 +63,14 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
 
   return (
     <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
-      className="fixed inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full h-[100dvh] pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className="absolute inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >
       {/* Header - More Compact */}
       <div className="px-4 py-3 sm:px-6 sm:py-4 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">
@@ -86,7 +94,10 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
       </div>
 
       {/* Vertical & Horizontal Rankings Container */}
-      <div className="flex-1 overflow-auto bg-white no-scrollbar relative z-10 px-2 pb-2 sm:px-4 sm:pb-4">
+      <RotatedScroll 
+        shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+        className="flex-1 overflow-auto bg-white no-scrollbar relative z-10 px-2 pb-2 sm:px-4 sm:pb-4"
+      >
         <div className="min-w-max flex flex-col gap-2">
           {/* Header Row */}
           {sortedPlayers.length > 0 && (
@@ -175,7 +186,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({ gameState, onRetur
             );
           })}
         </div>
-      </div>
+      </RotatedScroll>
     </motion.div>
   );
 };

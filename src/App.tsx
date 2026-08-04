@@ -6565,20 +6565,21 @@ export default function App() {
         gameContainerRef={gameContainerRef}
       />
     </div>
+
+    {/* Game Over Modal (Direct child of gameContainerRef so it covers full screen including header and inherits portrait landscape rotation) */}
+    <AnimatePresence>
+      {showGameOver && (
+        <GameOverModal 
+          gameState={gameState} 
+          maxWidth={stageWidth}
+          shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+          onReturnToLobby={handleReturnToLobby}
+          onReturnToMap={handleReturnToMap}
+        />
+      )}
+    </AnimatePresence>
     </div>
   </div>
-
-  {/* Game Over Modal (Root level for full screen overlay & iOS compatibility) */}
-  <AnimatePresence>
-    {showGameOver && (
-      <GameOverModal 
-        gameState={gameState} 
-        maxWidth={stageWidth}
-        onReturnToLobby={handleReturnToLobby}
-        onReturnToMap={handleReturnToMap}
-      />
-    )}
-  </AnimatePresence>
   </>
   );
   }
