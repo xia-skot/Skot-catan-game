@@ -178,6 +178,7 @@ import {
   ChevronRight,
   ChevronDown,
   Trophy,
+  Castle,
   Hammer,
   Repeat,
   Info,
@@ -4937,39 +4938,99 @@ export default function App() {
                     )}
                     {settlement ? (
                       settlement.isCity ? (
-                        // City Icon (Building SVG)
-                        <Path
-                          data="M-8 -10 L-8 10 L8 10 L8 -2 L2 -2 L2 -10 Z"
-                          fill={color}
-                          stroke="#fff"
-                          strokeWidth={1.5}
-                          scaleX={1.2}
-                          scaleY={1.2}
-                          shadowColor="black"
-                          shadowBlur={5}
-                          shadowOpacity={0.3}
-                          listening={false} // Visual only
-                          perfectDrawEnabled={false}
-                        />
+                        // City Icon (Lucide Castle)
+                        <Group 
+                          x={0} 
+                          y={0} 
+                          offsetX={12} 
+                          offsetY={12} 
+                          scaleX={1.15} 
+                          scaleY={1.15}
+                          listening={false}
+                        >
+                          <Path
+                            data="M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={1.8}
+                            shadowColor="black"
+                            shadowBlur={5}
+                            shadowOpacity={0.35}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M18 11V4H6v7"
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={1.8}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M6 11V9a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2"
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={1.5}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M22 11V9a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2"
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={1.5}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M15 22v-4a3 3 0 0 0-6 0v4Z"
+                            fill="#ffffff"
+                            stroke="#ffffff"
+                            strokeWidth={1}
+                            strokeLineCap="round"
+                            strokeLineJoin="round"
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M10 4V2 M14 4V2"
+                            stroke="#ffffff"
+                            strokeWidth={1.8}
+                            strokeLineCap="round"
+                            perfectDrawEnabled={false}
+                          />
+                        </Group>
                       ) : (
-                        // Settlement Icon (House SVG)
-                        <Path
-                          data="M-8 0 L0 -8 L8 0 L8 8 L-8 8 Z"
-                          fill={color}
-                          stroke="#fff"
-                          strokeWidth={1.5}
-                          scaleX={1.1}
+                        // Settlement / Village Icon (Lucide Home)
+                        <Group 
+                          x={0} 
+                          y={0} 
+                          offsetX={12} 
+                          offsetY={12} 
+                          scaleX={1.1} 
                           scaleY={1.1}
-                          shadowColor="black"
-                          shadowBlur={5}
-                          shadowOpacity={0.3}
                           listening={isValidCityUpgrade}
                           onClick={handleClick}
                           onTap={handleClick}
                           onMouseEnter={handleMouseEnter}
                           onMouseLeave={handleMouseLeave}
-                          perfectDrawEnabled={false}
-                        />
+                        >
+                          <Path
+                            data="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={1.8}
+                            shadowColor="black"
+                            shadowBlur={5}
+                            shadowOpacity={0.35}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M10 22v-5a2 2 0 0 1 4 0v5Z"
+                            fill="#ffffff"
+                            stroke="#ffffff"
+                            strokeWidth={1}
+                            strokeLineCap="round"
+                            strokeLineJoin="round"
+                            perfectDrawEnabled={false}
+                          />
+                        </Group>
                       )
                     ) : (
                       // Preview Icon & Hit Area
@@ -5165,7 +5226,7 @@ export default function App() {
                   <BuildItem 
                     id="build-city"
                     compact={isMobile}
-                    icon={<Trophy size={16} />} 
+                    icon={<Castle size={16} />} 
                     label="城市" 
                     cost={COSTS.city} 
                     active={buildMode === 'city'}

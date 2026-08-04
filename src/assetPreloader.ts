@@ -68,17 +68,31 @@ function preloadSingleImageCandidate(candidateUrl: string, timeoutMs: number = 3
 
 async function preloadSingleImage(originalSrc: string): Promise<void> {
   const candidates = getImageCandidates(originalSrc);
-  for (const candidateUrl of candidates) {
-    const success = await preloadSingleImageCandidate(candidateUrl, 3000);
-    if (success) {
-      RESOLVED_IMAGE_MAP[originalSrc] = candidateUrl;
+  if (candidates.length === 0) return;
+
+  // 1. Try primary CDN candidate fast with 1200ms timeout
+  const primarySuccess = await preloadSingleImageCandidate(candidates[0], 1200);
+  if (primarySuccess) {
+    RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
+    return;
+  }
+
+  // 2. If primary CDN is slow or blocked, race remaining CDN candidates concurrently
+  if (candidates.length > 1) {
+    const fallbackPromises = candidates.slice(1).map(url => 
+      preloadSingleImageCandidate(url, 1500).then(ok => ok ? url : Promise.reject())
+    );
+    try {
+      const winnerUrl = await Promise.any(fallbackPromises);
+      RESOLVED_IMAGE_MAP[originalSrc] = winnerUrl;
       return;
+    } catch {
+      // All fallback promises rejected or timed out
     }
   }
-  // If all CDN candidates failed, assign the first candidate as fallback
-  if (candidates.length > 0) {
-    RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
-  }
+
+  // Default fallback
+  RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
 }
 
 export async function preloadAllAssets(

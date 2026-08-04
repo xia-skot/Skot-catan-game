@@ -85,7 +85,10 @@ class AudioService {
             this.audios[key] = audio;
           }
         } else {
-          const response = await fetch(url);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const response = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeoutId);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const blob = await response.blob();
           const blobUrl = URL.createObjectURL(blob);

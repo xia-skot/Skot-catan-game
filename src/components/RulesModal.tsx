@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, BookOpen, Map, Users, Star, Hammer, Ship as ShipIcon, Home, Trophy, Anchor, ArrowLeft, ArrowRight } from 'lucide-react';
+import { X, BookOpen, Map, Users, Star, Hammer, Ship as ShipIcon, Home, Castle, Trophy, Anchor, ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   FOREST_IMG,
   FIELDS_IMG,
@@ -9,6 +9,7 @@ import {
   Mountains_IMG,
   HILLS_IMG,
   GOLD_IMG,
+  SEA_HEX_IMG,
   LUMBER_ICON,
   BRICK_ICON,
   WOOL_ICON,
@@ -340,6 +341,21 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                       </div>
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-between p-2 hover:bg-slate-50 rounded-2xl transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 flex items-center justify-center relative">
+                        <HexImg src={SEA_HEX_IMG} alt="海洋" />
+                      </div>
+                      <span className="font-bold text-sky-700 text-sm">海洋</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <ArrowRight size={14} className="text-slate-300" />
+                      <div className="flex items-center gap-1.5 text-xs text-sky-600 font-bold bg-sky-50 border border-sky-100 shadow-sm px-2.5 py-1 rounded-xl w-20 justify-center">
+                        航行水域
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -624,7 +640,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-slate-500">
-                        <Trophy size={16} />
+                        <Castle size={16} />
                       </div>
                       <span className="font-bold text-slate-700 text-sm">城市</span>
                     </div>
