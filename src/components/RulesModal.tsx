@@ -140,7 +140,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
       }`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm'}`}>
+      <div className="bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <BookOpen size={22} />
@@ -173,7 +173,10 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto no-scrollbar relative max-w-2xl w-full mx-auto">
+      <div 
+        className="flex-1 min-h-0 overflow-y-auto no-scrollbar relative max-w-2xl w-full mx-auto touch-pan-y"
+        style={{ overscrollBehaviorY: 'contain', WebkitOverflowScrolling: 'touch' }}
+      >
         {activeView === 'menu' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -796,7 +799,6 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
         className={`bg-black/50 backdrop-blur-sm pointer-events-auto flex items-center justify-center w-full h-full ${isMobileDevice ? 'p-0' : 'sm:p-4'}`}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}>
         <motion.div 
           initial={{ opacity: 0 }}

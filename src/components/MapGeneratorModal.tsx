@@ -38,7 +38,6 @@ export function MapGeneratorModal({
     <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4 sm:p-6"
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}>
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}

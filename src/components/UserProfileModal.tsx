@@ -197,7 +197,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90%]'}`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm'}`}>
+      <div className="bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <User size={22} />
@@ -239,7 +239,10 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto no-scrollbar relative p-4 space-y-4 max-w-2xl w-full mx-auto">
+      <div 
+        className="flex-1 min-h-0 overflow-y-auto no-scrollbar relative p-4 space-y-4 max-w-2xl w-full mx-auto touch-pan-y"
+        style={{ overscrollBehaviorY: 'contain', WebkitOverflowScrolling: 'touch' }}
+      >
         {activeView === 'edit' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -715,7 +718,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4"
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}>
       <motion.div 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

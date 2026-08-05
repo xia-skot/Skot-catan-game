@@ -68,7 +68,6 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
       exit={{ opacity: 0, scale: 0.98 }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       className="absolute inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
     >

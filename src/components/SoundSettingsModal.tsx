@@ -307,7 +307,6 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
       className={`bg-black/50 backdrop-blur-sm pointer-events-auto flex items-center justify-center w-full h-full ${isMobileDevice ? 'p-0' : 'sm:p-4'}`}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}>
       
       {/* Backdrop tap to close */}
@@ -340,7 +339,6 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
         dragMomentum={false}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         initial={{ scale: 0.95, y: 10, opacity: 0 }}
