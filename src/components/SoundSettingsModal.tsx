@@ -39,16 +39,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
   const isMobileDevice = typeof window !== 'undefined' && 
     (window.innerWidth < 1024 || window.innerHeight < 1024);
 
-  const containerStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
-    position: 'fixed',
-    top: '100dvh',
-    left: 0,
-    width: '100dvh',
-    height: '100vw',
-    transform: 'rotate(-90deg)',
-    transformOrigin: 'top left',
-    zIndex: 100000,
-  } : {
+  const containerStyle: React.CSSProperties = {
     position: 'fixed',
     inset: 0,
     zIndex: 100000,
@@ -308,14 +299,7 @@ export function SoundSettingsModal({ isOpen, onClose, isAdmin = false, inline = 
     );
   }
 
-  const contentStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
-    width: '100dvh',
-    height: '100vw',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    borderRadius: 0,
-    boxShadow: 'none',
-  } : {};
+  const contentStyle: React.CSSProperties = {};
 
   return (
     <div 

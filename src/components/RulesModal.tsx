@@ -118,29 +118,13 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
   const isMobileDevice = typeof window !== 'undefined' && 
     (window.innerWidth < 1024 || window.innerHeight < 1024);
 
-  const containerStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
-    position: 'fixed',
-    top: '100dvh',
-    left: 0,
-    width: '100dvh',
-    height: '100vw',
-    transform: 'rotate(-90deg)',
-    transformOrigin: 'top left',
-    zIndex: 100000,
-  } : {
+  const containerStyle: React.CSSProperties = {
     position: 'fixed',
     inset: 0,
     zIndex: 100000,
   };
 
-  const contentStyle: React.CSSProperties = (!inline && isMobileDevice && !isPortrait) ? {
-    width: '100dvh',
-    height: '100vw',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    borderRadius: 0,
-    boxShadow: 'none',
-  } : {};
+  const contentStyle: React.CSSProperties = {};
 
   const content = (
     <motion.div 
@@ -608,7 +592,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                   </div>
                   <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                     <div className="flex items-center gap-3">
-                      <span className="text-lg leading-none grayscale opacity-60">í ¼í¿†</span>
+                      <span className="text-lg leading-none grayscale opacity-60">ğŸ†</span>
                       <div>
                         <div className="font-bold text-slate-700 text-sm">èƒœåˆ©ç‚¹å¡</div>
                         <div className="text-[9px] text-slate-400">éšè—åœ¨æ‰‹ä¸­</div>

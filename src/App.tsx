@@ -3869,6 +3869,41 @@ export default function App() {
     return `${actingPlayerName} ${phaseDesc}...`;
   })();
 
+  const renderGameModals = () => (
+    <>
+      <AnimatePresence>
+        {showRulesModal && (
+          <RulesModal 
+            isOpen={showRulesModal} 
+            onClose={() => { setShowRulesModal(false); setRulesActiveView('menu'); }} 
+            activeView={rulesActiveView} 
+            onActiveViewChange={setRulesActiveView} 
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showSoundModal && (
+          <SoundSettingsModal 
+            isOpen={showSoundModal} 
+            onClose={() => setShowSoundModal(false)} 
+            isAdmin={currentUser?.role === 'admin'}
+            gameContainerRef={gameContainerRef}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showPwaGuide && (
+          <PwaGuideModal 
+            isOpen={showPwaGuide} 
+            onClose={() => setShowPwaGuide(false)} 
+            onInstall={handleInstallPwa}
+            hasDeferredPrompt={!!deferredPrompt}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  );
+
   const renderNonGameWrapper = (content: React.ReactNode) => {
     if (shouldRotateNonGame) {
       return (
@@ -3882,21 +3917,22 @@ export default function App() {
           backgroundColor: '#f8fafc'
         }}>
           <div style={{
-            width: windowSize.height,
-            height: windowSize.width,
+            width: '100dvh',
+            height: '100vw',
             transform: 'rotate(90deg)',
             transformOrigin: 'top left',
             position: 'absolute',
-            left: windowSize.width,
+            left: '100vw',
             top: 0,
             overflowY: 'auto'
           }}>
             {content}
+            {renderGameModals()}
           </div>
         </div>
       );
     }
-    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{content}</div>;
+    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{content}{renderGameModals()}</div>;
   };
 
   let mainContent: React.ReactNode = null;
@@ -4662,13 +4698,13 @@ export default function App() {
         ref={gameContainerRef}
         data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
         style={shouldApplyPortraitRotation ? {
-          width: windowSize.height,
-          height: windowSize.width,
+          width: '100dvh',
+          height: '100vw',
           transform: 'rotate(90deg)',
           transformOrigin: 'top left',
           position: 'absolute',
           top: 0,
-          left: windowSize.width,
+          left: '100vw',
           paddingTop: 'env(safe-area-inset-right, 0px)',
           paddingBottom: 'env(safe-area-inset-left, 0px)',
           paddingLeft: 'env(safe-area-inset-top, 0px)',
@@ -5495,22 +5531,21 @@ export default function App() {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 transition={{ type: 'spring', bounce: 0.4, duration: 0.6 }}
-                className={`absolute right-4 flex flex-col items-center gap-6 z-40 ${isMobile ? 'bottom-8' : 'bottom-4'}`}
-                style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : {}}
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
                 <motion.button 
                   whileHover={isMyHumanTurn ? { scale: 1.05 } : {}}
                   whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
                   onClick={() => isMyHumanTurn && rollDice()}
                   disabled={!isMyHumanTurn}
-                  className={`no-click-sound ${isMobile ? 'px-5 py-2.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
+                  className={`no-click-sound ${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
                     isMyHumanTurn 
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
                       : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
                   }`}
                 >
-                  <Dices size={isMobile ? 16 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
-                  <span className={`${isMobile ? 'text-xs' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
+                  <Dices size={isMobile ? 14 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
+                  <span className={`${isMobile ? 'text-[10px]' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
                 </motion.button>
               </motion.div>
             )}
@@ -5524,8 +5559,7 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
                 exit={{ opacity: 0, scale: 0.5, y: -50 }}
                 transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
-                className={`absolute right-4 flex flex-col items-center gap-6 z-40 ${isMobile ? 'bottom-8' : 'bottom-4'}`}
-                style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : {}}
+                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
               >
                 <div 
                   className="bg-white rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center overflow-visible"
@@ -5687,6 +5721,7 @@ export default function App() {
     </AnimatePresence>
 
       {/* Game Modals (Moved to root of gameContainerRef to cover full viewport including header and panels) */}
+      {renderGameModals()}
 {/* Exit Options Modal */}
       <AnimatePresence>
         {showExitOptions && (
