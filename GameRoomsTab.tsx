@@ -1,252 +1,230 @@
-import { io, Socket } from 'socket.io-client';
+import React, { useEffect, useState } from 'react';
+import { socketService, RoomState } from '../socketService';
+import { Swords, Eye, RefreshCw, Trash2 } from 'lucide-react';
 
-export interface RoomState {
-  roomId: string;
-  hostId: string;
-  players: { id: string; name: string; isReady: boolean; disconnected?: boolean; isBot?: boolean; socketId?: string }[];
-  spectators?: { id: string; name: string; socketId?: string; disconnected?: boolean }[];
-  settings: {
-    playerCount: number;
-    mapType: string;
-    botConfig: boolean[];
-    customBoard?: any[];
-    customMapName?: string;
-    customMapId?: string;
-  };
-  gameState?: any;
-  reservedUntil?: number | null;
-  status?: 'waiting' | 'playing';
+interface GameRoomsTabProps {
+  currentUser: { id?: string, username: string, role?: string, isAdmin?: boolean } | null;
+  onJoinRoom: (roomId: string) => void;
+  onSpectateRoom: (roomId: string) => void;
+  onReturnToGame?: (roomId?: string) => void;
+  onUserFoundInRoom?: (roomId: string) => void;
+  isRoomLocked?: boolean;
+  activeRoomId?: string | null;
 }
 
-class SocketService {
-  private socket: Socket | null = null;
-  public playerId: string;
-  private callbacks: Map<string, any> = new Map();
+export const GameRoomsTab: React.FC<GameRoomsTabProps> = ({ 
+  currentUser, 
+  onJoinRoom, 
+  onSpectateRoom, 
+  onReturnToGame,
+  onUserFoundInRoom,
+  isRoomLocked = false,
+  activeRoomId = null
+}) => {
+  const [rooms, setRooms] = useState<RoomState[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  constructor() {
-    let storedId = localStorage.getItem('catan_player_id');
-    if (!storedId) {
-      storedId = Math.random().toString(36).substring(2, 10);
-      localStorage.setItem('catan_player_id', storedId);
-    }
-    this.playerId = storedId;
-  }
+  const isAdmin = currentUser?.isAdmin || currentUser?.role === 'admin';
 
-  private connectionChangeCallbacks: Array<(connected: boolean) => void> = [];
-
-  onConnectionChange(callback: (connected: boolean) => void) {
-    this.connectionChangeCallbacks.push(callback);
-    if (this.socket) {
-      callback(this.socket.connected);
-    }
-    return () => {
-      this.connectionChangeCallbacks = this.connectionChangeCallbacks.filter(c => c !== callback);
-    };
-  }
-
-  connect() {
-    if (this.socket?.connected) return;
-    
-    // If socket exists but disconnected, just connect it
-    if (this.socket) {
-      this.socket.connect();
-      return;
-    }
-
-    // Create new socket
-    this.socket = io(window.location.origin, {
-      path: '/socket.io',
-      withCredentials: true,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
-      autoConnect: true,
-      transports: ['websocket', 'polling']
-    });
-
-    // Re-bind all sticky listeners whenever a new socket is created
-    this.callbacks.forEach((callback, event) => {
-      this.socket?.on(event, (...args: any[]) => {
-        console.log(`[Socket] Event received: ${event}`, args);
-        callback(...args);
+  const fetchRooms = () => {
+    socketService.getActiveRooms(isAdmin, (fetchedRooms) => {
+      const sanitizedRooms = fetchedRooms || [];
+      setRooms(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(sanitizedRooms)) {
+          return prev;
+        }
+        return sanitizedRooms;
       });
-    });
+      setLoading(false);
 
-    this.socket.on('connect', () => {
-      console.log('[Socket] Connected. ID:', this.socket?.id);
-      this.connectionChangeCallbacks.forEach(cb => cb(true));
-    });
-
-    this.socket.on('connect_error', (error) => {
-      if (error.message === 'websocket error') {
-        console.warn('[Socket] Connection Error (WebSocket fallback to polling):', error.message);
-      } else {
-        console.error('[Socket] Connection Error:', error.message);
-      }
-      this.connectionChangeCallbacks.forEach(cb => cb(false));
-      // If websocket fails, it might try polling automatically if transports is set
-    });
-
-    this.socket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected. Reason:', reason);
-      this.connectionChangeCallbacks.forEach(cb => cb(false));
-    });
-  }
-
-  disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      // We don't nullify it here if we want to reuse it, 
-      // but if we do, connect() handles creating a new one.
-    }
-  }
-
-  private emit(event: string, ...args: any[]) {
-    if (!this.socket?.connected) {
-      console.warn(`Socket not connected. Buffering ${event}...`);
-      this.connect();
+      const myId = currentUser?.id;
+      const myName = currentUser?.username || localStorage.getItem('catan_player_name');
       
-      // Wait for connect event to flush this emit
-      if (this.socket) {
-        const flushEvent = () => {
-          this.socket?.emit(event, ...args);
-          this.socket?.off('connect', flushEvent);
-        };
-        this.socket.on('connect', flushEvent);
-      }
-      return;
-    }
-    try {
-      this.socket.emit(event, ...args);
-    } catch (err) {
-      console.error(`Error emitting ${event}:`, err);
-    }
-  }
-
-  joinRoom(roomId: string, playerName: string) {
-    this.emit('join_room', roomId, this.playerId, playerName);
-  }
-
-  getActiveRooms(isAdmin: boolean, callback: (rooms: RoomState[]) => void) {
-    if (!this.socket) {
-      setTimeout(() => this.getActiveRooms(isAdmin, callback), 100);
-      return;
-    }
-    this.socket.emit('get_active_rooms', isAdmin);
-    this.socket.once('active_rooms_list', (rooms: RoomState[]) => {
-      callback(rooms);
-    });
-  }
-
-  leaveRoom(roomId: string) {
-    this.emit('leave_room', roomId, this.playerId);
-  }
-
-  toggleReady(roomId: string) {
-    this.emit('toggle_ready', roomId, this.playerId);
-  }
-
-  updateSettings(roomId: string, settings: any) {
-    this.emit('update_settings', roomId, this.playerId, settings);
-  }
-
-  sendGameState(roomId: string, gameState: any) {
-    this.emit('update_game_state', roomId, gameState);
-  }
-
-  sendReactToTrade(roomId: string, tradeId: string, playerId: number, reaction: 'accept' | 'reject') {
-    this.emit('react_to_trade', roomId, tradeId, playerId, reaction);
-  }
-
-  sendFinalizeTrade(roomId: string, tradeId: string, partnerId: number) {
-    this.emit('finalize_trade', roomId, tradeId, partnerId);
-  }
-
-  startGame(roomId: string, initialGameState: any) {
-    this.emit('start_game', roomId, initialGameState);
-  }
-
-  resetGame(roomId: string) {
-    console.log(`[Socket] Requesting game reset for room: ${roomId}`);
-    this.emit('reset_game', roomId, this.playerId);
-  }
-
-  reserveRoom(roomId: string, durationMs: number | null) {
-    console.log(`[Socket] Requesting reserve format for room: ${roomId}`);
-    this.emit('reserve_room', roomId, durationMs, this.playerId);
-  }
-
-  requestSync(roomId: string) {
-    this.emit('request_sync', roomId);
-  }
-
-  reclaimSlot(roomId: string, targetPlayerId: string) {
-    console.log(`[Socket] Requesting to reclaim slot: ${targetPlayerId}`);
-    this.emit('reclaim_slot', roomId, this.playerId, targetPlayerId);
-  }
-
-  kickPlayer(roomId: string, targetPlayerId: string) {
-    this.emit('kick_player', roomId, this.playerId, targetPlayerId);
-  }
-
-  demoteToSpectator(roomId: string, targetPlayerId: string) {
-    this.emit('demote_to_spectator', roomId, this.playerId, targetPlayerId);
-  }
-
-  promoteToPlayer(roomId: string, targetPlayerId: string) {
-    this.emit('promote_to_player', roomId, this.playerId, targetPlayerId);
-  }
-
-  onPlayerKicked(callback: (kickedPlayerId: string) => void) {
-    this.registerCallback('player_kicked', callback);
-  }
-
-  returnToLobby(roomId: string) {
-    console.log(`[Socket] Requesting return to lobby for room: ${roomId}`);
-    this.emit('return_to_lobby', roomId, this.playerId);
-  }
-
-  onRoomState(callback: (state: RoomState) => void) {
-    this.registerCallback('room_state', callback);
-  }
-
-  onGameInit(callback: (state: any) => void) {
-    this.registerCallback('game_init', callback);
-  }
-
-  onGameUpdate(callback: (state: any) => void) {
-    this.registerCallback('game_state_updated', callback);
-  }
-
-  onGameReset(callback: () => void) {
-    this.registerCallback('game_reset', callback);
-  }
-
-  onReturnedToLobby(callback: () => void) {
-    this.registerCallback('returned_to_lobby', callback);
-  }
-
-  updateSoundSettings(soundSettings: any) {
-    this.emit('admin_update_sound_settings', soundSettings);
-  }
-
-  onSoundSettingsUpdated(callback: (soundSettings: any) => void) {
-    this.registerCallback('sound_settings_updated', callback);
-  }
-
-  private registerCallback(event: string, callback: any) {
-    console.log(`[Socket] Registering sticky listener for: ${event}`);
-    this.callbacks.set(event, callback);
-    if (this.socket) {
-      this.socket.off(event);
-      this.socket.on(event, (...args: any[]) => {
-        console.log(`[Socket] Event received: ${event}`, args);
-        callback(...args);
+      // Auto-detect if user belongs to any active room
+      const userRoom = sanitizedRooms.find((room: RoomState) => {
+        if (!room) return false;
+        return room.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName));
       });
-    }
-  }
-}
+      
+      if (userRoom && onUserFoundInRoom && (!isRoomLocked || activeRoomId !== userRoom.roomId)) {
+        onUserFoundInRoom(userRoom.roomId);
+      }
 
-export const socketService = new SocketService();
+      const hasMyRoom = sanitizedRooms.some((room: RoomState) => {
+        if (!room) return false;
+        if (myId && room.hostId === myId) return true;
+        if (room.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName))) return true;
+        if (room.spectators?.some((s: any) => (myId && s.id === myId) || (myName && s.name === myName))) return true;
+        return false;
+      });
+
+      if (!hasMyRoom && localStorage.getItem('catan_active_room') && localStorage.getItem('catan_has_created_room') !== 'true') {
+        localStorage.removeItem('catan_active_room');
+      }
+    });
+  };
+
+  const handleDeleteRoom = (roomId: string) => {
+    socketService.deleteRoom(roomId);
+    setTimeout(fetchRooms, 300);
+  };
+
+  useEffect(() => {
+    fetchRooms();
+    
+    const interval = setInterval(() => {
+      fetchRooms();
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const myId = currentUser?.id;
+  const myName = currentUser?.username || localStorage.getItem('catan_player_name');
+
+  const isMyRoom = (room: RoomState) => {
+    if (!room) return false;
+    if (myId && room.hostId === myId) return true;
+    if (room.players?.some((p: any) => (myId && p.id === myId) || (myName && p.name === myName))) return true;
+    if (room.spectators?.some((s: any) => (myId && s.id === myId) || (myName && s.name === myName))) return true;
+    return false;
+  };
+
+  const sortedRooms = [...rooms].sort((a, b) => {
+    const aMine = isMyRoom(a);
+    const bMine = isMyRoom(b);
+    if (aMine && !bMine) return -1;
+    if (!aMine && bMine) return 1;
+    return 0;
+  });
+
+  return (
+    <div className="w-full h-full flex flex-col">
+      <div className="px-4 py-3 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-serif font-black italic text-slate-800 flex items-center gap-2">
+            <Swords size={24} className="text-indigo-600" />
+            游戏大厅
+          </h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={fetchRooms}
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-white border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shadow-sm"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
+        {loading ? (
+          <div className="text-center py-10 text-slate-400 text-sm font-bold">加载中...</div>
+        ) : sortedRooms.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm font-bold">当前没有活跃的海域</div>
+        ) : (
+          sortedRooms.map(room => (
+            <div key={room.roomId} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all">
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black uppercase text-slate-400 tracking-widest">海域</span>
+                  <span className="text-lg font-black text-indigo-700">{room.roomId}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full">
+                     {room.status === 'waiting' ? '约局中' : '游戏中'}
+                  </div>
+                  {isAdmin && (
+                    <button 
+                      onClick={() => handleDeleteRoom(room.roomId)}
+                      className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                      title="解散海域"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex justify-between items-end mt-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500 font-bold">
+                    玩家: <span className="text-slate-800">
+                      {room.settings?.playerCount || 4}人
+                    </span>
+                  </span>
+                  <span className="text-xs text-slate-500 font-bold">
+                    观战: <span className="text-slate-800">{room.spectators?.length || 0}</span>
+                  </span>
+                </div>
+                
+                {/* Action Button Logic */}
+                <div className="flex items-center gap-2">
+                  {isRoomLocked && activeRoomId === room.roomId ? (
+                    <button
+                      onClick={() => {
+                        if (onReturnToGame) onReturnToGame(room.roomId);
+                        else onJoinRoom(room.roomId);
+                      }}
+                      className="px-4 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 font-bold text-xs rounded-lg transition-all shadow-sm flex items-center gap-1.5"
+                    >
+                      <RefreshCw size={12} className="animate-pulse" />
+                      返回游戏
+                    </button>
+                  ) : isRoomLocked ? (
+                    // Requirement: If player has an active room locked, don't allow joining OR spectating others
+                    null
+                  ) : room.status === 'waiting' ? (
+                    // If not locked and room is waiting
+                    (room.players?.length || 0) < (room.settings?.playerCount || 4) ? (
+                      <button
+                        onClick={() => onJoinRoom(room.roomId)}
+                        className="px-4 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold text-xs rounded-lg transition-colors"
+                      >
+                        加入海域
+                      </button>
+                    ) : (
+                      // Full room: allow spectating if not locked
+                      <button
+                        onClick={() => onSpectateRoom(room.roomId)}
+                        className="px-4 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors"
+                      >
+                        <Eye size={12} />
+                        观战
+                      </button>
+                    )
+                  ) : (
+                    // Room is playing/finished
+                    room.players?.some((p: any) => 
+                      (currentUser?.id && p.id === currentUser.id) || 
+                      ((currentUser?.username || localStorage.getItem('catan_player_name')) && p.name === (currentUser?.username || localStorage.getItem('catan_player_name')))
+                    ) ? (
+                      <button
+                        onClick={() => {
+                          if (onReturnToGame) onReturnToGame(room.roomId);
+                          else onJoinRoom(room.roomId);
+                        }}
+                        className="px-4 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-bold text-xs rounded-lg transition-colors"
+                      >
+                        返回游戏
+                      </button>
+                    ) : (
+                      // Not user's room and not locked: allow spectating
+                      <button
+                        onClick={() => onSpectateRoom(room.roomId)}
+                        className="px-4 py-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 font-bold text-xs rounded-lg flex items-center gap-1 transition-colors"
+                      >
+                        <Eye size={12} />
+                        观战
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
