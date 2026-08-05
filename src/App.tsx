@@ -646,7 +646,7 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
 
     return {
         line: "M " + pts.join(" L "),
-        fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + h + " L " + startX + "," + h + " Z",
+        fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + (h + 500) + " L " + startX + "," + (h + 500) + " Z",
         framesCss,
         boatSize: currentBoatSize
     };
@@ -727,15 +727,9 @@ function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", l
             )}
 
             <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
-                <defs>
-                    <linearGradient id="sailingWaveGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#38bdf8" stopOpacity="1" />
-                        <stop offset="100%" stopColor="#0369a1" stopOpacity="1" />
-                    </linearGradient>
-                </defs>
-                <path d={paths.fill} fill="url(#sailingWaveGradient)" />
-                <path d={paths.line} stroke="#bae6fd" strokeWidth="4" fill="none" />
-                <path d={paths.line} stroke="#2e8cba" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
+                <path d={paths.fill} fill="#27a6e6" />
+                <path d={paths.line} stroke="#85caec" strokeWidth="4" fill="none" />
+                <path d={paths.line} stroke="#1e6b9c" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
             </svg>
 
             {/* When preload is finished: show main text ("正在驶入海域......") */}
@@ -3793,7 +3787,8 @@ export default function App() {
     top: 0,
     left: 0,
     overflow: 'hidden',
-    touchAction: 'none'
+    touchAction: 'none',
+    backgroundColor: '#f5f2ed'
   };
 
   if (isAuthLoading || !isAuthAnimFinished) {
@@ -3901,7 +3896,7 @@ export default function App() {
         </div>
       );
     }
-    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }}>{content}</div>;
+    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{content}</div>;
   };
 
   let mainContent: React.ReactNode = null;
@@ -4674,9 +4669,19 @@ export default function App() {
           position: 'absolute',
           top: 0,
           left: windowSize.width,
+          paddingTop: 'env(safe-area-inset-right, 0px)',
+          paddingBottom: 'env(safe-area-inset-left, 0px)',
+          paddingLeft: 'env(safe-area-inset-top, 0px)',
+          paddingRight: 'env(safe-area-inset-bottom, 0px)',
+          boxSizing: 'border-box'
         } : {
           width: '100%',
-          height: '100%'
+          height: '100%',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
+          boxSizing: 'border-box'
         }}
         className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
       >
@@ -5490,21 +5495,22 @@ export default function App() {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.5, x: 100, y: 100 }}
                 transition={{ type: 'spring', bounce: 0.4, duration: 0.6 }}
-                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
+                className={`absolute right-4 flex flex-col items-center gap-6 z-40 ${isMobile ? 'bottom-8' : 'bottom-4'}`}
+                style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : {}}
               >
                 <motion.button 
                   whileHover={isMyHumanTurn ? { scale: 1.05 } : {}}
                   whileTap={isMyHumanTurn ? { scale: 0.95 } : {}}
                   onClick={() => isMyHumanTurn && rollDice()}
                   disabled={!isMyHumanTurn}
-                  className={`no-click-sound ${isMobile ? 'px-3 py-1.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
+                  className={`no-click-sound ${isMobile ? 'px-5 py-2.5' : 'px-8 py-4'} rounded-xl shadow-xl border flex items-center gap-1.5 group transition-all ${
                     isMyHumanTurn 
                       ? "bg-orange-500 hover:bg-orange-600 text-white border-orange-400" 
                       : "bg-stone-100 text-stone-400 cursor-not-allowed border-stone-200"
                   }`}
                 >
-                  <Dices size={isMobile ? 14 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
-                  <span className={`${isMobile ? 'text-[10px]' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
+                  <Dices size={isMobile ? 16 : 24} className={isMyHumanTurn ? "animate-pulse" : ""} />
+                  <span className={`${isMobile ? 'text-xs' : 'text-xl'} font-black tracking-widest uppercase`}>掷骰子</span>
                 </motion.button>
               </motion.div>
             )}
@@ -5518,7 +5524,8 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
                 exit={{ opacity: 0, scale: 0.5, y: -50 }}
                 transition={{ type: 'spring', bounce: 0.5, duration: 0.6 }}
-                className="absolute bottom-4 right-4 flex flex-col items-center gap-6 z-40"
+                className={`absolute right-4 flex flex-col items-center gap-6 z-40 ${isMobile ? 'bottom-8' : 'bottom-4'}`}
+                style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : {}}
               >
                 <div 
                   className="bg-white rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.1)] border border-black/5 flex items-center overflow-visible"
@@ -7033,37 +7040,6 @@ export default function App() {
               </motion.div>
             </motion.div>
           </>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {!isStandalone && !isFullscreen && gameStarted && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            transition={{ type: 'spring', damping: 20 }}
-            className="absolute top-[54px] sm:top-[64px] left-1/2 -translate-x-1/2 z-[100003] px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-sans text-[10px] sm:text-xs font-black shadow-lg shadow-amber-500/30 flex items-center gap-2 max-w-[90%] border border-amber-400/30 select-none cursor-pointer transition-colors active:scale-98"
-            onClick={(e) => {
-              e.stopPropagation();
-              const elem = document.documentElement as any;
-              const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-              if (request) {
-                request.call(elem).catch(() => {});
-              }
-            }}
-          >
-            <Smartphone className="w-3.5 h-3.5 shrink-0 text-white animate-bounce" />
-            <div className="flex items-center gap-1">
-              <span className="text-amber-100 font-extrabold text-[8px] sm:text-[9px] bg-amber-600/50 px-1.5 py-0.5 rounded-full uppercase tracking-wider">退出全屏拦截</span>
-              <span className="text-white font-black truncate max-w-[220px] sm:max-w-none">
-                系统检测到返回手势退出了全屏。点击此处或屏幕任意位置，立即恢复！
-              </span>
-            </div>
-            <span className="ml-1 px-2.5 py-0.5 bg-white text-amber-600 rounded-full text-[9px] sm:text-[10px] font-black shadow-sm shrink-0">
-              恢复
-            </span>
-          </motion.div>
         )}
       </AnimatePresence>
 
