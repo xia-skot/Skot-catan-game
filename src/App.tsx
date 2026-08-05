@@ -3932,7 +3932,7 @@ export default function App() {
         </div>
       );
     }
-    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">{content}{renderGameModals()}</div>;
+    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="bg-slate-50">{content}{renderGameModals()}</div>;
   };
 
   let mainContent: React.ReactNode = null;
@@ -4110,7 +4110,7 @@ export default function App() {
           </div>
         </div>
         {/* Bottom Tab Bar */}
-        <div className="absolute bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-1.5 px-6 flex justify-center gap-10 sm:gap-16 z-50">
+        <div className="absolute bottom-0 left-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-6 flex justify-center gap-10 sm:gap-16 z-50">
            <button
              onClick={() => setActiveLobbyTab('lobby')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
@@ -4705,18 +4705,10 @@ export default function App() {
           position: 'absolute',
           top: 0,
           left: '100vw',
-          paddingTop: 'env(safe-area-inset-right, 0px)',
-          paddingBottom: 'env(safe-area-inset-left, 0px)',
-          paddingLeft: 'env(safe-area-inset-top, 0px)',
-          paddingRight: 'env(safe-area-inset-bottom, 0px)',
           boxSizing: 'border-box'
         } : {
           width: '100%',
           height: '100%',
-          paddingTop: 'env(safe-area-inset-top, 0px)',
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-          paddingLeft: 'env(safe-area-inset-left, 0px)',
-          paddingRight: 'env(safe-area-inset-right, 0px)',
           boxSizing: 'border-box'
         }}
         className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
