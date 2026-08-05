@@ -3932,7 +3932,24 @@ export default function App() {
         </div>
       );
     }
-    return <div style={{ width: '100vw', height: '100dvh', position: 'fixed', top: 0, left: 0, overflow: 'hidden' }} className="bg-slate-50">{content}{renderGameModals()}</div>;
+    return (
+      <div 
+        style={{ 
+          width: '100vw', 
+          height: '100dvh', 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          overflow: 'hidden',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+          boxSizing: 'border-box'
+        }} 
+        className="bg-slate-50"
+      >
+        {content}
+        {renderGameModals()}
+      </div>
+    );
   };
 
   let mainContent: React.ReactNode = null;
@@ -4705,10 +4722,18 @@ export default function App() {
           position: 'absolute',
           top: 0,
           left: '100vw',
+          paddingLeft: 'env(safe-area-inset-top, 0px)',
+          paddingRight: 'env(safe-area-inset-bottom, 0px)',
+          paddingTop: 'env(safe-area-inset-right, 0px)',
+          paddingBottom: 'env(safe-area-inset-left, 0px)',
           boxSizing: 'border-box'
         } : {
           width: '100%',
           height: '100%',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          paddingLeft: 'env(safe-area-inset-left, 0px)',
+          paddingRight: 'env(safe-area-inset-right, 0px)',
           boxSizing: 'border-box'
         }}
         className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"

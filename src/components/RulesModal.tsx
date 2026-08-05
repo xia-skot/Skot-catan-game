@@ -140,7 +140,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
       }`}
     >
       {/* Header Profile Section */}
-      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-4 shadow-sm'}`}>
+      <div className={`bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 ${inline ? '' : 'pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm'}`}>
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <BookOpen size={22} />
