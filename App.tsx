@@ -3778,8 +3778,8 @@ export default function App() {
 
   // Flexible style for Login and Lobby
   const flexibleContainerStyle: React.CSSProperties = {
-    width: '100vw',
-    height: '100dvh',
+    width: '100%',
+    height: '100%',
     position: 'relative',
     overflow: 'hidden',
     touchAction: 'pan-y'
@@ -3787,8 +3787,8 @@ export default function App() {
 
   // Locked landscape style for the Game
   const lockedLandscapeStyle: React.CSSProperties = {
-    width: '100vw',
-    height: '100dvh',
+    width: '100%',
+    height: '100%',
     position: 'fixed',
     top: 0,
     left: 0,
@@ -3914,8 +3914,8 @@ export default function App() {
     if (shouldRotateNonGame) {
       return (
         <div style={{
-          width: '100vw',
-          height: '100dvh',
+          width: '100%',
+          height: '100%',
           position: 'fixed',
           top: 0,
           left: 0,
@@ -3923,12 +3923,12 @@ export default function App() {
           backgroundColor: '#f8fafc'
         }}>
           <div style={{
-            width: '100dvh',
-            height: '100vw',
+            width: `${windowSize.height}px`,
+            height: `${windowSize.width}px`,
             transform: 'rotate(90deg)',
             transformOrigin: 'top left',
             position: 'absolute',
-            left: '100vw',
+            left: `${windowSize.width}px`,
             top: 0,
             overflowY: 'auto'
           }}>
@@ -3941,8 +3941,8 @@ export default function App() {
     return (
       <div 
         style={{ 
-          width: '100vw', 
-          height: '100dvh', 
+          width: '100%', 
+          height: '100%', 
           position: 'fixed', 
           top: 0, 
           left: 0, 
@@ -4719,13 +4719,13 @@ export default function App() {
         ref={gameContainerRef}
         data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
         style={shouldApplyPortraitRotation ? {
-          width: '100dvh',
-          height: '100vw',
+          width: `${windowSize.height}px`,
+          height: `${windowSize.width}px`,
           transform: 'rotate(90deg)',
           transformOrigin: 'top left',
           position: 'absolute',
           top: 0,
-          left: '100vw'
+          left: `${windowSize.width}px`
         } : {
           width: '100%',
           height: '100%'
@@ -4905,7 +4905,13 @@ export default function App() {
           </div>
         </div>
       </header>
-      <div className="flex flex-1 overflow-hidden relative">
+      <div 
+        style={shouldApplyPortraitRotation ? {
+          height: `${windowSize.width - headerHeight}px`,
+          flex: 'none'
+        } : undefined}
+        className="flex flex-1 overflow-hidden relative"
+      >
 
         {/* Left Panel */}
         <AnimatePresence>
