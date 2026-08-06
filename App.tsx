@@ -1963,6 +1963,15 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (gameState) {
+      document.body.style.backgroundColor = '#f5f2ed';
+    } else {
+      document.body.style.backgroundColor = '#f8fafc';
+    }
+  }, [!!gameState]);
+
   const handleInstallPwa = async () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
@@ -3797,6 +3806,40 @@ export default function App() {
     backgroundColor: '#f5f2ed'
   };
 
+  const gameContainerBaseStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#f5f2ed',
+    color: '#1a1a1a',
+    overflow: 'hidden',
+    position: 'relative'
+  };
+
+  const portraitRotatedStyle: React.CSSProperties = {
+    ...gameContainerBaseStyle,
+    width: `${windowSize.height}px`,
+    height: `${windowSize.width}px`,
+    transform: 'rotate(90deg)',
+    transformOrigin: 'top left',
+    position: 'absolute',
+    top: 0,
+    left: `${windowSize.width}px`,
+    paddingTop: 'env(safe-area-inset-right)',
+    paddingRight: 'env(safe-area-inset-bottom)',
+    paddingBottom: 'env(safe-area-inset-left)',
+    paddingLeft: 'env(safe-area-inset-top)'
+  };
+
+  const landscapeStyle: React.CSSProperties = {
+    ...gameContainerBaseStyle,
+    width: '100%',
+    height: '100%',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingRight: 'env(safe-area-inset-right)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+    paddingLeft: 'env(safe-area-inset-left)'
+  };
+
   if (isAuthLoading || !isAuthAnimFinished) {
     return (
       <SailingLoadingScreen 
@@ -4718,19 +4761,8 @@ export default function App() {
       <div 
         ref={gameContainerRef}
         data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
-        style={shouldApplyPortraitRotation ? {
-          width: `${windowSize.height}px`,
-          height: `${windowSize.width}px`,
-          transform: 'rotate(90deg)',
-          transformOrigin: 'top left',
-          position: 'absolute',
-          top: 0,
-          left: `${windowSize.width}px`
-        } : {
-          width: '100%',
-          height: '100%'
-        }}
-        className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
+        style={shouldApplyPortraitRotation ? portraitRotatedStyle : landscapeStyle}
+        className="font-sans selection:bg-black selection:text-white"
       >
 
       <header className="w-full flex items-center bg-white border-b border-black/5 z-50 overflow-hidden" style={{ height: headerHeight }}>
@@ -4905,13 +4937,7 @@ export default function App() {
           </div>
         </div>
       </header>
-      <div 
-        style={shouldApplyPortraitRotation ? {
-          height: `${windowSize.width - headerHeight}px`,
-          flex: 'none'
-        } : undefined}
-        className="flex flex-1 overflow-hidden relative"
-      >
+      <div className="flex flex-1 overflow-hidden relative">
 
         {/* Left Panel */}
         <AnimatePresence>
