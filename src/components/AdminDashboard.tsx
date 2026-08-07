@@ -301,6 +301,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
           <UserProfileModal 
             currentUser={inspectingUser} 
             onClose={() => setInspectingUser(null)} 
+            fullScreen={true}
             onUpdateSuccess={(updatedUser) => {
               setInspectingUser({ ...updatedUser, isViewingAsAdmin: true });
               fetchStats();
@@ -647,6 +648,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
         <UserProfileModal
           currentUser={inspectingUser}
           onClose={() => setInspectingUser(null)}
+          fullScreen={true}
           onUpdateSuccess={() => {}}
           onPlayerClick={(name) => handleOpenUserProfile(name)}
         />

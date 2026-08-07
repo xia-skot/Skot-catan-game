@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, startTransition } from 'react';
 import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
+import { Html } from 'react-konva-utils';
 import Konva from 'konva';
 
 // Monkey-patch Konva.Stage.prototype.setPointersPositions to correctly transform coordinates when CSS rotated in portrait mode
@@ -89,6 +90,11 @@ if (typeof window !== 'undefined') {
     return getScrollableParent(node.parentNode);
   };
 
+  const isAppleDevice = typeof navigator !== 'undefined' && (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+
   window.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1) return;
     
@@ -122,7 +128,14 @@ if (typeof window !== 'undefined') {
     if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
       const maxScrollTop = activeScrollTarget.scrollHeight - activeScrollTarget.clientHeight;
       if (maxScrollTop > 0) {
-        const newScrollTop = isRotated ? (scrollTopStart + dx) : (scrollTopStart - dy);
+        let newScrollTop = 0;
+        if (isRotated) {
+          // On Apple devices, the physical scroll direction during 90-degree clockwise rotation 
+          // is opposite to Android/Huawei systems. We invert dx to align perfectly with user expectations.
+          newScrollTop = isAppleDevice ? (scrollTopStart - dx) : (scrollTopStart + dx);
+        } else {
+          newScrollTop = scrollTopStart - dy;
+        }
         activeScrollTarget.scrollTop = Math.max(0, Math.min(maxScrollTop, newScrollTop));
         hasScrolled = true;
       }
@@ -131,7 +144,13 @@ if (typeof window !== 'undefined') {
     if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
       const maxScrollLeft = activeScrollTarget.scrollWidth - activeScrollTarget.clientWidth;
       if (maxScrollLeft > 0) {
-        const newScrollLeft = isRotated ? (scrollLeftStart - dy) : (scrollLeftStart - dx);
+        let newScrollLeft = 0;
+        if (isRotated) {
+          // Similarly, invert dy for horizontal scrolling on Apple devices in rotated mode.
+          newScrollLeft = isAppleDevice ? (scrollLeftStart + dy) : (scrollLeftStart - dy);
+        } else {
+          newScrollLeft = scrollLeftStart - dx;
+        }
         activeScrollTarget.scrollLeft = Math.max(0, Math.min(maxScrollLeft, newScrollLeft));
         hasScrolled = true;
       }
@@ -194,7 +213,8 @@ import {
   Clock,
   LogOut as LogOutIcon,
   Bug,
-  Smartphone
+  Smartphone,
+  MapPin
 } from 'lucide-react';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
@@ -211,7 +231,7 @@ import { PwaGuideModal } from './components/PwaGuideModal';
 import { socketService, RoomState } from './socketService';
 import { 
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
-  HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, PIRATE_SHIP_IMG,
+  HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, FOOTPRINT_IMG, ANCHOR_IMG, PIRATE_SHIP_IMG,
   DEV_CARD_ICON, RES_CARD_ICON, ROAD_ICON, MAP_ALBUM_ICON,
   RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
   getImageUrl, getImageCandidates, getDevCardImg
@@ -454,6 +474,104 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
       ) : (
         <Text text="👤" fontSize={24} offsetX={12} offsetY={12} />
       )}
+    </Group>
+  );
+};
+
+const FootprintToken = () => {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    const resolvedUrl = getImageUrl(FOOTPRINT_IMG);
+    const candidates = getImageCandidates(FOOTPRINT_IMG);
+    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
+    let idx = 0;
+
+    const tryLoad = () => {
+      if (idx >= attempts.length) return;
+      const image = new window.Image();
+      image.src = attempts[idx];
+      image.referrerPolicy = 'no-referrer';
+      image.crossOrigin = 'Anonymous';
+      image.onload = () => setImg(image);
+      image.onerror = () => {
+        idx++;
+        tryLoad();
+      };
+    };
+    tryLoad();
+  }, []);
+
+  if (img) {
+    return (
+      <Image 
+        image={img} 
+        width={36} 
+        height={36} 
+        x={-18} 
+        y={-18} 
+        shadowColor="black"
+        shadowBlur={6}
+        shadowOpacity={0.4}
+        perfectDrawEnabled={false}
+      />
+    );
+  }
+
+  return (
+    <Group offsetX={12} offsetY={12} scaleX={1.3} scaleY={1.3}>
+      <Path data="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z" fill="rgba(255,255,255,0.9)" stroke="#000000" strokeWidth={1} />
+      <Path data="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z" fill="rgba(255,255,255,0.9)" stroke="#000000" strokeWidth={1} />
+      <Path data="M16 17h4" stroke="#000000" strokeWidth={1.5} />
+      <Path data="M4 13h4" stroke="#000000" strokeWidth={1.5} />
+    </Group>
+  );
+};
+
+const AnchorToken = () => {
+  const [img, setImg] = useState<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    const resolvedUrl = getImageUrl(ANCHOR_IMG);
+    const candidates = getImageCandidates(ANCHOR_IMG);
+    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
+    let idx = 0;
+
+    const tryLoad = () => {
+      if (idx >= attempts.length) return;
+      const image = new window.Image();
+      image.src = attempts[idx];
+      image.referrerPolicy = 'no-referrer';
+      image.crossOrigin = 'Anonymous';
+      image.onload = () => setImg(image);
+      image.onerror = () => {
+        idx++;
+        tryLoad();
+      };
+    };
+    tryLoad();
+  }, []);
+
+  if (img) {
+    return (
+      <Image 
+        image={img} 
+        width={36} 
+        height={36} 
+        x={-18} 
+        y={-18} 
+        shadowColor="black"
+        shadowBlur={6}
+        shadowOpacity={0.4}
+        perfectDrawEnabled={false}
+      />
+    );
+  }
+
+  return (
+    <Group offsetX={12} offsetY={12} scaleX={1.3} scaleY={1.3}>
+      <Path data="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" fill="rgba(255,255,255,0.9)" stroke="#000000" strokeWidth={1} />
+      <Path data="M5 12h14M12 15v7M8 22h8" stroke="#000000" strokeWidth={2} strokeLineCap="round" />
     </Group>
   );
 };
@@ -1016,9 +1134,9 @@ export default function App() {
           // Fix: only the active player (or the host if the active player is a bot) should resolve the dice.
           const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerIndex;
           const isActivePlayerBot = gameState.players[gameState.currentPlayerIndex]?.isBot;
-          const amIHost = roomState?.hostId === socketService.playerId || currentUser?.role === 'admin';
+          const isTrueHost = roomState?.hostId === socketService.playerId;
           
-          if (isMyTurn || (isActivePlayerBot && amIHost)) {
+          if (isMyTurn || (isActivePlayerBot && isTrueHost)) {
             resolveDiceRoll();
           }
         }
@@ -1732,7 +1850,8 @@ export default function App() {
 
   const isPortrait = windowSize.width < windowSize.height;
   const shouldApplyPortraitRotation = isPortrait;
-  const shouldRotateNonGame = isPortrait && deviceOrientation === 'landscape';
+  const isMobileDevice = typeof navigator !== 'undefined' ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '') : false;
+  const shouldForcePortraitNonGame = isMobileDevice && !isPortrait;
 
   const logicalWindowSize = {
     width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
@@ -1944,6 +2063,15 @@ export default function App() {
       mediaQuery.removeEventListener('change', handleMediaChange);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (gameState) {
+      document.body.style.backgroundColor = '#f5f2ed';
+    } else {
+      document.body.style.backgroundColor = '#f8fafc';
+    }
+  }, [!!gameState]);
 
   const handleInstallPwa = async () => {
     if (deferredPrompt) {
@@ -3064,37 +3192,61 @@ export default function App() {
     return hasRoadConnection;
   }, [gameState]);
 
-  const handleVertexClick = useCallback((vertexId: string, hexIds: string[]) => {
+  const [pendingRobberHex, setPendingRobberHex] = useState<{ id: string, type: HexType, x: number, y: number } | null>(null);
+  const [pendingBuild, setPendingBuild] = useState<{ type: 'settlement' | 'city' | 'road' | 'ship', id: string, hexIds?: string[], x: number, y: number } | null>(null);
+
+  // Auto-cancel pending build or pending robber if player clicks anywhere else on screen
+  useEffect(() => {
+    if (!pendingBuild && !pendingRobberHex) return;
+
+    const handleGlobalPointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && target.closest && target.closest('.pending-confirm-btn')) {
+        return; // Clicked the confirm button itself
+      }
+      setPendingBuild(null);
+      setPendingRobberHex(null);
+    };
+
+    const timer = setTimeout(() => {
+      window.addEventListener('pointerdown', handleGlobalPointerDown, { capture: true });
+    }, 50);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointerdown', handleGlobalPointerDown, { capture: true });
+    };
+  }, [pendingBuild, pendingRobberHex]);
+
+  const handleVertexClick = useCallback((vertexId: string, hexIds: string[], x: number, y: number) => {
     if (!canBuild) return;
     
     if (buildMode === 'settlement') {
         if (checkIsValidVertex(vertexId, 'settlement')) {
-            buildSettlement(vertexId, hexIds);
+            setPendingBuild({ type: 'settlement', id: vertexId, hexIds, x, y });
         }
     } else if (buildMode === 'city') {
         if (checkIsValidVertex(vertexId, 'city')) {
-            upgradeToCity(vertexId);
+            setPendingBuild({ type: 'city', id: vertexId, x, y });
         }
     }
-  }, [canBuild, buildMode, checkIsValidVertex, buildSettlement, upgradeToCity, gameState?.phase, handleSetBuildMode]);
+  }, [canBuild, buildMode, checkIsValidVertex]);
 
-  const handleEdgeClick = useCallback((edgeId: string) => {
+  const handleEdgeClick = useCallback((edgeId: string, x: number, y: number) => {
     if (!canBuild) return;
 
     if (buildMode === 'road') {
         if (checkIsValidEdge(edgeId, 'road')) {
-            buildRoad(edgeId);
+            setPendingBuild({ type: 'road', id: edgeId, x, y });
         }
     } else if (buildMode === 'ship') {
         if (checkIsValidEdge(edgeId, 'ship')) {
-            buildShip(edgeId);
+            setPendingBuild({ type: 'ship', id: edgeId, x, y });
         }
     }
-  }, [canBuild, buildMode, checkIsValidEdge, buildRoad, buildShip, gameState?.phase, handleSetBuildMode]);
+  }, [canBuild, buildMode, checkIsValidEdge]);
 
-  const [pendingRobberHex, setPendingRobberHex] = useState<{ id: string, type: HexType } | null>(null);
-
-  const handleHexClick = useCallback((hexId: string, type: HexType) => {
+  const handleHexClick = useCallback((hexId: string, type: HexType, x: number, y: number) => {
       // Only allow phase-related hex clicks (robber/pirate movement) if it's the active player's turn
       if (gameState?.phase === 'robber' && amIActivePlayer) {
           if (type === HexType.Sea) {
@@ -3102,7 +3254,7 @@ export default function App() {
           } else {
               if (hexId === gameState.robberHexId) return;
           }
-          setPendingRobberHex({ id: hexId, type });
+          setPendingRobberHex({ id: hexId, type, x, y });
       } else {
           setSelectedHex(hexId);
       }
@@ -3556,9 +3708,8 @@ export default function App() {
             const targets = gameState.pendingStealFrom.map(pid => ({ id: pid, points: gameState.players[pid].victoryPoints + (gameState.settlements.filter(s=>s.playerId===pid).length) }));
             targets.sort((a,b) => b.points - a.points);
             selectStealTarget(targets[0].id);
-            setTimeout(() => stealResource(targets[0].id), 1000);
           } else {
-            // Recover from stuck state
+            // Recover from stuck state or execute selected
             stealResource(gameState.selectedStealTarget);
           }
         }
@@ -3760,8 +3911,8 @@ export default function App() {
 
   // Flexible style for Login and Lobby
   const flexibleContainerStyle: React.CSSProperties = {
-    width: '100vw',
-    height: '100dvh',
+    width: '100%',
+    height: '100%',
     position: 'relative',
     overflow: 'hidden',
     touchAction: 'pan-y'
@@ -3769,14 +3920,48 @@ export default function App() {
 
   // Locked landscape style for the Game
   const lockedLandscapeStyle: React.CSSProperties = {
-    width: '100vw',
-    height: '100dvh',
+    width: '100%',
+    height: '100%',
     position: 'fixed',
     top: 0,
     left: 0,
     overflow: 'hidden',
     touchAction: 'none',
     backgroundColor: '#f5f2ed'
+  };
+
+  const gameContainerBaseStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#f5f2ed',
+    color: '#1a1a1a',
+    overflow: 'hidden',
+    position: 'relative'
+  };
+
+  const portraitRotatedStyle: React.CSSProperties = {
+    ...gameContainerBaseStyle,
+    width: `${windowSize.height}px`,
+    height: `${windowSize.width}px`,
+    transform: 'rotate(90deg)',
+    transformOrigin: 'top left',
+    position: 'absolute',
+    top: 0,
+    left: `${windowSize.width}px`,
+    paddingTop: 'env(safe-area-inset-right)',
+    paddingRight: 'env(safe-area-inset-bottom)',
+    paddingBottom: 'env(safe-area-inset-left)',
+    paddingLeft: 'env(safe-area-inset-top)'
+  };
+
+  const landscapeStyle: React.CSSProperties = {
+    ...gameContainerBaseStyle,
+    width: '100%',
+    height: '100%',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingRight: 'env(safe-area-inset-right)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+    paddingLeft: 'env(safe-area-inset-left)'
   };
 
   if (isAuthLoading || !isAuthAnimFinished) {
@@ -3893,11 +4078,11 @@ export default function App() {
   );
 
   const renderNonGameWrapper = (content: React.ReactNode) => {
-    if (shouldRotateNonGame) {
+    if (shouldForcePortraitNonGame) {
       return (
         <div style={{
-          width: '100vw',
-          height: '100dvh',
+          width: '100%',
+          height: '100%',
           position: 'fixed',
           top: 0,
           left: 0,
@@ -3905,13 +4090,13 @@ export default function App() {
           backgroundColor: '#f8fafc'
         }}>
           <div style={{
-            width: '100dvh',
-            height: '100vw',
-            transform: 'rotate(90deg)',
+            width: `${windowSize.height}px`,
+            height: `${windowSize.width}px`,
+            transform: 'rotate(-90deg)',
             transformOrigin: 'top left',
             position: 'absolute',
-            left: '100vw',
-            top: 0,
+            left: 0,
+            top: `${windowSize.height}px`,
             overflowY: 'auto'
           }}>
             {content}
@@ -3923,8 +4108,8 @@ export default function App() {
     return (
       <div 
         style={{ 
-          width: '100vw', 
-          height: '100dvh', 
+          width: '100%', 
+          height: '100%', 
           position: 'fixed', 
           top: 0, 
           left: 0, 
@@ -4700,19 +4885,8 @@ export default function App() {
       <div 
         ref={gameContainerRef}
         data-portrait-rotated={shouldApplyPortraitRotation ? "true" : "false"}
-        style={shouldApplyPortraitRotation ? {
-          width: '100dvh',
-          height: '100vw',
-          transform: 'rotate(90deg)',
-          transformOrigin: 'top left',
-          position: 'absolute',
-          top: 0,
-          left: '100vw'
-        } : {
-          width: '100%',
-          height: '100%'
-        }}
-        className="flex flex-col bg-[#f5f2ed] text-[#1a1a1a] overflow-hidden font-sans selection:bg-black selection:text-white relative"
+        style={shouldApplyPortraitRotation ? portraitRotatedStyle : landscapeStyle}
+        className="font-sans selection:bg-black selection:text-white"
       >
 
       <header className="w-full flex items-center bg-white border-b border-black/5 z-50 overflow-hidden" style={{ height: headerHeight }}>
@@ -5195,7 +5369,19 @@ export default function App() {
             onWheel={handleWheel}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
+            onTouchEnd={(e) => {
+              if (e.target === e.target.getStage()) {
+                setPendingBuild(null);
+                setPendingRobberHex(null);
+              }
+              handleTouchEnd(e);
+            }}
+            onPointerDown={(e) => {
+              if (e.target === e.target.getStage()) {
+                setPendingBuild(null);
+                setPendingRobberHex(null);
+              }
+            }}
             onDblClick={() => {
               if (Date.now() - lastGestureTime.current > 300) {
                 centerMap(true);
@@ -5215,7 +5401,7 @@ export default function App() {
                   isSelected={selectedHex === hex.id}
                   isRobber={gameState.robberHexId === hex.id}
                   isPirate={gameState.pirateHexId === hex.id}
-                  onClick={() => handleHexClick(hex.id, hex.type as HexType)}
+                  onClick={() => handleHexClick(hex.id, hex.type as HexType, hex.x, hex.y)}
                 />
               ))}
               
@@ -5238,6 +5424,7 @@ export default function App() {
                 const road = gameState.roads.find(r => r.edgeId === edge.id);
                 const ship = gameState.ships.find(s => s.edgeId === edge.id);
                 const port = gameState.ports.find(p => p.edgeId === edge.id);
+                const isPendingEdge = pendingBuild && (pendingBuild.type === 'road' || pendingBuild.type === 'ship') && pendingBuild.id === edge.id;
                 const color = road ? gameState.players.find(p => p.id === road.playerId)?.color : ship ? gameState.players.find(p => p.id === ship.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 
@@ -5290,8 +5477,8 @@ export default function App() {
                       lineCap="round"
                       lineJoin="round"
                       listening={color !== 'transparent' || ((effectiveBuildMode === 'road' || effectiveBuildMode === 'ship') && checkIsValidEdge(edge.id, effectiveBuildMode as any))}
-                      onClick={() => handleEdgeClick(edge.id)}
-                      onTap={() => handleEdgeClick(edge.id)}
+                      onClick={() => handleEdgeClick(edge.id, (edge.x1+edge.x2)/2, (edge.y1+edge.y2)/2)}
+                      onTap={() => handleEdgeClick(edge.id, (edge.x1+edge.x2)/2, (edge.y1+edge.y2)/2)}
                       perfectDrawEnabled={false}
                       onMouseEnter={(e: any) => {
                         if (canBuild && (buildMode === 'road' || buildMode === 'ship') && checkIsValidEdge(edge.id, buildMode)) {
@@ -5306,6 +5493,21 @@ export default function App() {
                         }
                       }}
                     />
+                    {/* White pending road/ship preview in exact edge layer */}
+                    {isPendingEdge && (
+                      <Line
+                        points={[edge.x1, edge.y1, edge.x2, edge.y2]}
+                        stroke="#ffffff"
+                        strokeWidth={6}
+                        dash={pendingBuild.type === 'ship' ? [10, 5] : []}
+                        lineCap="round"
+                        lineJoin="round"
+                        shadowColor="rgba(0,0,0,0.5)"
+                        shadowBlur={4}
+                        listening={false}
+                        perfectDrawEnabled={false}
+                      />
+                    )}
                   </Group>
                 );
               })}
@@ -5313,6 +5515,7 @@ export default function App() {
               {/* Vertices for Settlements/Cities */}
               {vertices.map(vertex => {
                 const settlement = gameState.settlements.find(s => s.vertexId === vertex.id);
+                const isPendingVertex = pendingBuild && (pendingBuild.type === 'settlement' || pendingBuild.type === 'city') && pendingBuild.id === vertex.id;
                 const color = settlement ? gameState.players.find(p => p.id === settlement.playerId)?.color : 'transparent';
                 const effectiveBuildMode = isMyHumanTurn ? buildMode : (gameState?.activeBuildMode || null);
                 const isValid = (isMyHumanTurn ? canBuild : true) && (effectiveBuildMode === 'settlement' || effectiveBuildMode === 'city') && checkIsValidVertex(vertex.id, effectiveBuildMode as any);
@@ -5333,7 +5536,7 @@ export default function App() {
                   }
                 };
 
-                const handleClick = () => handleVertexClick(vertex.id, vertex.hexIds);
+                const handleClick = () => handleVertexClick(vertex.id, vertex.hexIds, vertex.x, vertex.y);
 
                 return (
                   <Group key={vertex.id} id={`vertex-${vertex.id}`} x={vertex.x} y={vertex.y}>
@@ -5360,7 +5563,7 @@ export default function App() {
                         onMouseLeave={handleMouseLeave}
                       />
                     )}
-                    {settlement ? (
+                    {settlement && !(isPendingVertex && pendingBuild?.type === 'city') ? (
                       settlement.isCity ? (
                         // City Icon (Lucide Castle)
                         <Group 
@@ -5480,6 +5683,51 @@ export default function App() {
                         </>
                       )
                     )}
+
+                    {/* White outline preview for settlement or city in vertex layer */}
+                    {isPendingVertex && (
+                      pendingBuild.type === 'settlement' ? (
+                        <Group offsetX={12} offsetY={12} scaleX={1.1} scaleY={1.1} listening={false}>
+                          <Path
+                            data="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                            fill="transparent"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            shadowColor="black"
+                            shadowBlur={5}
+                            shadowOpacity={0.35}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path
+                            data="M10 22v-5a2 2 0 0 1 4 0v5Z"
+                            fill="transparent"
+                            stroke="#ffffff"
+                            strokeWidth={1.2}
+                            strokeLineCap="round"
+                            strokeLineJoin="round"
+                            perfectDrawEnabled={false}
+                          />
+                        </Group>
+                      ) : (
+                        <Group offsetX={12} offsetY={12} scaleX={1.15} scaleY={1.15} listening={false}>
+                          <Path
+                            data="M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2Z"
+                            fill="transparent"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            shadowColor="black"
+                            shadowBlur={5}
+                            shadowOpacity={0.35}
+                            perfectDrawEnabled={false}
+                          />
+                          <Path data="M18 11V4H6v7" fill="transparent" stroke="#ffffff" strokeWidth={2} perfectDrawEnabled={false} />
+                          <Path data="M6 11V9a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2" fill="transparent" stroke="#ffffff" strokeWidth={1.5} perfectDrawEnabled={false} />
+                          <Path data="M22 11V9a1 1 0 0 0-1-1h-2a1 1 0 0 0-1 1v2" fill="transparent" stroke="#ffffff" strokeWidth={1.5} perfectDrawEnabled={false} />
+                          <Path data="M15 22v-4a3 3 0 0 0-6 0v4Z" fill="transparent" stroke="#ffffff" strokeWidth={1.2} strokeLineCap="round" strokeLineJoin="round" perfectDrawEnabled={false} />
+                          <Path data="M10 4V2 M14 4V2" stroke="#ffffff" strokeWidth={2} strokeLineCap="round" perfectDrawEnabled={false} />
+                        </Group>
+                      )
+                    )}
                   </Group>
                 );
               })}
@@ -5512,8 +5760,59 @@ export default function App() {
                   }
                   return null;
               })()}
+
+              {/* Pending Build Indicator Button */}
+              {pendingBuild && (
+                <Group x={pendingBuild.x} y={pendingBuild.y} listening={false}>
+                  <Html divProps={{ style: { position: 'absolute', pointerEvents: 'auto', zIndex: 50 } }}>
+                    <div style={{ transform: 'translate(-50%, calc(-100% - 28px))' }}>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (pendingBuild.type === 'settlement') buildSettlement(pendingBuild.id, pendingBuild.hexIds!);
+                          else if (pendingBuild.type === 'city') upgradeToCity(pendingBuild.id);
+                          else if (pendingBuild.type === 'road') buildRoad(pendingBuild.id);
+                          else if (pendingBuild.type === 'ship') buildShip(pendingBuild.id);
+                          setPendingBuild(null);
+                        }} 
+                        className="pending-confirm-btn px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs rounded-full shadow-lg border border-red-400 whitespace-nowrap flex items-center gap-1 cursor-pointer transition-all animate-in zoom-in duration-150"
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                        确认修建
+                      </button>
+                    </div>
+                  </Html>
+                </Group>
+              )}
+
+              {/* Pending Robber / Pirate Indicator */}
+              {pendingRobberHex && (
+                <Group x={pendingRobberHex.x} y={pendingRobberHex.y} listening={false}>
+                  {pendingRobberHex.type === HexType.Sea ? <AnchorToken /> : <FootprintToken />}
+                  <Html divProps={{ style: { position: 'absolute', pointerEvents: 'auto', zIndex: 50 } }}>
+                    <div style={{ transform: 'translate(-50%, calc(-100% - 28px))' }}>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (pendingRobberHex.type === HexType.Sea) movePirate(pendingRobberHex.id);
+                          else moveRobber(pendingRobberHex.id);
+                          setPendingRobberHex(null);
+                        }} 
+                        className="pending-confirm-btn px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs rounded-full shadow-lg border border-red-400 whitespace-nowrap flex items-center gap-1 cursor-pointer transition-all animate-in zoom-in duration-150"
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                        确认移动
+                      </button>
+                    </div>
+                  </Html>
+                </Group>
+              )}
             </Layer>
           </Stage>
+          
+          {/* Inline Action Confirmations - Fixed to screen instead of map */}
+
+
           </div>
 
           {/* Dice Floating Controls */}
@@ -6437,8 +6736,7 @@ export default function App() {
         {((gameState.phase === 'discard' && gameState.pendingDiscards.some(p => p.playerId === myPlayerIndex)) ||
           (gameState.phase === 'year_of_plenty' && amIActivePlayer) ||
           (gameState.phase === 'monopoly' && amIActivePlayer) ||
-          (gameState.phase === 'gold_selection' && (gameState.pendingGoldRewards?.length || 0) > 0 && gameState.pendingGoldRewards[0].playerId === myPlayerIndex) ||
-          (gameState.phase === 'robber' && amIActivePlayer && pendingRobberHex != null)) && (
+          (gameState.phase === 'gold_selection' && (gameState.pendingGoldRewards?.length || 0) > 0 && gameState.pendingGoldRewards[0].playerId === myPlayerIndex)) && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -6474,14 +6772,12 @@ export default function App() {
                 <div>
                   <h2 className="text-xs sm:text-sm font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
                     {gameState.phase === 'discard' && '强盗突袭！'}
-                    {gameState.phase === 'robber' && `确认移动${pendingRobberHex?.type === HexType.Sea ? '海盗' : '强盗'}`}
                     {gameState.phase === 'year_of_plenty' && '丰收之年'}
                     {gameState.phase === 'monopoly' && '垄断资源'}
                     {gameState.phase === 'gold_selection' && '淘金热'}
                   </h2>
                   <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
                     {gameState.phase === 'discard' && `请弃掉 ${gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 张资源卡`}
-                    {gameState.phase === 'robber' && '请确认选择的目标格子'}
                     {gameState.phase === 'year_of_plenty' && '请从银行任选 2 张资源'}
                     {gameState.phase === 'monopoly' && '所有玩家必须交出你选中的资源'}
                     {gameState.phase === 'gold_selection' && `请选择 ${gameState.pendingGoldRewards[0]?.amount || 1} 张奖励资源`}
@@ -6491,30 +6787,6 @@ export default function App() {
 
               {/* Body */}
               <div className="p-3 sm:p-4 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
-                {gameState.phase === 'robber' && pendingRobberHex != null && (
-                  <div className="flex flex-col w-full gap-2.5">
-                    <button
-                      onClick={() => {
-                        if (pendingRobberHex.type === HexType.Sea) {
-                          movePirate(pendingRobberHex.id);
-                        } else {
-                          moveRobber(pendingRobberHex.id);
-                        }
-                        setPendingRobberHex(null);
-                      }}
-                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
-                    >
-                      确定移动
-                    </button>
-                    <button
-                      onClick={() => setPendingRobberHex(null)}
-                      className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
-                    >
-                      取消
-                    </button>
-                  </div>
-                )}
-
                 {gameState.phase === 'discard' && (
                   <div className="flex-1 overflow-hidden flex flex-col min-h-0">
                     <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-2.5 px-0.5 shrink-0">

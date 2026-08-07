@@ -69,7 +69,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
-      className="absolute inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full pointer-events-auto select-none pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className="absolute inset-0 z-[100000] flex flex-col bg-stone-50 overflow-hidden w-full h-full pointer-events-auto select-none"
     >
       {/* Header - More Compact */}
       <div className="px-6 py-3.5 text-center bg-white border-b border-black/5 shrink-0 relative overflow-hidden flex items-center justify-between shadow-sm z-30">

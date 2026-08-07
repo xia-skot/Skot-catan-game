@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing, Bug, Trash2, Play, Database } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
@@ -10,13 +11,14 @@ interface UserProfileModalProps {
   onUpdateSuccess: (user: any) => void;
   onLogout?: () => void;
   inline?: boolean;
+  fullScreen?: boolean;
   onPlayerClick?: (username: string) => void;
   onRestoreGame?: (roomId: string) => void;
   activeView?: string;
   onActiveViewChange?: (view: any) => void;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange }: UserProfileModalProps) {
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, fullScreen = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange }: UserProfileModalProps) {
   const [internalActiveView, setInternalActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug'>('menu');
   const activeView = propActiveView !== undefined ? propActiveView : internalActiveView;
   const setActiveView = (v: any) => {
@@ -194,7 +196,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     <motion.div 
       initial={inline ? false : { opacity: 0, scale: 0.95, y: 20 }}
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
-      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90%]'}`}
+      className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : fullScreen ? 'bg-slate-50 w-full h-full max-w-none rounded-none' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90%] md:max-w-md'}`}
     >
       {/* Header Profile Section */}
       <div className="bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm">
@@ -714,17 +716,19 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     );
   }
 
-  return (
-    <div className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-4"
+  const modalOverlay = (
+    <div className={`fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center ${fullScreen ? 'p-0' : 'p-4'}`}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}>
       <motion.div 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-transparent"
+        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
         onClick={onClose}
       />
       {content}
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalOverlay, document.body) : modalOverlay;
 }
