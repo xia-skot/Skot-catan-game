@@ -47,6 +47,8 @@ export const HILLS_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img
 export const GOLD_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%87%91%E7%9F%BF.jpg';
 export const SEA_HEX_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E6%B4%8B.jpg';
 export const ROBBER_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%BC%BA%E7%9B%972.png';
+export const FOOTPRINT_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%84%9A%E5%8D%B0.png';
+export const ANCHOR_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%88%B9%E9%94%9A.png';
 export const PIRATE_SHIP_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E6%B5%B7%E7%9B%97%E8%88%B9.png';
 export const SAILING_BOAT_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%B8%86%E8%88%B9.png';
 export const CATAN_LOGO_IMG = 'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png';
@@ -101,6 +103,8 @@ export const ALL_GAME_IMAGES: string[] = [
   GRAIN_ICON,
   ORE_ICON,
   ROBBER_IMG,
+  FOOTPRINT_IMG,
+  ANCHOR_IMG,
   PIRATE_SHIP_IMG,
   SAILING_BOAT_IMG,
   CATAN_LOGO_IMG,
