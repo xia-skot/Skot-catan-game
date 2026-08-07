@@ -1850,8 +1850,6 @@ export default function App() {
 
   const isPortrait = windowSize.width < windowSize.height;
   const shouldApplyPortraitRotation = isPortrait;
-  const isMobileDevice = typeof navigator !== 'undefined' ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '') : false;
-  const shouldForcePortraitNonGame = isMobileDevice && !isPortrait;
 
   const logicalWindowSize = {
     width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
@@ -3948,20 +3946,14 @@ export default function App() {
     position: 'absolute',
     top: 0,
     left: `${windowSize.width}px`,
-    paddingTop: 'env(safe-area-inset-right)',
-    paddingRight: 'env(safe-area-inset-bottom)',
-    paddingBottom: 'env(safe-area-inset-left)',
-    paddingLeft: 'env(safe-area-inset-top)'
+    padding: 0
   };
 
   const landscapeStyle: React.CSSProperties = {
     ...gameContainerBaseStyle,
     width: '100%',
     height: '100%',
-    paddingTop: 'env(safe-area-inset-top)',
-    paddingRight: 'env(safe-area-inset-right)',
-    paddingBottom: 'env(safe-area-inset-bottom)',
-    paddingLeft: 'env(safe-area-inset-left)'
+    padding: 0
   };
 
   if (isAuthLoading || !isAuthAnimFinished) {
@@ -4078,33 +4070,6 @@ export default function App() {
   );
 
   const renderNonGameWrapper = (content: React.ReactNode) => {
-    if (shouldForcePortraitNonGame) {
-      return (
-        <div style={{
-          width: '100%',
-          height: '100%',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          overflow: 'hidden',
-          backgroundColor: '#f8fafc'
-        }}>
-          <div style={{
-            width: `${windowSize.height}px`,
-            height: `${windowSize.width}px`,
-            transform: 'rotate(-90deg)',
-            transformOrigin: 'top left',
-            position: 'absolute',
-            left: 0,
-            top: `${windowSize.height}px`,
-            overflowY: 'auto'
-          }}>
-            {content}
-            {renderGameModals()}
-          </div>
-        </div>
-      );
-    }
     return (
       <div 
         style={{ 
