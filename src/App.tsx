@@ -216,6 +216,7 @@ import {
   Smartphone,
   MapPin
 } from 'lucide-react';
+import { RotatedScroll } from './components/RotatedScroll';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
 import { MapAlbumModal } from './components/MapAlbumModal';
@@ -3627,6 +3628,13 @@ export default function App() {
         if (phase === 'road_building' && gameState.freeRoads && gameState.freeRoads > 0) {
            // We are in road building mode, should have already built one if we were in main before.
            // This block handles the second road if we didn't exit.
+           if (gameState.mapType === 'archipelago') {
+             const validS = edges.filter(e => checkIsValidEdge(e.id, 'ship'));
+             if (validS.length > 0) {
+               buildShip(validS[0].id);
+               return;
+             }
+           }
            const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
            if (validE.length > 0) {
              buildRoad(validE[0].id);
@@ -5035,8 +5043,12 @@ export default function App() {
               initial={{ width: leftWidth }}
               animate={{ width: leftWidth }}
               exit={{ width: 0 }}
-              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white h-full max-h-full min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
+              className={`border-r border-black/5 flex flex-col bg-white h-full max-h-full min-h-0 shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
             >
+              <RotatedScroll
+                shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+                className={`flex-1 flex flex-col min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'}`}
+              >
               <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
             <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
               <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">银行库存</h3>
@@ -5214,10 +5226,11 @@ export default function App() {
                     </div>
                   )}
                 </>
-              )}
-            </div>
-          </section>
-        </motion.aside>
+               )}
+              </div>
+            </section>
+          </RotatedScroll>
+         </motion.aside>
       )}
     </AnimatePresence>
 
@@ -5339,7 +5352,7 @@ export default function App() {
                 setPendingBuild(null);
                 setPendingRobberHex(null);
               }
-              handleTouchEnd(e);
+              handleTouchEnd();
             }}
             onPointerDown={(e) => {
               if (e.target === e.target.getStage()) {
@@ -5869,12 +5882,39 @@ export default function App() {
                 <div className="flex items-center justify-between mb-1 shrink-0">
                   <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
                 </div>
-                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
+                <RotatedScroll
+                  shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+                  className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1"
+                >
               {gameState?.phase === 'road_building' ? (
-                <div className="flex-1 flex items-center justify-center text-center p-4">
-                  <p className="text-xs font-bold text-gray-500">
-                    道路建设：<br/>请在地图上点击建设 2 条免资源的道路
+                <div className="flex-1 flex flex-col gap-2 p-1">
+                  <p className="text-[10px] sm:text-xs font-bold text-slate-500 text-center mb-1 leading-tight">
+                    {gameState?.mapType === 'archipelago' ? '免资源建设 2 条道路或船只' : '免资源建设 2 条道路'}
                   </p>
+                  <BuildItem 
+                    id="build-road"
+                    compact={isMobile}
+                    icon={<Hammer size={16} />} 
+                    label="道路" 
+                    cost={{}}
+                    active={buildMode === 'road'}
+                    activeColor={currentPlayer?.color}
+                    disabled={false}
+                    onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
+                  />
+                  {gameState?.mapType === 'archipelago' && (
+                    <BuildItem 
+                      id="build-ship"
+                      compact={isMobile}
+                      icon={<ShipIcon size={16} />} 
+                      label="船只" 
+                      cost={{}}
+                      active={buildMode === 'ship'}
+                      activeColor={currentPlayer?.color}
+                      disabled={false}
+                      onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
+                    />
+                  )}
                 </div>
               ) : (
                 <>
@@ -5933,7 +5973,7 @@ export default function App() {
                   />
                 </>
               )}
-            </div>
+            </RotatedScroll>
           </section>
 
           {/* Removed duplicate development cards section here */}
@@ -6307,7 +6347,7 @@ export default function App() {
                     width: '100%',
                     maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
                   }}
-                  className="bg-white border border-slate-200 rounded-2xl max-h-[90%] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+                  className="bg-white border border-slate-200 rounded-2xl max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
                 >
                   <div 
                     onPointerDown={(e) => activeTradeDragControls.start(e)}
@@ -6342,7 +6382,7 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+                  <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-slate-50/40 border border-slate-200/60 p-2 rounded-xl flex flex-col items-center">
                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">{isInitiator ? '你送出' : 'TA送出'}</span>
@@ -6373,7 +6413,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto no-scrollbar py-1">
+                    <div className="space-y-1.5 py-1">
                       {gameState.players.map(p => {
                         if (p.id === initiator.id) return null;
                         const isMe = p.id === myPlayerIndex;
@@ -6471,7 +6511,7 @@ export default function App() {
                         );
                       })}
                     </div>
-                  </div>
+                  </RotatedScroll>
                 </motion.div>
               </motion.div>
             );
@@ -6751,10 +6791,10 @@ export default function App() {
               </div>
 
               {/* Body */}
-              <div className="p-3 sm:p-4 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
+              <div className="p-2 sm:p-3 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
                 {gameState.phase === 'discard' && (
                   <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                    <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-2.5 px-0.5 shrink-0">
+                    <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-1.5 px-0.5 shrink-0">
                       资源数量超标，请选择弃掉 <span className="font-bold text-red-600">{((gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0) - Object.values(discardSelection).reduce((a, b) => a + b, 0))}</span> 张资源卡：
                     </p>
                     <div className="flex-1 overflow-hidden flex flex-col min-h-0">
@@ -6764,6 +6804,7 @@ export default function App() {
                         amount={gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 
                         onDiscard={(res) => discardCards(myPlayerIndex, res)} 
                         onChange={setDiscardSelection}
+                        shouldApplyPortraitRotation={shouldApplyPortraitRotation}
                       />
                     </div>
                   </div>
@@ -6904,7 +6945,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-2.5 sm:p-3 space-y-2 text-xs flex-1 min-h-0 overflow-y-auto no-scrollbar pr-0.5 pointer-events-auto">
+              <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2 text-xs flex-1 min-h-0 overflow-y-auto no-scrollbar pr-0.5 pointer-events-auto">
                 <div>
                   <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">你送出</h3>
                   <div className="grid grid-cols-5 gap-1">
@@ -6986,7 +7027,7 @@ export default function App() {
                 >
                   发起交易
                 </button>
-              </div>
+              </RotatedScroll>
             </motion.div>
           </motion.div>
         )}
@@ -7036,7 +7077,7 @@ export default function App() {
                   <X size={14} />
                 </button>
               </div>
-              <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+              <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
                 {/* Pay Section (Give) */}
                 <div>
                   <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5 flex justify-between">
@@ -7089,7 +7130,7 @@ export default function App() {
                     })}
                   </div>
                 </div>
-              </div>
+              </RotatedScroll>
               <div className="p-2.5 sm:p-3 bg-slate-50/80 flex flex-col gap-2 shrink-0 border-t border-slate-100 pointer-events-auto">
                 <div className="flex items-center justify-between text-xs font-medium text-slate-600">
                   <span className="font-bold text-slate-500 text-[11px] sm:text-xs">交换数量:</span>
@@ -7949,7 +7990,7 @@ function CostCard({ label, cost }: { label: string, cost: Record<string, number>
   );
 }
 
-function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void }) {
+function DiscardPanel({ player, amount, onDiscard, onChange, shouldApplyPortraitRotation }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void, shouldApplyPortraitRotation: boolean }) {
   const [selected, setSelected] = useState<Record<ResourceType, number>>({
     [ResourceType.Lumber]: 0,
     [ResourceType.Brick]: 0,
@@ -7979,30 +8020,30 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto space-y-2 p-1.5 no-scrollbar min-h-0">
+      <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="flex-1 overflow-y-auto space-y-1 p-1 no-scrollbar min-h-0">
         {Object.values(ResourceType).map(res => {
           const count = player.resources[res];
           if (count === 0) return null;
           return (
-            <div key={res} className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl shadow-sm border border-black/[0.04] shrink-0">
-              <div className="flex items-center gap-2.5">
-                <ResourceIcon type={res as ResourceType} className="w-5 h-5 sm:w-6 sm:h-6" />
-                <span className="font-bold text-xs sm:text-sm text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
-                <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">({count})</span>
+            <div key={res} className="flex items-center justify-between px-2.5 py-1.5 bg-white rounded-lg shadow-sm border border-black/[0.04] shrink-0">
+              <div className="flex items-center gap-1.5">
+                <ResourceIcon type={res as ResourceType} className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="font-bold text-[11px] sm:text-xs text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
+                <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">({count})</span>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-1.5">
                 <button 
                   onClick={() => handleDecrement(res)}
                   disabled={selected[res] === 0}
-                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-xs sm:text-sm font-black shrink-0"
+                  className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-[10px] sm:text-xs font-black shrink-0"
                 >
                   -
                 </button>
-                <span className="font-mono font-black w-5 text-center text-xs sm:text-sm text-slate-800 shrink-0">{selected[res]}</span>
+                <span className="font-mono font-black w-4 text-center text-[11px] sm:text-xs text-slate-800 shrink-0">{selected[res]}</span>
                 <button 
                   onClick={() => handleIncrement(res)}
                   disabled={totalSelected >= amount || selected[res] >= count}
-                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-xs sm:text-sm font-black shadow-sm shrink-0"
+                  className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-[10px] sm:text-xs font-black shadow-sm shrink-0"
                 >
                   +
                 </button>
@@ -8010,13 +8051,13 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
             </div>
           );
         })}
-      </div>
+      </RotatedScroll>
 
-      <div className="shrink-0 p-1.5 pt-3 mt-auto bg-white/80 backdrop-blur-sm border-t border-slate-50 z-10">
+      <div className="shrink-0 p-1 pt-2 mt-auto bg-white/80 backdrop-blur-sm border-t border-slate-50 z-10">
         <button 
           onClick={() => onDiscard(selected)}
           disabled={remaining !== 0}
-          className="w-full py-3 sm:py-3.5 bg-slate-900 text-white rounded-xl text-xs sm:text-sm font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+          className="w-full py-2 sm:py-2.5 bg-slate-900 text-white rounded-lg text-[11px] sm:text-xs font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
         >
           确认弃牌
         </button>

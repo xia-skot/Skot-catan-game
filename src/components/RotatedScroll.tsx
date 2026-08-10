@@ -48,13 +48,16 @@ export function RotatedScroll({ shouldApplyPortraitRotation, children, className
       // So deltaScrollTop = - (delta ay) = delta px.
       
       const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
       
-      // Prevent default to stop native browser scrolling on the physical axis
-      // Wait, we can only preventDefault if the event is not passive.
       if (e.cancelable) {
           e.preventDefault();
       }
       
+      // In -90deg rotation, physical X maps to logical Y.
+      // Physical swipe left (dx < 0) corresponds to mental swipe down (towards app bottom).
+      // Mental swipe down means content moves down, meaning scroll up (scrollTop decreases).
+      // So delta scrollTop = dx
       el.scrollTop = scrollTopStart + dx;
     };
 

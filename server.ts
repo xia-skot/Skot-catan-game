@@ -62,6 +62,9 @@ async function startServer() {
   let gamesCollection: any = null;
   let mapsCollection: any = null;
   let debugSavesCollection: any = null;
+  let messagesCollection: any = null;
+  let feedbackCollection: any = null;
+  let aboutCollection: any = null;
   
   if (MONGODB_URI) {
     dbClient = new MongoClient(MONGODB_URI, {
@@ -80,6 +83,9 @@ async function startServer() {
       gamesCollection = db.collection('games');
       mapsCollection = db.collection('maps');
       debugSavesCollection = db.collection('debug_saves');
+      messagesCollection = db.collection('system_messages');
+      feedbackCollection = db.collection('feedback');
+      aboutCollection = db.collection('about_info');
       
       await usersCollection.createIndex({ email: 1 }, { unique: true });
       await verificationCodesCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 }); // 10 minutes expiry
@@ -400,6 +406,197 @@ async function startServer() {
 
   app.get('/api/sound-settings', (req, res) => {
     res.json({ soundSettings: globalSoundSettings });
+  });
+
+  app.get('/api/messages', async (req, res) => {
+    try {
+      if (!messagesCollection) return res.json({ messages: [] });
+      const messages = await messagesCollection.find().sort({ createdAt: -1 }).toArray();
+      res.json({ messages: messages.map((m: any) => ({
+        id: m._id.toString(),
+        title: m.title,
+        content: m.content,
+        date: new Date(m.createdAt).toISOString().split('T')[0]
+      }))});
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch messages' });
+    }
+  });
+
+  app.post('/api/admin/messages', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { title, content } = req.body;
+      if (!title || !content) return res.status(400).json({ error: '标题和内容必填' });
+      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+      const doc = { title, content, createdAt: Date.now() };
+      const result = await messagesCollection.insertOne(doc);
+      res.json({ success: true, message: {
+        id: result.insertedId.toString(),
+        title: doc.title,
+        content: doc.content,
+        date: new Date(doc.createdAt).toISOString().split('T')[0]
+      }});
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '发布消息失败' });
+    }
+  });
+
+  app.delete('/api/admin/messages/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+      await messagesCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '删除消息失败' });
+    }
+  });
+
+  app.get('/api/feedback/prompt', async (req, res) => {
+    try {
+      const defaultPrompt = '您的意见对我们非常重要。请详细描述您遇到的问题或建议，反馈内容将提交给管理员查看。';
+      if (!aboutCollection) return res.json({ prompt: defaultPrompt });
+      const doc = await aboutCollection.findOne({ type: 'feedback_prompt' });
+      res.json({ prompt: doc?.prompt || defaultPrompt });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '获取反馈提示词失败' });
+    }
+  });
+
+  app.post('/api/admin/feedback/prompt', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { prompt } = req.body;
+      if (prompt === undefined) return res.status(400).json({ error: '提示词不能为空' });
+      if (!aboutCollection) return res.status(500).json({ error: 'DB未连接' });
+
+      await aboutCollection.updateOne(
+        { type: 'feedback_prompt' },
+        { $set: { type: 'feedback_prompt', prompt, updatedAt: Date.now() } },
+        { upsert: true }
+      );
+      res.json({ success: true, prompt });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '保存反馈提示词失败' });
+    }
+  });
+
+  app.get('/api/about', async (req, res) => {
+    try {
+      if (!aboutCollection) {
+        return res.json({ content: '欢迎体验卡坦岛线上全功能版！', updatedAt: new Date().toISOString().split('T')[0] });
+      }
+      const doc = await aboutCollection.findOne({ type: 'about' });
+      if (!doc) {
+        return res.json({ content: '欢迎体验卡坦岛线上全功能版！包含单人人机、多人对局、扩展地图与海域探险。', updatedAt: new Date().toISOString().split('T')[0] });
+      }
+      res.json({
+        content: doc.content || '',
+        updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '获取关于信息失败' });
+    }
+  });
+
+  app.post('/api/admin/about', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { content } = req.body;
+      if (content === undefined) return res.status(400).json({ error: '内容不能为空' });
+      if (!aboutCollection) return res.status(500).json({ error: 'DB未连接' });
+
+      const updatedAt = Date.now();
+      await aboutCollection.updateOne(
+        { type: 'about' },
+        { $set: { type: 'about', content, updatedAt } },
+        { upsert: true }
+      );
+      res.json({ success: true, content, updatedAt: new Date(updatedAt).toISOString().split('T')[0] });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '保存关于信息失败' });
+    }
+  });
+
+  app.get('/api/admin/feedbacks', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      if (!feedbackCollection) return res.json({ feedbacks: [] });
+      const feedbacks = await feedbackCollection.find().sort({ createdAt: -1 }).toArray();
+      res.json({
+        feedbacks: feedbacks.map((f: any) => ({
+          id: f._id.toString(),
+          userId: f.userId,
+          username: f.username,
+          text: f.text,
+          date: new Date(f.createdAt).toLocaleString('zh-CN')
+        }))
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '获取反馈失败' });
+    }
+  });
+
+  app.delete('/api/admin/feedbacks/:id', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!feedbackCollection) return res.status(500).json({ error: 'DB未连接' });
+      await feedbackCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '删除反馈失败' });
+    }
+  });
+
+  app.post('/api/feedback', authMiddleware, async (req: any, res: any) => {
+    try {
+      const { text } = req.body;
+      if (!text) return res.status(400).json({ error: '反馈内容必填' });
+      if (!feedbackCollection) return res.status(500).json({ error: 'DB未连接' });
+      
+      const feedback = {
+        userId: req.user.userId,
+        username: req.user.username,
+        text,
+        createdAt: Date.now()
+      };
+      
+      await feedbackCollection.insertOne(feedback);
+      
+      // Attempt to send email if configured
+      if (process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.ADMIN_EMAIL) {
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT),
+          secure: process.env.SMTP_PORT === '465',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+          }
+        });
+        
+        await transporter.sendMail({
+          from: process.env.SMTP_USER,
+          to: process.env.ADMIN_EMAIL,
+          subject: `Catan Feedback from ${req.user.username}`,
+          text: `User: ${req.user.username} (ID: ${req.user.userId})\n\nFeedback:\n${text}`
+        });
+        console.log(`[Server] Feedback email sent for user ${req.user.username}`);
+      } else {
+        console.warn(`[Server] Feedback saved to DB, but email not sent because SMTP environment variables are not fully configured.`);
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '提交反馈失败' });
+    }
   });
 
   app.post('/api/admin/sound-settings', authMiddleware, adminMiddleware, (req, res) => {

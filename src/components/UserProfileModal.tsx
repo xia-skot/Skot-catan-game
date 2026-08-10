@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing, Bug, Trash2, Play, Database } from 'lucide-react';
+import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
 import { AdminDashboard } from './AdminDashboard';
 
@@ -19,7 +19,7 @@ interface UserProfileModalProps {
 }
 
 export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, fullScreen = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange }: UserProfileModalProps) {
-  const [internalActiveView, setInternalActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug'>('menu');
+  const [internalActiveView, setInternalActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug' | 'feedback' | 'messages' | 'about'>('menu');
   const activeView = propActiveView !== undefined ? propActiveView : internalActiveView;
   const setActiveView = (v: any) => {
     setInternalActiveView(v);
@@ -39,6 +39,111 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   const [saves, setSaves] = useState<any[]>([]);
   const [savesLoading, setSavesLoading] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackSuccess, setFeedbackSuccess] = useState(false);
+  const [feedbackPrompt, setFeedbackPrompt] = useState('');
+
+  useEffect(() => {
+    fetch('/api/feedback/prompt')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.prompt) setFeedbackPrompt(data.prompt);
+      })
+      .catch(console.error);
+  }, [activeView]);
+
+  useEffect(() => {
+    const state = { modalView: activeView, time: Date.now() };
+    window.history.pushState(state, '');
+
+    const handlePopState = () => {
+      if (activeView !== 'menu') {
+        setActiveView('menu');
+      } else {
+        onClose();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [activeView, onClose]);
+
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+
+  const [adminMsgTitle, setAdminMsgTitle] = useState('');
+  const [adminMsgContent, setAdminMsgContent] = useState('');
+  const [adminMsgLoading, setAdminMsgLoading] = useState(false);
+
+  const [aboutInfo, setAboutInfo] = useState<{ content: string; updatedAt: string }>({ content: '', updatedAt: '' });
+  const [aboutLoading, setAboutLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeView === 'about' || !aboutInfo.content) {
+      setAboutLoading(true);
+      fetch('/api/about')
+        .then(res => res.json())
+        .then(data => {
+          if (data) setAboutInfo({ content: data.content || '', updatedAt: data.updatedAt || '' });
+        })
+        .catch(console.error)
+        .finally(() => setAboutLoading(false));
+    }
+  }, [activeView]);
+
+  const unreadCount = messages.filter(m => !m.read).length;
+
+  useEffect(() => {
+    setMessagesLoading(true);
+    fetch('/api/messages')
+      .then(res => res.json())
+      .then(data => {
+        if (data.messages) {
+          const readMsgs = JSON.parse(localStorage.getItem('catan_read_messages') || '[]');
+          setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.includes(m.id) })));
+        }
+      })
+      .catch(console.error)
+      .finally(() => setMessagesLoading(false));
+  }, []);
+
+  const markMessageAsRead = (id: string) => {
+    const newMessages = messages.map(m => m.id === id ? { ...m, read: true } : m);
+    setMessages(newMessages);
+    const readMsgs = newMessages.filter(m => m.read).map(m => m.id);
+    localStorage.setItem('catan_read_messages', JSON.stringify(readMsgs));
+  };
+
+  const markAllMessagesAsRead = () => {
+    const newMessages = messages.map(m => ({ ...m, read: true }));
+    setMessages(newMessages);
+    const readMsgs = newMessages.map(m => m.id);
+    localStorage.setItem('catan_read_messages', JSON.stringify(readMsgs));
+  };
+
+  const handleDeleteMessage = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('确定要删除这条消息吗？')) return;
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/admin/messages/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setMessages(prev => prev.filter(m => m.id !== id));
+      } else {
+        alert('删除失败');
+      }
+    } catch (err) {
+      alert('删除失败，请检查网络');
+    }
+  };
 
   useEffect(() => {
     setGames([]);
@@ -611,6 +716,268 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
           </AnimatePresence>
         )}
         
+        {activeView === 'messages' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="messages"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4 font-sans"
+            >
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                    <Bell size={16} className="text-indigo-500" /> 系统消息
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {messages.some(m => !m.read) && (
+                      <button 
+                        onClick={markAllMessagesAsRead}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
+                        title="一键全部标记为已读"
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="m14 11 2-2 5-5" />
+                          <path d="M11 14 3.5 21.5a1.5 1.5 0 0 0 2.1 2.1L13 16" />
+                          <path d="M16 11c0 2.8-2.2 5-5 5" />
+                          <path d="M8 18c-2 0-3.5-1.5-3.5-3.5" />
+                        </svg>
+                        <span className="text-[11px]">一键已读</span>
+                      </button>
+                    )}
+                    <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                      {messages.length} 条
+                    </span>
+                  </div>
+                </div>
+                
+                {messages.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 opacity-60 mt-10">
+                    <Mail className="w-10 h-10 mb-2 opacity-50" />
+                    <p className="text-sm font-bold">暂无消息</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 overflow-y-auto flex-1 pr-1 pb-4">
+                    {messages.map((msg) => {
+                      const isExpanded = expandedMessageId === msg.id;
+                      return (
+                        <div 
+                          key={msg.id} 
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer ${msg.read ? 'bg-slate-50 border-slate-100' : 'bg-white border-indigo-100 shadow-sm'}`}
+                          onClick={() => {
+                            setExpandedMessageId(isExpanded ? null : msg.id);
+                            if (!msg.read) {
+                              markMessageAsRead(msg.id);
+                            }
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${msg.read ? 'bg-transparent' : 'bg-red-500'}`} />
+                              <h4 className={`text-sm truncate ${msg.read ? 'text-slate-500 font-medium' : 'text-slate-800 font-bold'}`}>
+                                {msg.title}
+                              </h4>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                              <span className="text-[10px] text-slate-400 font-medium">{msg.date}</span>
+                              {currentUser?.role === 'admin' && (
+                                <button
+                                  onClick={(e) => handleDeleteMessage(e, msg.id)}
+                                  className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="删除此条消息"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                                animate={{ height: 'auto', opacity: 1, marginTop: 12 }}
+                                exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                                className="overflow-hidden"
+                              >
+                                <p className="text-xs leading-relaxed text-slate-600 pl-4 border-l-2 border-indigo-100">
+                                  {msg.content}
+                                </p>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {currentUser?.role === 'admin' && (
+                  <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-3">
+                    <h4 className="text-xs font-bold text-slate-800">发布新消息</h4>
+                    <input 
+                      type="text"
+                      placeholder="标题"
+                      value={adminMsgTitle}
+                      onChange={(e) => setAdminMsgTitle(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all"
+                    />
+                    <textarea 
+                      placeholder="内容"
+                      value={adminMsgContent}
+                      onChange={(e) => setAdminMsgContent(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all resize-none min-h-[80px]"
+                    />
+                    <button 
+                      disabled={!adminMsgTitle.trim() || !adminMsgContent.trim() || adminMsgLoading}
+                      onClick={() => {
+                        setAdminMsgLoading(true);
+                        fetch('/api/admin/messages', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
+                          },
+                          body: JSON.stringify({ title: adminMsgTitle, content: adminMsgContent })
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                          if (data.success) {
+                            setMessages([data.message, ...messages]);
+                            setAdminMsgTitle('');
+                            setAdminMsgContent('');
+                          } else {
+                            alert(data.error || '发布失败');
+                          }
+                        })
+                        .catch(() => alert('发布失败，请检查网络'))
+                        .finally(() => setAdminMsgLoading(false));
+                      }}
+                      className="w-full bg-indigo-600 text-white font-bold text-sm py-2.5 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {adminMsgLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      发布
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {activeView === 'feedback' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="feedback"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4 font-sans"
+            >
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 min-h-[300px] flex flex-col">
+                <h3 className="text-sm font-black text-slate-800 mb-2 flex items-center gap-2">
+                  <MessageSquare size={16} className="text-indigo-500" /> 意见反馈
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mb-4 leading-relaxed whitespace-pre-wrap">
+                  {feedbackPrompt || '您的意见对我们非常重要。请详细描述您遇到的问题或建议，反馈内容将提交给管理员查看。'}
+                </p>
+
+                {feedbackSuccess ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-emerald-600 space-y-3 mt-4">
+                    <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    </div>
+                    <p className="text-sm font-bold">感谢您的反馈！</p>
+                    <button 
+                      onClick={() => { setFeedbackSuccess(false); setFeedbackText(''); }}
+                      className="mt-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-colors"
+                    >
+                      继续反馈
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col">
+                    <div className="relative flex-1 flex flex-col">
+                      <textarea 
+                        value={feedbackText}
+                        onChange={(e) => setFeedbackText(e.target.value.slice(0, 1000))}
+                        maxLength={1000}
+                        placeholder="请输入您的反馈意见（最多1000字）..."
+                        className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 pb-8 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 transition-all resize-none min-h-[160px]"
+                      />
+                      <div className="absolute bottom-2.5 right-4 text-[11px] font-bold text-slate-400 pointer-events-none select-none">
+                        {feedbackText.length} / 1000
+                      </div>
+                    </div>
+                    <button 
+                      disabled={!feedbackText.trim() || feedbackLoading}
+                      onClick={() => {
+                        setFeedbackLoading(true);
+                        fetch('/api/feedback', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
+                          },
+                          body: JSON.stringify({ text: feedbackText })
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                          if (data.success) {
+                            setFeedbackSuccess(true);
+                          } else {
+                            alert(data.error || '提交失败');
+                          }
+                        })
+                        .catch(() => alert('提交失败，请检查网络'))
+                        .finally(() => setFeedbackLoading(false));
+                      }}
+                      className="mt-4 w-full bg-indigo-600 text-white font-bold text-sm py-3 rounded-2xl shadow-md shadow-indigo-600/20 hover:bg-indigo-700 hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
+                    >
+                      {feedbackLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      提交反馈
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        )}
+
+        {activeView === 'about' && (
+          <AnimatePresence mode="wait">
+            <motion.div
+              key="about"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-4 font-sans"
+            >
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 min-h-[300px] flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 mb-3 flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Info size={18} className="text-indigo-500" /> 关于游戏
+                  </h3>
+                  {aboutLoading ? (
+                    <div className="flex items-center justify-center py-12 text-indigo-500">
+                      <Loader2 size={24} className="animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-600 font-medium leading-relaxed whitespace-pre-wrap py-2">
+                      {aboutInfo.content || '暂无详细介绍信息。'}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-bold">
+                  <span>卡坦岛 Catan Online</span>
+                  <span>更新日期：{aboutInfo.updatedAt || '2026-08-10'}</span>
+                </div>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        )}
+
         {activeView === 'menu' && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -654,6 +1021,55 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 <div className="flex items-center gap-3">
                   <BellRing size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
                   <h3 className="font-bold text-slate-700 text-sm">声音设置</h3>
+                </div>
+                <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </button>
+
+              <button 
+                onClick={() => setActiveView('messages')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <Bell size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-slate-700 text-sm">消息</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  {unreadCount > 0 && (
+                    <span className="text-xs font-bold text-red-500">{unreadCount}</span>
+                  )}
+                  <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </div>
+              </button>
+
+              <button 
+                onClick={() => setActiveView('feedback')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <MessageSquare size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h3 className="font-bold text-slate-700 text-sm">反馈</h3>
+                </div>
+                <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </button>
+
+              <button 
+                onClick={() => setActiveView('about')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Info size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <h3 className="font-bold text-slate-700 text-sm">关于</h3>
                 </div>
                 <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>

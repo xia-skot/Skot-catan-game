@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings, Loader2 } from 'lucide-react';
+import { Users, LayoutGrid, X, LogOut, ArrowLeft, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check } from 'lucide-react';
 import { UserProfileModal } from './UserProfileModal';
 
 export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout: () => void, onClose: () => void, inline?: boolean }) {
@@ -17,6 +17,135 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
 
   const [inspectingUser, setInspectingUser] = useState<any | null>(null);
   const [inspectingLoading, setInspectingLoading] = useState(false);
+
+  const [feedbacks, setFeedbacks] = useState<any[]>([]);
+  const [feedbacksLoading, setFeedbacksLoading] = useState(false);
+  const [deletingFeedbackId, setDeletingFeedbackId] = useState<string | null>(null);
+
+  const [feedbackPrompt, setFeedbackPrompt] = useState('');
+  const [feedbackPromptSaving, setFeedbackPromptSaving] = useState(false);
+  const [feedbackPromptSuccess, setFeedbackPromptSuccess] = useState(false);
+
+  const [aboutContent, setAboutContent] = useState('');
+  const [aboutUpdatedAt, setAboutUpdatedAt] = useState('');
+  const [aboutSaving, setAboutSaving] = useState(false);
+  const [aboutSuccess, setAboutSuccess] = useState(false);
+
+  const fetchFeedbackPrompt = async () => {
+    try {
+      const res = await fetch('/api/feedback/prompt');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.prompt !== undefined) setFeedbackPrompt(json.prompt);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveFeedbackPrompt = async () => {
+    setFeedbackPromptSaving(true);
+    setFeedbackPromptSuccess(false);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/feedback/prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ prompt: feedbackPrompt })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setFeedbackPromptSuccess(true);
+        setTimeout(() => setFeedbackPromptSuccess(false), 2000);
+      } else {
+        alert(json.error || '保存失败');
+      }
+    } catch (err) {
+      alert('保存失败，请重试');
+    } finally {
+      setFeedbackPromptSaving(false);
+    }
+  };
+
+  const fetchFeedbacks = async () => {
+    setFeedbacksLoading(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/feedbacks', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.feedbacks) setFeedbacks(json.feedbacks);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setFeedbacksLoading(false);
+    }
+  };
+
+  const fetchAbout = async () => {
+    try {
+      const res = await fetch('/api/about');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.content !== undefined) setAboutContent(json.content);
+        if (json.updatedAt) setAboutUpdatedAt(json.updatedAt);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteFeedback = async (id: string) => {
+    setDeletingFeedbackId(id);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/admin/feedbacks/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setFeedbacks(prev => prev.filter(f => f.id !== id));
+      }
+    } catch (err) {
+      alert('删除失败');
+    } finally {
+      setDeletingFeedbackId(null);
+    }
+  };
+
+  const handleSaveAbout = async () => {
+    setAboutSaving(true);
+    setAboutSuccess(false);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/about', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ content: aboutContent })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setAboutSuccess(true);
+        if (json.updatedAt) setAboutUpdatedAt(json.updatedAt);
+        setTimeout(() => setAboutSuccess(false), 2000);
+      } else {
+        alert(json.error || '保存失败');
+      }
+    } catch (err) {
+      alert('保存失败，请重试');
+    } finally {
+      setAboutSaving(false);
+    }
+  };
 
   const handleOpenUserProfile = async (username: string) => {
     setInspectingLoading(true);
@@ -62,7 +191,28 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
 
   useEffect(() => {
     fetchStats();
+    fetchFeedbacks();
+    fetchAbout();
+    fetchFeedbackPrompt();
   }, []);
+
+  useEffect(() => {
+    const state = { adminOpen: true, inspecting: !!inspectingUser, time: Date.now() };
+    window.history.pushState(state, '');
+
+    const handlePopState = () => {
+      if (inspectingUser) {
+        setInspectingUser(null);
+      } else {
+        onClose();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [inspectingUser, onClose]);
 
   const handleDeleteUser = async (userId: string) => {
     setConfirmDeleteId(null);
@@ -193,8 +343,10 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
         </div>
 
         <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
-          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-            <Settings size={16} /> 系统设置
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Settings size={16} /> 系统设置
+            </div>
           </h3>
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-slate-700">大厅显示房间上限</span>
@@ -220,6 +372,93 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                 }
               }}
             />
+          </div>
+        </div>
+
+        {/* 玩家反馈意见 */}
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare size={16} className="text-indigo-500" /> 玩家反馈意见 ({feedbacks.length})
+            </div>
+            <button onClick={fetchFeedbacks} className="text-indigo-500 hover:bg-indigo-50 p-1 rounded-md transition-colors">
+              <RotateCw size={14} className={feedbacksLoading ? 'animate-spin' : ''} />
+            </button>
+          </h3>
+          {feedbacks.length === 0 ? (
+            <p className="text-xs text-slate-400 font-medium py-3 text-center">暂无玩家反馈意见</p>
+          ) : (
+            <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
+              {feedbacks.map((f: any) => (
+                <div key={f.id} className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <span className="text-indigo-600">{f.username}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-400 font-normal">{f.date}</span>
+                      <button 
+                        onClick={() => handleDeleteFeedback(f.id)} 
+                        disabled={deletingFeedbackId === f.id}
+                        className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                        title="删除反馈"
+                      >
+                        {deletingFeedbackId === f.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-600 font-medium whitespace-pre-wrap leading-relaxed bg-white p-2 rounded-xl border border-slate-100/80">
+                    {f.text}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 反馈提示语编辑 */}
+          <div className="mt-4 pt-3 border-t border-slate-100">
+            <span className="text-xs font-bold text-slate-700 block mb-1.5">反馈页面提示语编辑</span>
+            <textarea 
+              value={feedbackPrompt}
+              onChange={(e) => setFeedbackPrompt(e.target.value)}
+              placeholder="设置玩家点击“意见反馈”时看到的提示语..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none min-h-[55px]"
+            />
+            <div className="mt-2 flex justify-end">
+              <button 
+                onClick={handleSaveFeedbackPrompt}
+                disabled={feedbackPromptSaving}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-all disabled:opacity-50 flex items-center gap-1"
+              >
+                {feedbackPromptSaving ? <Loader2 size={12} className="animate-spin" /> : feedbackPromptSuccess ? <Check size={12} className="text-emerald-300" /> : <Save size={12} />}
+                {feedbackPromptSuccess ? '已保存' : '保存提示语'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 关于内容管理 */}
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+            <Info size={16} className="text-indigo-500" /> “关于”页面内容设置
+          </h3>
+          <p className="text-xs text-slate-400 font-medium mb-3">
+            编辑在“我的”-&gt;“关于”中面向玩家展示的内容与更新日期。
+          </p>
+          <textarea 
+            value={aboutContent}
+            onChange={(e) => setAboutContent(e.target.value)}
+            placeholder="请输入“关于”展示内容..."
+            className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none min-h-[90px]"
+          />
+          <div className="mt-3 flex items-center justify-between">
+            <span className="text-[11px] text-slate-400 font-bold">更新日期：{aboutUpdatedAt || '未保存'}</span>
+            <button 
+              onClick={handleSaveAbout}
+              disabled={aboutSaving}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {aboutSaving ? <Loader2 size={14} className="animate-spin" /> : aboutSuccess ? <Check size={14} className="text-emerald-300" /> : <Save size={14} />}
+              {aboutSuccess ? '已保存' : '保存内容'}
+            </button>
           </div>
         </div>
 
@@ -407,6 +646,99 @@ export function AdminDashboard({ onLogout, onClose, inline = false }: { onLogout
                     }
                   }}
                 />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* 玩家反馈意见 */}
+              <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={18} className="text-indigo-500" /> 玩家反馈意见 ({feedbacks.length})
+                    </div>
+                    <button onClick={fetchFeedbacks} className="text-indigo-500 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors">
+                      <RotateCw size={16} className={feedbacksLoading ? 'animate-spin' : ''} />
+                    </button>
+                  </h3>
+                  {feedbacks.length === 0 ? (
+                    <p className="text-xs text-slate-400 font-medium py-8 text-center">暂无玩家反馈意见</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                      {feedbacks.map((f: any) => (
+                        <div key={f.id} className="p-3.5 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-2">
+                          <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                            <span className="text-indigo-600">{f.username}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-slate-400 font-normal">{f.date}</span>
+                              <button 
+                                onClick={() => handleDeleteFeedback(f.id)} 
+                                disabled={deletingFeedbackId === f.id}
+                                className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                                title="删除反馈"
+                              >
+                                {deletingFeedbackId === f.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-600 font-medium whitespace-pre-wrap leading-relaxed bg-white p-2.5 rounded-xl border border-slate-100/80">
+                            {f.text}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 反馈提示语编辑 */}
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <span className="text-xs font-bold text-slate-700 block mb-1.5">反馈页面提示语编辑</span>
+                  <textarea 
+                    value={feedbackPrompt}
+                    onChange={(e) => setFeedbackPrompt(e.target.value)}
+                    placeholder="设置玩家点击“意见反馈”时看到的提示语..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none min-h-[55px]"
+                  />
+                  <div className="mt-2 flex justify-end">
+                    <button 
+                      onClick={handleSaveFeedbackPrompt}
+                      disabled={feedbackPromptSaving}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-sm transition-all disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      {feedbackPromptSaving ? <Loader2 size={12} className="animate-spin" /> : feedbackPromptSuccess ? <Check size={12} className="text-emerald-300" /> : <Save size={12} />}
+                      {feedbackPromptSuccess ? '已保存' : '保存提示语'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* “关于”内容管理 */}
+              <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 mb-1 flex items-center gap-2">
+                    <Info size={18} className="text-indigo-500" /> “关于”页面内容设置
+                  </h3>
+                  <p className="text-xs text-slate-400 font-medium mb-4">
+                    编辑在“我的”-&gt;“关于”中面向玩家展示的内容与更新日期。
+                  </p>
+                  <textarea 
+                    value={aboutContent}
+                    onChange={(e) => setAboutContent(e.target.value)}
+                    placeholder="请输入“关于”展示内容..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none min-h-[140px]"
+                  />
+                </div>
+                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-400 font-bold">更新日期：{aboutUpdatedAt || '未保存'}</span>
+                  <button 
+                    onClick={handleSaveAbout}
+                    disabled={aboutSaving}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition-all disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {aboutSaving ? <Loader2 size={14} className="animate-spin" /> : aboutSuccess ? <Check size={14} className="text-emerald-300" /> : <Save size={14} />}
+                    {aboutSuccess ? '已保存' : '保存内容'}
+                  </button>
+                </div>
               </div>
             </div>
 
