@@ -106,6 +106,7 @@ export interface GameState {
   bankResources: Record<ResourceType, number>;
   bankDevCards: DevCardType[]; // Deck of development cards
   mapType: MapType;
+  targetScore?: number;
   pendingStealFrom: number[]; // Player IDs to steal from
   selectedStealTarget?: number | null; // Player ID being targeted for steal
   pendingGoldRewards: { playerId: number, amount: number }[]; // Players who need to pick gold rewards

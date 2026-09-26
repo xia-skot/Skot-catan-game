@@ -130,9 +130,8 @@ if (typeof window !== 'undefined') {
       if (maxScrollTop > 0) {
         let newScrollTop = 0;
         if (isRotated) {
-          // On Apple devices, the physical scroll direction during 90-degree clockwise rotation 
-          // is opposite to Android/Huawei systems. We invert dx to align perfectly with user expectations.
-          newScrollTop = isAppleDevice ? (scrollTopStart - dx) : (scrollTopStart + dx);
+          // Both Apple and Android share the same direction
+          newScrollTop = scrollTopStart + dx;
         } else {
           newScrollTop = scrollTopStart - dy;
         }
@@ -146,7 +145,7 @@ if (typeof window !== 'undefined') {
       if (maxScrollLeft > 0) {
         let newScrollLeft = 0;
         if (isRotated) {
-          // Similarly, invert dy for horizontal scrolling on Apple devices in rotated mode.
+          // Horizontal scrolling direction is different on Apple devices
           newScrollLeft = isAppleDevice ? (scrollLeftStart + dy) : (scrollLeftStart - dy);
         } else {
           newScrollLeft = scrollLeftStart - dx;
@@ -214,7 +213,8 @@ import {
   LogOut as LogOutIcon,
   Bug,
   Smartphone,
-  MapPin
+  MapPin,
+  Volume2
 } from 'lucide-react';
 import { RotatedScroll } from './components/RotatedScroll';
 import { ResourceSelector } from './components/ResourceSelector';
@@ -230,6 +230,7 @@ import { SoundSettingsModal } from './components/SoundSettingsModal';
 import { GameRoomsTab } from './components/GameRoomsTab';
 import { PwaGuideModal } from './components/PwaGuideModal';
 import { socketService, RoomState } from './socketService';
+import { safeFetchJson } from './fetchUtils';
 import { 
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
   HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, FOOTPRINT_IMG, ANCHOR_IMG, PIRATE_SHIP_IMG,
@@ -2173,7 +2174,7 @@ export default function App() {
      const currentIndex = tabs.indexOf(activeLobbyTab);
      if (currentIndex === -1) return;
 
-     const threshold = window.innerWidth * 0.15; // 15% of screen width
+     const threshold = Math.min(window.innerWidth * 0.08, 40);
 
      if (finalDrag < -threshold) {
        const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
@@ -4420,8 +4421,8 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆' },
-                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿' }
+                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆 · 10分获胜' },
+                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿 · 14分获胜' }
                 ].map(map => {
                   const isSelected = mapType === map.id && !roomState?.settings?.customBoard;
                   return (
@@ -4898,7 +4899,7 @@ export default function App() {
               className="text-amber-500 hover:text-amber-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
               title="声音设置"
             >
-              <Bell size={13} strokeWidth={2.2} className="fill-amber-400/30" />
+              <Volume2 size={13} strokeWidth={2.2} className="fill-amber-400/30" />
             </button>
 
             {/* Bottom-Left: Spectator Eye (Red lines; Eye icon aligned with Book icon above) */}
@@ -5009,7 +5010,7 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="flex items-center mt-0.5 leading-none">
-                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}分</span>
+                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}/{gameState.mapType === 'standard' ? 10 : 14}分</span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
                         <img src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
                         {resourceCount}
@@ -6700,9 +6701,9 @@ export default function App() {
                         body: JSON.stringify({ roomId, saveName })
                       })
                       .then(async (res) => {
-                        const data = await res.json();
+                        const data = await safeFetchJson(res);
                         if (!res.ok) {
-                          throw new Error(data.error || '保存失败');
+                          throw new Error(data?.error || '保存失败');
                         }
                         setDebugSaveStatus({ 
                           type: 'success', 

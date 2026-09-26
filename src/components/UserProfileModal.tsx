@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, BellRing, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info } from 'lucide-react';
+import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, Volume2, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info, RotateCw, ChevronDown } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
 import { AdminDashboard } from './AdminDashboard';
+import { safeFetchJson } from '../fetchUtils';
 
 interface UserProfileModalProps {
   currentUser: any;
@@ -16,9 +17,10 @@ interface UserProfileModalProps {
   onRestoreGame?: (roomId: string) => void;
   activeView?: string;
   onActiveViewChange?: (view: any) => void;
+  disableHistory?: boolean;
 }
 
-export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, fullScreen = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange }: UserProfileModalProps) {
+export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogout, inline = false, fullScreen = false, onPlayerClick, onRestoreGame, activeView: propActiveView, onActiveViewChange, disableHistory = false }: UserProfileModalProps) {
   const [internalActiveView, setInternalActiveView] = useState<'menu' | 'edit' | 'history' | 'sound' | 'admin' | 'debug' | 'feedback' | 'messages' | 'about'>('menu');
   const activeView = propActiveView !== undefined ? propActiveView : internalActiveView;
   const setActiveView = (v: any) => {
@@ -28,6 +30,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   const [username, setUsername] = useState(currentUser?.username || '');
   const [oldPassword, setOldPassword] = useState('');
   const [password, setPassword] = useState('');
+  const [inPrivateChatDetail, setInPrivateChatDetail] = useState(false);
   
   const [loading, setLoading] = useState(false);
   const [errorText, setErrorText] = useState('');
@@ -35,6 +38,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   const [games, setGames] = useState<any[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
+  const [serverStats, setServerStats] = useState<{ totalGames: number; wins: number; winRate: number } | null>(null);
 
   const [saves, setSaves] = useState<any[]>([]);
   const [savesLoading, setSavesLoading] = useState(false);
@@ -45,20 +49,77 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   const [feedbackSuccess, setFeedbackSuccess] = useState(false);
   const [feedbackPrompt, setFeedbackPrompt] = useState('');
 
+  const [adminFeedbacks, setAdminFeedbacks] = useState<any[]>([]);
+  const [adminFeedbacksLoading, setAdminFeedbacksLoading] = useState(false);
+  const [deletingAdminFeedbackId, setDeletingAdminFeedbackId] = useState<string | null>(null);
+
+  const fetchAdminFeedbacks = async () => {
+    setAdminFeedbacksLoading(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/admin/feedbacks', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const json = await safeFetchJson(res);
+        if (json?.feedbacks) setAdminFeedbacks(json.feedbacks);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAdminFeedbacksLoading(false);
+    }
+  };
+
+  const handleDeleteAdminFeedback = async (id: string) => {
+    setDeletingAdminFeedbackId(id);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/admin/feedbacks/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setAdminFeedbacks(prev => prev.filter(f => (f.id || f._id) !== id));
+      }
+    } catch (err) {
+      alert('删除失败');
+    } finally {
+      setDeletingAdminFeedbackId(null);
+    }
+  };
+
+  useEffect(() => {
+    if (activeView === 'feedback' && currentUser?.role === 'admin') {
+      fetchAdminFeedbacks();
+    }
+  }, [activeView, currentUser?.role]);
+
   useEffect(() => {
     fetch('/api/feedback/prompt')
-      .then(res => res.json())
+      .then(safeFetchJson)
       .then(data => {
         if (data?.prompt) setFeedbackPrompt(data.prompt);
       })
       .catch(console.error);
   }, [activeView]);
 
+  const isPopStateRef = React.useRef(false);
+
   useEffect(() => {
+    if (disableHistory) return;
+    if (isPopStateRef.current) {
+      isPopStateRef.current = false;
+      return;
+    }
     const state = { modalView: activeView, time: Date.now() };
     window.history.pushState(state, '');
+  }, [activeView, disableHistory]);
 
+  useEffect(() => {
+    if (disableHistory) return;
     const handlePopState = () => {
+      isPopStateRef.current = true;
       if (activeView !== 'menu') {
         setActiveView('menu');
       } else {
@@ -70,11 +131,255 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [activeView, onClose]);
+  }, [activeView, onClose, disableHistory]);
 
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [messages, setMessages] = useState<any[]>([]);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+
+  const [replyText, setReplyText] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const systemMsgs = React.useMemo(() => {
+    return messages.filter(m => m.type !== 'private' && !m.targetUserId);
+  }, [messages]);
+
+  const isAdmin = currentUser?.role === 'admin';
+
+  // 所有属于私信的消息
+  const allRawPrivateMsgs = React.useMemo(() => {
+    return messages.filter(m => m.type === 'private' || Boolean(m.targetUserId));
+  }, [messages]);
+
+  // 普通玩家私信列表 (包含发送与接收的私信，过滤自己与自己对话)
+  const playerPrivateMsgs = React.useMemo(() => {
+    if (isAdmin) return [];
+    return allRawPrivateMsgs.filter(m => {
+      // 过滤自己与自己的对话
+      if (m.senderName && m.targetUserName && m.senderName === m.targetUserName) return false;
+      if (m.senderId && m.targetUserId && m.senderId === m.targetUserId) return false;
+      
+      const isBelong = 
+        m.senderId === currentUser?.id || 
+        m.senderName === currentUser?.username || 
+        m.targetUserId === currentUser?.id || 
+        m.targetUserName === currentUser?.username;
+
+      return isBelong;
+    }).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  }, [allRawPrivateMsgs, isAdmin, currentUser]);
+
+  // 管理员账号按不同玩家划分的私信会话列表 (竖向QQ列表，完美过滤自己与自己)
+  const adminConversations = React.useMemo(() => {
+    if (!isAdmin) return [];
+    const map = new Map<string, { username: string; msgs: any[]; lastMsg: any }>();
+
+    allRawPrivateMsgs.forEach(msg => {
+      // 1. 判断是否是发给/发自自己的“自己与自己对话”
+      const isSelf = 
+        (msg.senderName && msg.targetUserName && msg.senderName === msg.targetUserName) ||
+        (msg.senderId && msg.targetUserId && msg.senderId === msg.targetUserId) ||
+        (currentUser?.username && msg.senderName === currentUser.username && msg.targetUserName === currentUser.username);
+
+      if (isSelf) {
+        return; // 跳过自己与自己的对话框
+      }
+
+      // 2. 识别发送方是否为管理员
+      const isSenderAdmin = 
+        msg.senderName === '管理员' || 
+        msg.senderId === 'admin' || 
+        (currentUser?.username && msg.senderName === currentUser.username) || 
+        (currentUser?.id && msg.senderId === currentUser.id);
+
+      // 3. 确定 Partner (玩家用户名/ID)
+      let partner = '';
+      if (isSenderAdmin) {
+        // 管理员发出的消息，partner 为接收方玩家
+        partner = msg.targetUserName || msg.targetUserId || '';
+      } else {
+        // 玩家发出的消息，partner 为发送方玩家
+        partner = msg.senderName || msg.senderId || '';
+      }
+
+      // 如果 partner 仍是管理员自己或是空，过滤掉
+      if (!partner || partner === '管理员' || partner === 'admin' || (currentUser?.username && partner === currentUser.username)) {
+        return;
+      }
+
+      if (!map.has(partner)) {
+        map.set(partner, { username: partner, msgs: [], lastMsg: null });
+      }
+
+      const conv = map.get(partner)!;
+      conv.msgs.push(msg);
+    });
+
+    const result: { username: string; msgs: any[]; lastMsg: any }[] = [];
+    map.forEach((conv) => {
+      conv.msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      conv.lastMsg = conv.msgs[conv.msgs.length - 1];
+      result.push(conv);
+    });
+
+    result.sort((a, b) => (b.lastMsg?.createdAt || 0) - (a.lastMsg?.createdAt || 0));
+    return result;
+  }, [allRawPrivateMsgs, isAdmin, currentUser]);
+
+  const [selectedChatPlayer, setSelectedChatPlayer] = useState<string | null>(null);
+
+  const activeChatMsgs = React.useMemo(() => {
+    if (!isAdmin) {
+      return playerPrivateMsgs;
+    }
+    if (!selectedChatPlayer) return [];
+    const conv = adminConversations.find(c => c.username === selectedChatPlayer);
+    return conv ? conv.msgs : [];
+  }, [isAdmin, playerPrivateMsgs, selectedChatPlayer, adminConversations]);
+
+  const [deletingConv, setDeletingConv] = useState(false);
+
+  const handleDeleteConversation = async (partnerName?: string) => {
+    const targetName = partnerName || selectedChatPlayer || '官方客服';
+    if (!window.confirm(`确定要删除与“${targetName}”的对话框及所有聊天记录吗？`)) return;
+
+    setDeletingConv(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/messages/conversation', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ partner: targetName })
+      });
+      const data = await safeFetchJson(res);
+      if (res.ok && data?.success) {
+        setMessages(prev => prev.filter(m => {
+          if (m.type !== 'private' && !m.targetUserId) return true;
+          if (isAdmin) {
+            const isMatch = m.senderName === targetName || m.senderId === targetName || m.targetUserName === targetName || m.targetUserId === targetName;
+            return !isMatch;
+          } else {
+            return false;
+          }
+        }));
+        if (selectedChatPlayer === targetName) {
+          setSelectedChatPlayer(null);
+        }
+        setInPrivateChatDetail(false);
+      } else {
+        alert(data?.error || '删除对话框失败');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('删除对话框失败');
+    } finally {
+      setDeletingConv(false);
+    }
+  };
+
+  const handleDeleteSingleMessage = async (msgId: string) => {
+    if (!window.confirm('确定要删除这条私信记录吗？')) return;
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch(`/api/messages/${msgId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await safeFetchJson(res);
+      if (res.ok && data?.success) {
+        setMessages(prev => prev.filter(m => m.id !== msgId));
+      } else {
+        alert(data?.error || '删除失败');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('删除失败');
+    }
+  };
+
+  const systemUnreadCount = systemMsgs.filter(m => !m.read).length;
+  const privateUnreadCount = isAdmin 
+    ? adminConversations.reduce((acc, c) => acc + c.msgs.filter(m => !m.read).length, 0)
+    : playerPrivateMsgs.filter(m => !m.read).length;
+
+  const scrollToChatBottom = () => {
+    setTimeout(() => {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+  };
+
+  useEffect(() => {
+    if (activeView === 'private_chat') {
+      scrollToChatBottom();
+      activeChatMsgs.forEach(m => {
+        if (!m.read) markMessageAsRead(m.id);
+      });
+    }
+  }, [activeView, activeChatMsgs.length]);
+
+  const handleSendPrivateMessage = async () => {
+    if (!replyText.trim() || sendingReply) return;
+    setSendingReply(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      if (isAdmin) {
+        if (!selectedChatPlayer) {
+          alert('请先选择要沟通的玩家');
+          return;
+        }
+        const res = await fetch('/api/admin/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            title: '私信回复',
+            content: replyText.trim(),
+            targetUserId: selectedChatPlayer
+          })
+        });
+        const data = await safeFetchJson(res);
+        if (res.ok && data?.success && data?.message) {
+          setMessages(prev => [...prev, data.message]);
+          setReplyText('');
+          scrollToChatBottom();
+        } else {
+          alert(data?.error || '发送私信失败');
+        }
+      } else {
+        const res = await fetch('/api/messages/private', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            content: replyText.trim(),
+            title: '玩家私信'
+          })
+        });
+        const data = await safeFetchJson(res);
+        if (res.ok && data?.success && data?.message) {
+          setMessages(prev => [...prev, data.message]);
+          setReplyText('');
+          scrollToChatBottom();
+        } else {
+          alert(data?.error || '发送私信失败');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      alert('发送私信失败，请检查网络');
+    } finally {
+      setSendingReply(false);
+    }
+  };
 
   const [adminMsgTitle, setAdminMsgTitle] = useState('');
   const [adminMsgContent, setAdminMsgContent] = useState('');
@@ -87,7 +392,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     if (activeView === 'about' || !aboutInfo.content) {
       setAboutLoading(true);
       fetch('/api/about')
-        .then(res => res.json())
+        .then(safeFetchJson)
         .then(data => {
           if (data) setAboutInfo({ content: data.content || '', updatedAt: data.updatedAt || '' });
         })
@@ -100,10 +405,13 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   useEffect(() => {
     setMessagesLoading(true);
-    fetch('/api/messages')
-      .then(res => res.json())
+    const token = localStorage.getItem('catan_auth_token');
+    fetch('/api/messages', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    })
+      .then(safeFetchJson)
       .then(data => {
-        if (data.messages) {
+        if (data?.messages) {
           const readMsgs = JSON.parse(localStorage.getItem('catan_read_messages') || '[]');
           setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.includes(m.id) })));
         }
@@ -147,6 +455,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   useEffect(() => {
     setGames([]);
+    setServerStats(null);
     if (!currentUser?.username) return;
     
     setGamesLoading(true);
@@ -161,6 +470,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     .then(res => res.ok && res.headers.get('content-type')?.includes('application/json') ? res.json() : null)
     .then(data => {
       if (data?.games) setGames(data.games);
+      if (data?.stats) setServerStats(data.stats);
     })
     .catch(() => {})
     .finally(() => setGamesLoading(false));
@@ -176,8 +486,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('获取存档列表失败');
-      const data = await res.json();
-      setSaves(data.saves || []);
+      const data = await safeFetchJson(res);
+      setSaves(data?.saves || []);
     } catch (err: any) {
       setErrorText(err.message || '获取存档列表出错');
     } finally {
@@ -204,14 +514,14 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         },
         body: JSON.stringify({ saveId })
       });
-      const data = await res.json();
+      const data = await safeFetchJson(res);
       if (!res.ok) {
-        throw new Error(data.error || '恢复进度失败');
+        throw new Error(data?.error || '恢复进度失败');
       }
       setSuccessText('进度已恢复！正在加载游戏...');
       setTimeout(() => {
         if (onRestoreGame) {
-          onRestoreGame(data.roomId);
+          onRestoreGame(data?.roomId);
         }
         onClose();
       }, 1000);
@@ -229,8 +539,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || '删除失败');
+        const data = await safeFetchJson(res);
+        throw new Error(data?.error || '删除失败');
       }
       setSaves(prev => prev.filter(s => s._id !== saveId));
       setConfirmDeleteId(null);
@@ -293,9 +603,31 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     }
   };
 
-  const totalGames = games.length;
-  const wins = games.filter(g => g.winnerId && g.players?.find((p: any) => p.name === currentUser.username)?.id === g.winnerId).length;
-  const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
+  const isGameWin = (g: any, username?: string) => {
+    if (!g || !username || !g.players) return false;
+    const cleanUser = username.trim().toLowerCase();
+    if (g.winnerId !== undefined && g.winnerId !== null) {
+      const p = g.players.find((pl: any) => pl.name && pl.name.trim().toLowerCase() === cleanUser);
+      if (p && String(p.id) === String(g.winnerId)) return true;
+    }
+    // Fallback if winnerId was not explicitly set or mismatched
+    const player = g.players.find((pl: any) => pl.name && pl.name.trim().toLowerCase() === cleanUser);
+    if (player) {
+      const myScore = player.score || 0;
+      const targetScore = g.mapType === 'standard' ? 10 : 14;
+      const maxScore = Math.max(...g.players.map((pl: any) => pl.score || 0));
+      if (myScore >= targetScore && myScore === maxScore) {
+        const topCount = g.players.filter((pl: any) => (pl.score || 0) === maxScore).length;
+        if (topCount === 1) return true;
+      }
+    }
+    return false;
+  };
+
+  const localWins = games.filter(g => isGameWin(g, currentUser?.username)).length;
+  const totalGames = serverStats?.totalGames ?? games.length;
+  const wins = serverStats?.wins ?? localWins;
+  const winRate = serverStats?.winRate ?? (totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0);
 
   const content = (
     <motion.div 
@@ -328,7 +660,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         <div className="flex items-center gap-1">
             {activeView !== 'menu' && (
               <button 
-                onClick={() => setActiveView('menu')}
+                onClick={() => disableHistory ? setActiveView('menu') : window.history.back()}
                 className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
                 title="返回"
               >
@@ -653,7 +985,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                         return Math.max(p.score || 0, breakdownSum);
                       };
                       const sortedPlayers = [...(g.players || [])].sort((a, b) => calcTotalScore(b) - calcTotalScore(a));
-                      const isWin = g.winnerId && g.players?.find((p: any) => p.name === currentUser.username)?.id === g.winnerId;
+                      const isWin = isGameWin(g, currentUser?.username);
                       return (
                         <div key={i} className="py-4 border-b border-slate-100 last:border-b-0 flex flex-col gap-2 relative group">
                           {isWin && (
@@ -679,12 +1011,14 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                   <th className="py-2 px-2 text-center">路</th>
                                   <th className="py-2 px-2 text-center">骑</th>
                                   <th className="py-2 px-2 text-center">卡</th>
-                                  <th className="py-2 px-2 text-center">探</th>
+                                  <th className="py-2 px-2 text-center">岛</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-50">
                                 {sortedPlayers.map((p, idx) => {
-                                  const isWinner = p.id === g.winnerId;
+                                  const isWinner = (g.winnerId !== undefined && g.winnerId !== null)
+                                    ? String(p.id) === String(g.winnerId)
+                                    : (isWin && p.name && currentUser?.username && p.name.trim().toLowerCase() === currentUser.username.trim().toLowerCase());
                                   return (
                                     <tr key={idx} className={`${isWinner ? 'bg-yellow-50/30' : ''}`}>
                                       <td className="py-2 px-2 text-center font-black text-slate-400">
@@ -725,69 +1059,70 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               exit={{ opacity: 0, x: -20 }}
               className="space-y-4 font-sans"
             >
-              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 min-h-[300px] flex flex-col">
-                <div className="flex items-center justify-between mb-4">
+              {/* System Messages Card */}
+              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex flex-col min-h-[320px]">
+                <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
                   <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                    <Bell size={16} className="text-indigo-500" /> 系统消息
+                    <Bell size={16} className="text-indigo-500" /> 系统公告与通知
                   </h3>
                   <div className="flex items-center gap-2">
-                    {messages.some(m => !m.read) && (
+                    {systemUnreadCount > 0 && (
                       <button 
-                        onClick={markAllMessagesAsRead}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-                        title="一键全部标记为已读"
+                        onClick={() => {
+                          const newMessages = messages.map(m => (m.type !== 'private' && !m.targetUserId) ? { ...m, read: true } : m);
+                          setMessages(newMessages);
+                          const readMsgs = newMessages.filter(m => m.read).map(m => m.id);
+                          localStorage.setItem('catan_read_messages', JSON.stringify(readMsgs));
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
+                        title="标记系统消息为已读"
                       >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="m14 11 2-2 5-5" />
-                          <path d="M11 14 3.5 21.5a1.5 1.5 0 0 0 2.1 2.1L13 16" />
-                          <path d="M16 11c0 2.8-2.2 5-5 5" />
-                          <path d="M8 18c-2 0-3.5-1.5-3.5-3.5" />
-                        </svg>
                         <span className="text-[11px]">一键已读</span>
                       </button>
                     )}
-                    <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                      {messages.length} 条
+                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                      {systemMsgs.length} 条
                     </span>
                   </div>
                 </div>
                 
-                {messages.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 opacity-60 mt-10">
-                    <Mail className="w-10 h-10 mb-2 opacity-50" />
-                    <p className="text-sm font-bold">暂无消息</p>
+                {systemMsgs.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-100 rounded-2xl bg-slate-50/50 py-12">
+                    <Bell className="w-8 h-8 opacity-30 text-indigo-400 mb-2" />
+                    <p>暂无系统公告或系统通知</p>
                   </div>
                 ) : (
-                  <div className="space-y-3 overflow-y-auto flex-1 pr-1 pb-4">
-                    {messages.map((msg) => {
+                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                    {systemMsgs.map((msg) => {
                       const isExpanded = expandedMessageId === msg.id;
                       return (
                         <div 
                           key={msg.id} 
-                          className={`p-4 rounded-2xl border transition-all cursor-pointer ${msg.read ? 'bg-slate-50 border-slate-100' : 'bg-white border-indigo-100 shadow-sm'}`}
+                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${msg.read ? 'bg-slate-50/80 border-slate-100' : 'bg-white border-indigo-100 shadow-xs'}`}
                           onClick={() => {
                             setExpandedMessageId(isExpanded ? null : msg.id);
-                            if (!msg.read) {
-                              markMessageAsRead(msg.id);
-                            }
+                            if (!msg.read) markMessageAsRead(msg.id);
                           }}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                系统公告
+                              </span>
                               <div className={`w-2 h-2 rounded-full shrink-0 ${msg.read ? 'bg-transparent' : 'bg-red-500'}`} />
-                              <h4 className={`text-sm truncate ${msg.read ? 'text-slate-500 font-medium' : 'text-slate-800 font-bold'}`}>
+                              <h4 className={`text-xs truncate ${msg.read ? 'text-slate-500 font-medium' : 'text-slate-800 font-bold'}`}>
                                 {msg.title}
                               </h4>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                              <span className="text-[10px] text-slate-400 font-medium">{msg.date}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[10px] text-slate-400 font-mono">{msg.date}</span>
                               {currentUser?.role === 'admin' && (
                                 <button
                                   onClick={(e) => handleDeleteMessage(e, msg.id)}
-                                  className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                  className="p-1 text-slate-300 hover:text-red-500 rounded-lg transition-colors"
                                   title="删除此条消息"
                                 >
-                                  <Trash2 size={13} />
+                                  <Trash2 size={12} />
                                 </button>
                               )}
                             </div>
@@ -797,11 +1132,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                             {isExpanded && (
                               <motion.div
                                 initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                                animate={{ height: 'auto', opacity: 1, marginTop: 12 }}
+                                animate={{ height: 'auto', opacity: 1, marginTop: 8 }}
                                 exit={{ height: 0, opacity: 0, marginTop: 0 }}
                                 className="overflow-hidden"
                               >
-                                <p className="text-xs leading-relaxed text-slate-600 pl-4 border-l-2 border-indigo-100">
+                                <p className="text-xs leading-relaxed text-slate-600 pl-3 border-l-2 border-indigo-200 bg-slate-50/50 p-2.5 rounded-r-xl whitespace-pre-wrap">
                                   {msg.content}
                                 </p>
                               </motion.div>
@@ -814,20 +1149,20 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 )}
 
                 {currentUser?.role === 'admin' && (
-                  <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-3">
-                    <h4 className="text-xs font-bold text-slate-800">发布新消息</h4>
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
+                    <h4 className="text-xs font-bold text-slate-800">发布全服系统消息</h4>
                     <input 
                       type="text"
                       placeholder="标题"
                       value={adminMsgTitle}
                       onChange={(e) => setAdminMsgTitle(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all"
                     />
                     <textarea 
                       placeholder="内容"
                       value={adminMsgContent}
                       onChange={(e) => setAdminMsgContent(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all resize-none min-h-[80px]"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all resize-none min-h-[70px]"
                     />
                     <button 
                       disabled={!adminMsgTitle.trim() || !adminMsgContent.trim() || adminMsgLoading}
@@ -839,30 +1174,314 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
                           },
-                          body: JSON.stringify({ title: adminMsgTitle, content: adminMsgContent })
-                        })
-                        .then(res => res.json())
-                        .then(data => {
-                          if (data.success) {
-                            setMessages([data.message, ...messages]);
-                            setAdminMsgTitle('');
-                            setAdminMsgContent('');
-                          } else {
-                            alert(data.error || '发布失败');
-                          }
-                        })
+                          body: JSON.stringify({ 
+                            title: adminMsgTitle, 
+                            content: adminMsgContent,
+                            targetUserId: null
+                          })
+                      })
+                      .then(safeFetchJson)
+                      .then(data => {
+                        if (data?.success) {
+                          setMessages([data.message, ...messages]);
+                          setAdminMsgTitle('');
+                          setAdminMsgContent('');
+                        } else {
+                          alert(data?.error || '发布失败');
+                        }
+                      })
                         .catch(() => alert('发布失败，请检查网络'))
                         .finally(() => setAdminMsgLoading(false));
                       }}
-                      className="w-full bg-indigo-600 text-white font-bold text-sm py-2.5 rounded-xl shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      className="w-full bg-indigo-600 text-white font-bold text-xs py-2 rounded-xl shadow-xs hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {adminMsgLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      发布
+                      发布全服消息
                     </button>
                   </div>
                 )}
               </div>
             </motion.div>
+          </AnimatePresence>
+        )}
+
+        {/* Dedicated QQ-Style Private Chat View */}
+        {activeView === 'private_chat' && (
+          <AnimatePresence mode="wait">
+            {!inPrivateChatDetail ? (
+              /* Messages List View (不同的玩家显示独立的条形框) */
+              <motion.div
+                key="private_chat_list"
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                className="space-y-3 font-sans py-2"
+              >
+                {!isAdmin ? (
+                  /* 普通玩家：系统管理员 / 官方客服 专属条形框 */
+                  <div 
+                    onClick={() => {
+                      setSelectedChatPlayer(null);
+                      setInPrivateChatDetail(true);
+                    }}
+                    className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-sky-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                      <div className="relative shrink-0">
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-sky-500 via-indigo-500 to-indigo-600 text-white flex items-center justify-center font-black text-sm shadow-md shadow-indigo-500/20">
+                          管
+                        </div>
+                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-white rounded-full"></span>
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-black text-slate-800 group-hover:text-sky-600 transition-colors">
+                              系统管理员 / 官方客服
+                            </span>
+                            <span className="bg-sky-50 text-sky-600 text-[10px] font-bold px-1.5 py-0.2 rounded border border-sky-100">
+                              官方
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                            {playerPrivateMsgs.length > 0 ? playerPrivateMsgs[playerPrivateMsgs.length - 1].date : '在线'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 truncate mt-1 font-medium">
+                          {playerPrivateMsgs.length > 0 ? playerPrivateMsgs[playerPrivateMsgs.length - 1].content : '点击发起双向私信对话...'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation('系统管理员 / 官方客服');
+                      }}
+                      className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 ml-2"
+                      title="删除对话框及聊天记录"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  /* 管理员视角：不同玩家显示独立的条形框列表 */
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-bold text-slate-500 px-1 mb-2 flex items-center justify-between">
+                      <span>玩家私信列表 ({adminConversations.length})</span>
+                      <span className="text-[10px] text-slate-400 font-normal">点击任意玩家开启独占私信对话</span>
+                    </div>
+
+                    {adminConversations.length === 0 ? (
+                      <div className="py-12 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 space-y-2">
+                        <MessageSquare className="w-8 h-8 opacity-40 text-sky-500" />
+                        <p className="font-bold text-slate-600">暂无玩家私信记录</p>
+                      </div>
+                    ) : (
+                      adminConversations.map((conv) => (
+                        <div 
+                          key={conv.username}
+                          onClick={() => {
+                            setSelectedChatPlayer(conv.username);
+                            setInPrivateChatDetail(true);
+                          }}
+                          className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-sky-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
+                        >
+                          <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                            <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-sky-500 via-indigo-500 to-indigo-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-md shadow-indigo-500/15">
+                              {conv.username.slice(0, 1).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-sm font-black text-slate-800 group-hover:text-sky-600 transition-colors">
+                                  {conv.username}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                  {conv.lastMsg?.date}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 truncate mt-1 font-medium">
+                                {conv.lastMsg?.content || '暂无消息'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteConversation(conv.username);
+                            }}
+                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 ml-2"
+                            title="删除该玩家的对话框"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </motion.div>
+            ) : (
+              /* QQ Style Chat Window (独立的对话窗口) */
+              <motion.div
+                key="private_chat_detail_inline"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="bg-white rounded-2xl border border-slate-200/80 shadow-sm flex flex-col font-sans overflow-hidden h-[520px]"
+              >
+                {/* QQ Chat Header with Back Button & Delete Conversation Button */}
+                <div className="bg-gradient-to-r from-sky-500 via-indigo-500 to-indigo-600 px-4 py-3 text-white flex items-center justify-between shrink-0 shadow-xs">
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => setInPrivateChatDetail(false)}
+                      className="p-1.5 hover:bg-white/20 rounded-full transition-colors text-white"
+                      title="返回私信列表"
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+
+                    <div className="relative shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center font-black text-sm border border-white/30 shadow-inner">
+                        {isAdmin && selectedChatPlayer ? selectedChatPlayer.slice(0, 1).toUpperCase() : '管'}
+                      </div>
+                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-400 border-2 border-indigo-600 rounded-full"></span>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-black flex items-center gap-2 leading-tight">
+                        {isAdmin && selectedChatPlayer ? (
+                          <>与玩家 <span className="underline decoration-sky-300 font-extrabold">{selectedChatPlayer}</span> 私信会话</>
+                        ) : (
+                          <>系统管理员 / 官方客服 <span className="bg-white/20 text-[9px] px-1.5 py-0.2 rounded font-bold border border-white/20">官方</span></>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-sky-100 font-medium flex items-center gap-1.5 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        在线 · 独享即时双向通道
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleDeleteConversation(isAdmin ? (selectedChatPlayer || undefined) : '系统管理员 / 官方客服')}
+                    className="p-1.5 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-colors flex items-center gap-1 text-[11px] font-bold"
+                    title="删除对话框"
+                  >
+                    <Trash2 size={15} />
+                    <span className="hidden sm:inline">删除对话框</span>
+                  </button>
+                </div>
+
+                {/* QQ Chat Messages Container */}
+                <div className="flex-1 p-3.5 bg-slate-50 overflow-y-auto space-y-3.5 no-scrollbar">
+                  {activeChatMsgs.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs font-medium space-y-2 py-12">
+                      <div className="w-12 h-12 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-1">
+                        <MessageSquare size={24} />
+                      </div>
+                      <p className="font-bold text-slate-600 text-sm">
+                        {isAdmin ? `暂无与 ${selectedChatPlayer} 的私信记录` : '暂无与管理员的私信记录'}
+                      </p>
+                      <p className="text-[11px] text-slate-400 max-w-[220px] text-center leading-relaxed">
+                        您可以在下方输入框输入私信内容发起对话。
+                      </p>
+                    </div>
+                  ) : (
+                    activeChatMsgs.map((msg) => {
+                      const isMe = isAdmin 
+                        ? (msg.senderName === '管理员' || msg.senderId === 'admin' || (currentUser?.username && msg.senderName === currentUser.username) || (currentUser?.id && msg.senderId === currentUser.id))
+                        : (msg.senderId === currentUser?.id || (currentUser?.username && msg.senderName === currentUser.username));
+
+                      return (
+                        <div 
+                          key={msg.id} 
+                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1 group`}
+                        >
+                          {/* Timestamp & Sender Name */}
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 px-1 font-mono">
+                            {!isMe && <span className="font-bold text-sky-600">{msg.senderName || '管理员'}</span>}
+                            <span>{msg.date}</span>
+                            {isMe && <span className="font-bold text-indigo-500">我</span>}
+                            <button
+                              onClick={() => handleDeleteSingleMessage(msg.id)}
+                              className="p-0.5 text-slate-300 hover:text-red-500 transition-colors rounded opacity-0 group-hover:opacity-100"
+                              title="删除此条消息"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+
+                          {/* QQ Style Message Bubble */}
+                          <div className="flex items-start gap-2 max-w-[85%]">
+                            {!isMe && (
+                              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-sky-500 to-indigo-500 text-white flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
+                                {(msg.senderName || '管').slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+
+                            <div 
+                              className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words shadow-2xs ${
+                                isMe 
+                                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white rounded-tr-xs shadow-sky-500/10 font-medium' 
+                                  : 'bg-white text-slate-800 border border-slate-200/70 rounded-tl-xs font-medium'
+                              }`}
+                            >
+                              {msg.title && msg.title !== '玩家私信' && msg.title !== '私信回复' && (
+                                <div className={`font-black text-[11px] mb-1 pb-1 border-b ${isMe ? 'border-white/20 text-sky-100' : 'border-slate-100 text-sky-700'}`}>
+                                  {msg.title}
+                                </div>
+                              )}
+                              {msg.content}
+                            </div>
+
+                            {isMe && (
+                              <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
+                                {(currentUser?.username || '我').slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* QQ Chat Bottom Input Footer */}
+                <div className="p-3 bg-white border-t border-slate-200 shrink-0">
+                  <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 focus-within:border-indigo-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-500/10 rounded-2xl p-2 transition-all">
+                    <textarea 
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendPrivateMessage();
+                        }
+                      }}
+                      placeholder={isAdmin && selectedChatPlayer ? `发送私信给 ${selectedChatPlayer} (按 Enter 发送)...` : "给管理员发私信 (按 Enter 发送)..."}
+                      rows={2}
+                      className="flex-1 bg-transparent border-0 text-xs text-slate-800 font-medium outline-none resize-none p-1 placeholder:text-slate-400"
+                    />
+                    <button
+                      disabled={!replyText.trim() || sendingReply}
+                      onClick={handleSendPrivateMessage}
+                      className="px-4 py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all flex items-center gap-1.5 shrink-0"
+                    >
+                      {sendingReply ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      发送
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-slate-400 font-medium">
+                    <span>按 Enter 发送，Shift + Enter 换行</span>
+                    <span className="text-sky-600 font-bold">私信将直接送达对方</span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
         )}
 
@@ -876,69 +1495,124 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               className="space-y-4 font-sans"
             >
               <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 min-h-[300px] flex flex-col">
-                <h3 className="text-sm font-black text-slate-800 mb-2 flex items-center gap-2">
-                  <MessageSquare size={16} className="text-indigo-500" /> 意见反馈
-                </h3>
-                <p className="text-xs text-slate-500 font-medium mb-4 leading-relaxed whitespace-pre-wrap">
-                  {feedbackPrompt || '您的意见对我们非常重要。请详细描述您遇到的问题或建议，反馈内容将提交给管理员查看。'}
-                </p>
-
-                {feedbackSuccess ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-emerald-600 space-y-3 mt-4">
-                    <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                    </div>
-                    <p className="text-sm font-bold">感谢您的反馈！</p>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                    <MessageSquare size={16} className="text-indigo-500" /> 
+                    {currentUser?.role === 'admin' ? '玩家反馈意见' : '意见反馈'}
+                  </h3>
+                  {currentUser?.role === 'admin' && (
                     <button 
-                      onClick={() => { setFeedbackSuccess(false); setFeedbackText(''); }}
-                      className="mt-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-colors"
+                      onClick={fetchAdminFeedbacks} 
+                      className="text-indigo-500 hover:bg-indigo-50 px-2 py-1 rounded-xl transition-colors flex items-center gap-1 text-xs font-bold"
                     >
-                      继续反馈
+                      <RotateCw size={13} className={adminFeedbacksLoading ? 'animate-spin' : ''} /> 刷新
                     </button>
+                  )}
+                </div>
+
+                {currentUser?.role === 'admin' ? (
+                  <div className="space-y-3">
+                    {adminFeedbacksLoading ? (
+                      <div className="flex justify-center py-12 text-indigo-500">
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                      </div>
+                    ) : adminFeedbacks.length === 0 ? (
+                      <div className="py-12 text-center text-slate-400 text-xs font-medium border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
+                        暂无玩家反馈意见
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[450px] overflow-y-auto pr-1">
+                        {adminFeedbacks.map((f: any) => {
+                          const fbId = f.id || f._id;
+                          return (
+                            <div key={fbId} className="p-3.5 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-2">
+                              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                                <span className="text-indigo-600 font-black">{f.username || '匿名玩家'}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] text-slate-400 font-normal">{f.date || (f.createdAt ? new Date(f.createdAt).toLocaleString() : '')}</span>
+                                  <button 
+                                    onClick={() => handleDeleteAdminFeedback(fbId)} 
+                                    disabled={deletingAdminFeedbackId === fbId}
+                                    className="p-1 text-slate-400 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
+                                    title="删除反馈"
+                                  >
+                                    {deletingAdminFeedbackId === fbId ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                  </button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-700 font-medium whitespace-pre-wrap leading-relaxed bg-white p-3 rounded-xl border border-slate-100">
+                                {f.text || f.content}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <div className="flex-1 flex flex-col">
-                    <div className="relative flex-1 flex flex-col">
-                      <textarea 
-                        value={feedbackText}
-                        onChange={(e) => setFeedbackText(e.target.value.slice(0, 1000))}
-                        maxLength={1000}
-                        placeholder="请输入您的反馈意见（最多1000字）..."
-                        className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 pb-8 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 transition-all resize-none min-h-[160px]"
-                      />
-                      <div className="absolute bottom-2.5 right-4 text-[11px] font-bold text-slate-400 pointer-events-none select-none">
-                        {feedbackText.length} / 1000
+                  <>
+                    <p className="text-xs text-slate-500 font-medium mb-4 leading-relaxed whitespace-pre-wrap">
+                      {feedbackPrompt || '您的意见对我们非常重要。请详细描述您遇到的问题或建议，反馈内容将提交给管理员查看。'}
+                    </p>
+
+                    {feedbackSuccess ? (
+                      <div className="flex-1 flex flex-col items-center justify-center text-emerald-600 space-y-3 mt-4">
+                        <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        </div>
+                        <p className="text-sm font-bold">感谢您的反馈！</p>
+                        <button 
+                          onClick={() => { setFeedbackSuccess(false); setFeedbackText(''); }}
+                          className="mt-2 text-xs font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-colors"
+                        >
+                          继续反馈
+                        </button>
                       </div>
-                    </div>
-                    <button 
-                      disabled={!feedbackText.trim() || feedbackLoading}
-                      onClick={() => {
-                        setFeedbackLoading(true);
-                        fetch('/api/feedback', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
-                          },
-                          body: JSON.stringify({ text: feedbackText })
-                        })
-                        .then(res => res.json())
-                        .then(data => {
-                          if (data.success) {
-                            setFeedbackSuccess(true);
-                          } else {
-                            alert(data.error || '提交失败');
-                          }
-                        })
-                        .catch(() => alert('提交失败，请检查网络'))
-                        .finally(() => setFeedbackLoading(false));
-                      }}
-                      className="mt-4 w-full bg-indigo-600 text-white font-bold text-sm py-3 rounded-2xl shadow-md shadow-indigo-600/20 hover:bg-indigo-700 hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
-                    >
-                      {feedbackLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      提交反馈
-                    </button>
-                  </div>
+                    ) : (
+                      <div className="flex-1 flex flex-col">
+                        <div className="relative flex-1 flex flex-col">
+                          <textarea 
+                            value={feedbackText}
+                            onChange={(e) => setFeedbackText(e.target.value.slice(0, 1000))}
+                            maxLength={1000}
+                            placeholder="请输入您的反馈意见（最多1000字）..."
+                            className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 pb-8 text-sm text-slate-700 font-medium outline-none focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10 transition-all resize-none min-h-[160px]"
+                          />
+                          <div className="absolute bottom-2.5 right-4 text-[11px] font-bold text-slate-400 pointer-events-none select-none">
+                            {feedbackText.length} / 1000
+                          </div>
+                        </div>
+                        <button 
+                          disabled={!feedbackText.trim() || feedbackLoading}
+                          onClick={() => {
+                            setFeedbackLoading(true);
+                            fetch('/api/feedback', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
+                              },
+                              body: JSON.stringify({ text: feedbackText })
+                          })
+                          .then(safeFetchJson)
+                          .then(data => {
+                            if (data?.success) {
+                              setFeedbackSuccess(true);
+                            } else {
+                              alert(data?.error || '提交失败');
+                            }
+                          })
+                            .catch(() => alert('提交失败，请检查网络'))
+                            .finally(() => setFeedbackLoading(false));
+                          }}
+                          className="mt-4 w-full bg-indigo-600 text-white font-bold text-sm py-3 rounded-2xl shadow-md shadow-indigo-600/20 hover:bg-indigo-700 hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
+                        >
+                          {feedbackLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          提交反馈
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </motion.div>
@@ -1019,7 +1693,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <BellRing size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                  <Volume2 size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
                   <h3 className="font-bold text-slate-700 text-sm">声音设置</h3>
                 </div>
                 <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
@@ -1034,17 +1708,40 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <Bell size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
-                    {unreadCount > 0 && (
+                    {systemUnreadCount > 0 && (
                       <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
                     )}
                   </div>
-                  <h3 className="font-bold text-slate-700 text-sm">消息</h3>
+                  <h3 className="font-bold text-slate-700 text-sm">系统消息</h3>
                 </div>
                 <div className="flex items-center gap-2">
-                  {unreadCount > 0 && (
-                    <span className="text-xs font-bold text-red-500">{unreadCount}</span>
+                  {systemUnreadCount > 0 && (
+                    <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">{systemUnreadCount}</span>
                   )}
                   <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </div>
+              </button>
+
+              <button 
+                onClick={() => setActiveView('private_chat')} 
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-sky-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <Mail size={18} className="text-slate-400 group-hover:text-sky-500 transition-colors" />
+                    {privateUnreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-500 border-2 border-white rounded-full"></span>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-slate-700 text-sm">私信</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  {privateUnreadCount > 0 && (
+                    <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">{privateUnreadCount}</span>
+                  )}
+                  <div className="text-slate-300 group-hover:text-sky-400 transition-colors">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                   </div>
                 </div>

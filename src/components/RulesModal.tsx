@@ -551,9 +551,9 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
             >
               <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100">
                 <h3 className="text-xs font-black text-amber-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                  <Trophy size={16} /> 14分获胜制
+                  <Trophy size={16} /> 目标分数获胜制
                 </h3>
-                <p className="text-xs text-slate-500 font-medium mb-4">最先在自己回合达到目标分数（<strong>14分</strong>）的玩家直接赢得游戏。具体得分方式如下：</p>
+                <p className="text-xs text-slate-500 font-medium mb-4">最先在自己回合达到目标分数的玩家直接赢得游戏（<strong>标准大陆模式为 10 分，群岛世界模式为 14 分</strong>）。具体得分方式如下：</p>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-2xl">
                     <div className="flex items-center gap-3">

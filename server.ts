@@ -411,35 +411,231 @@ async function startServer() {
   app.get('/api/messages', async (req, res) => {
     try {
       if (!messagesCollection) return res.json({ messages: [] });
+
+      let currentUserId: string | null = null;
+      let currentUsername: string | null = null;
+      let isAdmin = false;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const token = authHeader.split(' ')[1];
+          const decoded: any = jwt.verify(token, JWT_SECRET);
+          if (decoded) {
+            currentUserId = decoded.userId ? decoded.userId.toString() : null;
+            currentUsername = decoded.username || null;
+            if (decoded.role === 'admin') isAdmin = true;
+          }
+        } catch (e) {}
+      }
+
       const messages = await messagesCollection.find().sort({ createdAt: -1 }).toArray();
-      res.json({ messages: messages.map((m: any) => ({
-        id: m._id.toString(),
-        title: m.title,
-        content: m.content,
-        date: new Date(m.createdAt).toISOString().split('T')[0]
-      }))});
+
+      const filtered = messages.filter((m: any) => {
+        const isPrivate = m.type === 'private' || Boolean(m.targetUserId);
+        if (!isPrivate) {
+          return true; // System messages visible to everyone
+        }
+        if (isAdmin) {
+          return true; // Admin can see all messages
+        }
+        if (currentUserId && (m.targetUserId === currentUserId || m.senderId === currentUserId)) {
+          return true;
+        }
+        if (currentUsername && (m.targetUserId === currentUsername || m.targetUserName === currentUsername || m.senderName === currentUsername)) {
+          return true;
+        }
+        return false;
+      });
+
+      res.json({ messages: filtered.map((m: any) => {
+        const d = m.createdAt ? new Date(m.createdAt) : new Date();
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        const seconds = String(d.getSeconds()).padStart(2, '0');
+        const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+        return {
+          id: m._id.toString(),
+          title: m.title,
+          content: m.content,
+          type: m.type || (m.targetUserId ? 'private' : 'system'),
+          targetUserId: m.targetUserId || null,
+          targetUserName: m.targetUserName || null,
+          senderName: m.senderName || (m.targetUserId ? '管理员' : '系统'),
+          senderId: m.senderId || null,
+          date: timeStr,
+          createdAt: m.createdAt || Date.now()
+        };
+      })});
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch messages' });
     }
   });
 
-  app.post('/api/admin/messages', authMiddleware, adminMiddleware, async (req, res) => {
+  app.post('/api/messages/private', authMiddleware, async (req: any, res: any) => {
     try {
-      const { title, content } = req.body;
-      if (!title || !content) return res.status(400).json({ error: '标题和内容必填' });
+      const { content, title, targetUserId } = req.body;
+      if (!content || !content.trim()) return res.status(400).json({ error: '私信内容不能为空' });
       if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
-      const doc = { title, content, createdAt: Date.now() };
+
+      const senderName = req.user?.username || '玩家';
+      const senderId = req.user?.userId ? req.user.userId.toString() : 'user';
+
+      const doc = { 
+        title: (title && title.trim()) ? title.trim() : '私信', 
+        content: content.trim(), 
+        type: 'private',
+        targetUserId: targetUserId ? targetUserId.toString() : 'admin',
+        targetUserName: '管理员',
+        senderName: senderName,
+        senderId: senderId,
+        createdAt: Date.now() 
+      };
       const result = await messagesCollection.insertOne(doc);
+
+      const d = new Date(doc.createdAt);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const seconds = String(d.getSeconds()).padStart(2, '0');
+      const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
       res.json({ success: true, message: {
         id: result.insertedId.toString(),
         title: doc.title,
         content: doc.content,
-        date: new Date(doc.createdAt).toISOString().split('T')[0]
+        type: doc.type,
+        targetUserId: doc.targetUserId,
+        targetUserName: doc.targetUserName,
+        senderName: doc.senderName,
+        senderId: doc.senderId,
+        date: timeStr,
+        createdAt: doc.createdAt
       }});
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: '发布消息失败' });
+      res.status(500).json({ error: '发送私信失败' });
+    }
+  });
+
+  app.post('/api/admin/messages', authMiddleware, adminMiddleware, async (req: any, res: any) => {
+    try {
+      const { title, content, targetUserId } = req.body;
+      if (!content || !content.trim()) return res.status(400).json({ error: '消息内容不能为空' });
+      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+
+      const isPrivate = Boolean(targetUserId);
+      const msgTitle = (title && title.trim()) ? title.trim() : (isPrivate ? '私信' : '系统通知');
+
+      let targetUserName = null;
+      if (targetUserId && usersCollection) {
+        try {
+          const targetUser = await usersCollection.findOne({ _id: new ObjectId(targetUserId) });
+          if (targetUser) {
+            targetUserName = targetUser.username;
+          } else {
+            const targetUserByUsername = await usersCollection.findOne({ username: targetUserId });
+            if (targetUserByUsername) targetUserName = targetUserByUsername.username;
+          }
+        } catch (e) {
+          const targetUserByUsername = await usersCollection.findOne({ username: targetUserId });
+          if (targetUserByUsername) targetUserName = targetUserByUsername.username;
+        }
+      }
+
+      const doc = { 
+        title: msgTitle, 
+        content: content.trim(), 
+        type: isPrivate ? 'private' : 'system',
+        targetUserId: targetUserId ? targetUserId.toString() : null,
+        targetUserName: targetUserName || (targetUserId ? targetUserId.toString() : null),
+        senderName: req.user?.username || '管理员',
+        senderId: req.user?.userId ? req.user.userId.toString() : 'admin',
+        createdAt: Date.now() 
+      };
+      const result = await messagesCollection.insertOne(doc);
+
+      const d = new Date(doc.createdAt);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const seconds = String(d.getSeconds()).padStart(2, '0');
+      const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+      res.json({ success: true, message: {
+        id: result.insertedId.toString(),
+        title: doc.title,
+        content: doc.content,
+        type: doc.type,
+        targetUserId: doc.targetUserId,
+        targetUserName: doc.targetUserName,
+        senderName: doc.senderName,
+        senderId: doc.senderId,
+        date: timeStr,
+        createdAt: doc.createdAt
+      }});
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '发送消息失败' });
+    }
+  });
+
+  app.delete('/api/messages/:id', authMiddleware, async (req: any, res: any) => {
+    try {
+      const { id } = req.params;
+      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+      await messagesCollection.deleteOne({ _id: new ObjectId(id) });
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '删除消息失败' });
+    }
+  });
+
+  app.delete('/api/messages/conversation', authMiddleware, async (req: any, res: any) => {
+    try {
+      const { partner } = req.body;
+      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+
+      const currentUserId = req.user?.userId ? req.user.userId.toString() : null;
+      const currentUsername = req.user?.username || null;
+      const isAdmin = req.user?.role === 'admin';
+
+      if (isAdmin && partner) {
+        await messagesCollection.deleteMany({
+          type: 'private',
+          $or: [
+            { senderName: partner },
+            { senderId: partner },
+            { targetUserName: partner },
+            { targetUserId: partner }
+          ]
+        });
+      } else if (currentUserId || currentUsername) {
+        await messagesCollection.deleteMany({
+          type: 'private',
+          $or: [
+            { senderId: currentUserId },
+            { senderName: currentUsername },
+            { targetUserId: currentUserId },
+            { targetUserName: currentUsername }
+          ]
+        });
+      }
+
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: '删除对话框失败' });
     }
   });
 
@@ -616,6 +812,36 @@ async function startServer() {
     res.json({ success: true, settings: globalSettings });
   });
 
+  function isGameWinForUser(game: any, username: string): boolean {
+    if (!game || !username || !game.players) return false;
+    const cleanUser = username.trim().toLowerCase();
+    if (game.winnerId !== undefined && game.winnerId !== null) {
+      const p = game.players.find((pl: any) => pl.name && pl.name.trim().toLowerCase() === cleanUser);
+      if (p && String(p.id) === String(game.winnerId)) return true;
+    }
+    // Fallback if winnerId was not explicitly set or mismatched
+    const player = game.players.find((pl: any) => pl.name && pl.name.trim().toLowerCase() === cleanUser);
+    if (player) {
+      const myScore = player.score || 0;
+      const targetScore = game.mapType === 'standard' ? 10 : 14;
+      const maxScore = Math.max(...game.players.map((pl: any) => pl.score || 0));
+      if (myScore >= targetScore && myScore === maxScore) {
+        const topCount = game.players.filter((pl: any) => (pl.score || 0) === maxScore).length;
+        if (topCount === 1) return true;
+      }
+    }
+    return false;
+  }
+
+  function computeUserGameStats(games: any[], username: string) {
+    const cleanUser = username.trim().toLowerCase();
+    const userGames = games.filter(g => g.players?.some((p: any) => p.name && p.name.trim().toLowerCase() === cleanUser));
+    const totalGames = userGames.length;
+    const wins = userGames.filter(g => isGameWinForUser(g, username)).length;
+    const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
+    return { totalGames, wins, winRate };
+  }
+
   app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
     try {
       const userCount = usersCollection ? await usersCollection.countDocuments({ isGuest: false }) : 0;
@@ -626,11 +852,8 @@ async function startServer() {
       const allGames = gamesCollection ? await gamesCollection.find().toArray() : [];
       
       allUsers = allUsers.map(u => {
-        const userGames = allGames.filter(g => g.players?.some((p: any) => p.name === u.username));
-        const totalGames = userGames.length;
-        const wins = userGames.filter(g => g.winnerId && g.players?.find((p: any) => p.name === u.username)?.id === g.winnerId).length;
-        const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
-        return { ...u, totalGames, wins, winRate };
+        const stats = computeUserGameStats(allGames, u.username);
+        return { ...u, ...stats };
       });
       
       const latestUsers = allUsers.slice(0, 10);
@@ -693,12 +916,15 @@ async function startServer() {
       if (!gamesCollection) return res.status(500).json({ error: '数据库未连接' });
       const { username } = req.params;
       
-      const games = await gamesCollection.find({ "players.name": username })
+      const games = await gamesCollection.find({ 
+        "players.name": { $regex: new RegExp(`^${username.trim()}$`, 'i') } 
+      })
         .sort({ completedAt: -1 })
-        .limit(20)
+        .limit(200)
         .toArray();
-        
-      res.json({ games });
+      
+      const stats = computeUserGameStats(games, username);
+      res.json({ games, stats });
     } catch (err) {
       console.error('Fetch admin user games error', err);
       res.status(500).json({ error: '获取战绩失败' });
@@ -824,12 +1050,15 @@ async function startServer() {
       if (!gamesCollection) return res.status(500).json({ error: '数据库未连接' });
       const username = (req as any).user.username;
       
-      const games = await gamesCollection.find({ "players.name": username })
+      const games = await gamesCollection.find({ 
+        "players.name": { $regex: new RegExp(`^${username.trim()}$`, 'i') } 
+      })
         .sort({ completedAt: -1 })
-        .limit(20)
+        .limit(200)
         .toArray();
         
-      res.json({ games });
+      const stats = computeUserGameStats(games, username);
+      res.json({ games, stats });
     } catch (err) {
       console.error('Fetch user games error', err);
       res.status(500).json({ error: '获取战绩失败' });
@@ -1317,7 +1546,8 @@ async function startServer() {
                    const citiesPts = (p.cities || 0) * 2;
                    const longestRoadPts = (gameState.longestRoadPlayerId === p.id) ? 2 : 0;
                    const largestArmyPts = (gameState.largestArmyPlayerId === p.id) ? 2 : 0;
-                   const islandBonusPts = p.islandBonusPoints || p.victoryPoints || 0;
+                   const isStandard = room.settings?.mapType === 'standard' || gameState.mapType === 'standard';
+                   const islandBonusPts = isStandard ? 0 : (p.islandBonusPoints || 0);
                    const totalScore = settlementsPts + citiesPts + longestRoadPts + largestArmyPts + totalVpCards + islandBonusPts;
 
                    return {
@@ -1331,13 +1561,13 @@ async function startServer() {
                        longestRoad: gameState.longestRoadPlayerId === p.id,
                        largestArmy: gameState.largestArmyPlayerId === p.id,
                        vpCards: totalVpCards,
-                       islandBonus: p.islandBonusPoints || 0
+                       islandBonus: islandBonusPts
                      }
                    };
                  }),
                  winnerId: gameState.winnerId,
                  turnCount: gameState.turn,
-                 mapType: room.settings?.mapType,
+                 mapType: room.settings?.mapType || gameState.mapType || 'standard',
                  completedAt: new Date()
               };
               try {

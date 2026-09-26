@@ -172,7 +172,7 @@ export function updateLongestRoad(players: Player[], roads: Road[], ships: Ship[
 }
 
 // ... Helper function to finalize knight play and check largest army ...
-function finalizeKnightPlay(prev: GameState, updatedPlayers: Player[], checkWinner: (players: Player[]) => number | null) {
+function finalizeKnightPlay(prev: GameState, updatedPlayers: Player[], checkWinner: (players: Player[], mapType?: MapType) => number | null) {
   if (prev.playingDevCard !== DevCardType.Knight) {
     return { largestArmyPlayerId: prev.largestArmyPlayerId, winnerId: prev.winnerId };
   }
@@ -203,7 +203,7 @@ function finalizeKnightPlay(prev: GameState, updatedPlayers: Player[], checkWinn
     }
   }
 
-  const winnerId = checkWinner(updatedPlayers);
+  const winnerId = checkWinner(updatedPlayers, prev.mapType);
   return { largestArmyPlayerId: newLargestArmyPlayerId, winnerId };
 }
 
@@ -1287,6 +1287,7 @@ export function useCatanGame() {
       },
       bankDevCards: devCards,
       mapType,
+      targetScore: mapType === 'standard' ? 10 : 14,
       pendingStealFrom: [],
       pendingGoldRewards: [],
       pendingDiscards: [],
@@ -1567,10 +1568,16 @@ export function useCatanGame() {
     return (p.settlements * 1) + (p.cities * 2) + p.victoryPoints + unplayedVPCards + vpBoughtThisTurn;
   };
 
-  const checkWinner = (players: Player[]) => {
+  const getTargetScore = (mapType?: MapType) => {
+    const currentMapType = mapType || gameState?.mapType || 'standard';
+    return currentMapType === 'standard' ? 10 : 14;
+  };
+
+  const checkWinner = (players: Player[], mapType?: MapType) => {
     // Standard Catan rule: you can only win during your turn
     // (though in some digital versions it's immediate)
-    const winner = players.find(p => calculatePlayerScore(p) >= 14);
+    const target = getTargetScore(mapType);
+    const winner = players.find(p => calculatePlayerScore(p) >= target);
     return winner ? winner.id : null;
   };
  
@@ -1682,7 +1689,7 @@ export function useCatanGame() {
       const newRoads = [...prev.roads, { edgeId, playerId: player.id }];
       const { players: playersAfterRoad, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, newRoads, prev.ships, prev.settlements, prev.longestRoadPlayerId);
 
-      const winnerId = checkWinner(playersAfterRoad);
+      const winnerId = checkWinner(playersAfterRoad, prev.mapType);
 
       // Check if player can still build another road
       const costRoad = COSTS.road;
@@ -1801,7 +1808,7 @@ export function useCatanGame() {
       const newShips = [...prev.ships, { edgeId, playerId: player.id }];
       const { players: playersAfterShip, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, newShips, prev.settlements, prev.longestRoadPlayerId);
 
-      const winnerId = checkWinner(playersAfterShip);
+      const winnerId = checkWinner(playersAfterShip, prev.mapType);
 
       // Check if player can still build another ship
       const costShip = COSTS.ship;
@@ -1955,7 +1962,7 @@ export function useCatanGame() {
       const newSettlements = [...prev.settlements, { vertexId, hexIds, playerId: player.id, isCity: false }];
       const { players: playersAfterSettlement, longestRoadPlayerId } = updateLongestRoad(updatedPlayers, prev.roads, prev.ships, newSettlements, prev.longestRoadPlayerId);
       
-      const winnerId = checkWinner(playersAfterSettlement);
+      const winnerId = checkWinner(playersAfterSettlement, prev.mapType);
       
       // Check if player can still build another settlement
       const cost = COSTS.settlement;
@@ -2024,7 +2031,7 @@ export function useCatanGame() {
       const updatedSettlements = [...prev.settlements];
       updatedSettlements[settlementIdx] = { ...updatedSettlements[settlementIdx], isCity: true };
       
-      const winnerId = checkWinner(updatedPlayers);
+      const winnerId = checkWinner(updatedPlayers, prev.mapType);
 
       // Check if player can still build another city
       const costCity = COSTS.city;
@@ -2078,7 +2085,7 @@ export function useCatanGame() {
       }
       updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
       
-      const winnerId = checkWinner(updatedPlayers);
+      const winnerId = checkWinner(updatedPlayers, prev.mapType);
 
       return {
         ...prev,
@@ -2137,7 +2144,7 @@ export function useCatanGame() {
       
       updatedPlayers[prev.currentPlayerIndex] = updatedPlayer;
       
-      const winnerId = checkWinner(updatedPlayers);
+      const winnerId = checkWinner(updatedPlayers, prev.mapType);
       
       return { 
         ...prev, 

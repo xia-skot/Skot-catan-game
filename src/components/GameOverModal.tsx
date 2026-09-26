@@ -116,7 +116,9 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             </div>
           )}
           {sortedPlayers.map((player, index) => {
-            const isWinner = index === 0;
+            const isWinner = (gameState.winnerId !== null && gameState.winnerId !== undefined) 
+              ? player.id === gameState.winnerId 
+              : index === 0;
 
             return (
               <motion.div
