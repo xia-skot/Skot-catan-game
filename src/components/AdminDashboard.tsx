@@ -68,6 +68,20 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
     const privateList = allAdminMessages.filter(m => m.type === 'private' || Boolean(m.targetUserId));
     const map: { [key: string]: { id: string; username: string; messages: any[]; lastMsg: any } } = {};
 
+    // 预先填入所有已注册玩家，不论对方有没有发消息，统一显示对方昵称
+    const usersList = data?.allUsers || data?.latestUsers || [];
+    usersList.forEach((u: any) => {
+      const uName = (u.username || '').trim();
+      if (uName && u.role !== 'admin' && !u.isGuest) {
+        map[uName] = {
+          id: u._id || uName,
+          username: uName,
+          messages: [],
+          lastMsg: null
+        };
+      }
+    });
+
     privateList.forEach(msg => {
       let playerId = '';
       let playerUsername = '';
@@ -95,11 +109,18 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
 
     Object.values(map).forEach(conv => {
       conv.messages.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-      conv.lastMsg = conv.messages[conv.messages.length - 1];
+      conv.lastMsg = conv.messages.length > 0 ? conv.messages[conv.messages.length - 1] : null;
     });
 
-    return Object.values(map).sort((a, b) => (b.lastMsg?.createdAt || 0) - (a.lastMsg?.createdAt || 0));
-  }, [allAdminMessages]);
+    return Object.values(map).sort((a, b) => {
+      const timeA = a.lastMsg?.createdAt || 0;
+      const timeB = b.lastMsg?.createdAt || 0;
+      if (timeA && timeB) return timeB - timeA;
+      if (timeA) return -1;
+      if (timeB) return 1;
+      return a.username.localeCompare(b.username);
+    });
+  }, [allAdminMessages, data?.allUsers, data?.latestUsers]);
 
   const activePlayerChatMessages = React.useMemo(() => {
     if (!selectedChatPlayer) return [];
@@ -705,7 +726,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                     e.target.value = '';
                   }
                 }}
-                className="bg-sky-50 border border-sky-100 text-sky-700 text-xs font-bold rounded-xl px-2.5 py-1 outline-none cursor-pointer hover:bg-sky-100 transition-colors"
+                className="bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-bold rounded-xl px-2.5 py-1 outline-none cursor-pointer hover:bg-indigo-100 transition-colors"
               >
                 <option value="">+ 选择玩家发起私信</option>
                 {(data?.allUsers || data?.latestUsers)?.map((u: any) => (
@@ -723,7 +744,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
             </div>
           ) : adminPlayerConversations.length === 0 ? (
             <div className="py-12 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 space-y-2">
-              <Mail className="w-8 h-8 opacity-40 text-sky-500" />
+              <Mail className="w-8 h-8 opacity-40 text-indigo-500" />
               <p className="font-bold text-slate-600">暂无任何玩家私信记录</p>
               <p className="text-[11px] text-slate-400">您可以在【玩家名单】中点击某位玩家右侧的私信按钮发起对话。</p>
             </div>
@@ -733,23 +754,23 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                 <div 
                   key={conv.username}
                   onClick={() => setSelectedChatPlayer({ id: conv.id, username: conv.username })}
-                  className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-sky-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
+                  className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-indigo-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
                 >
                   <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                    <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-sky-500 via-indigo-500 to-indigo-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-md shadow-indigo-500/15">
+                    <div className="w-11 h-11 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
                       {conv.username.slice(0, 1).toUpperCase()}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-black text-slate-800 group-hover:text-sky-600 transition-colors">
+                        <span className="text-sm font-black text-slate-800 group-hover:text-indigo-600 transition-colors">
                           {conv.username}
                         </span>
                         <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                          {conv.lastMsg?.date}
+                          {conv.lastMsg?.date || ''}
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 truncate mt-1 font-medium">
-                        {conv.lastMsg?.content || '暂无私信消息'}
+                        {conv.lastMsg?.content || '暂无消息'}
                       </p>
                     </div>
                   </div>
@@ -767,29 +788,28 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
           className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col h-[520px] font-sans"
         >
           {/* Header */}
-          <div className="bg-gradient-to-r from-sky-500 via-indigo-500 to-indigo-600 px-4 py-3 text-white flex items-center justify-between shrink-0 shadow-xs">
-            <div className="flex items-center gap-3">
+          <div className="bg-white border-b border-slate-200/80 px-4 py-3 text-slate-800 flex items-center justify-between shrink-0 shadow-xs">
+            <div className="flex items-center gap-3 min-w-0">
               <button 
                 onClick={() => setSelectedChatPlayer(null)}
-                className="p-1.5 hover:bg-white/20 rounded-full transition-colors text-white"
+                className="p-1.5 hover:bg-slate-100 rounded-full transition-colors text-slate-600 hover:text-slate-900 shrink-0"
                 title="返回私信列表"
               >
                 <ArrowLeft size={18} />
               </button>
-              <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center font-black text-xs border border-white/30 shadow-inner">
+              <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-xs shrink-0">
                 {selectedChatPlayer.username.slice(0, 1).toUpperCase()}
               </div>
-              <div>
-                <h4 className="text-xs font-black leading-tight flex items-center gap-1.5">
-                  与玩家 <span className="underline decoration-sky-300 font-extrabold">{selectedChatPlayer.username}</span> 私信会话
-                </h4>
-                <p className="text-[10px] text-sky-100 font-medium mt-0.5">独享即时双向通道 · 仅对该玩家可见</p>
+              <div className="min-w-0">
+                <span className="text-sm font-black text-slate-800 truncate leading-tight block">
+                  {selectedChatPlayer.username}
+                </span>
               </div>
             </div>
 
             <button 
               onClick={() => fetchAdminMessages()}
-              className="p-1.5 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-colors"
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
               title="刷新私信记录"
             >
               <RotateCw size={14} className={adminMessagesLoading ? 'animate-spin' : ''} />
@@ -800,9 +820,10 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
           <div className="flex-1 p-3.5 bg-slate-50 overflow-y-auto space-y-3.5 no-scrollbar">
             {activePlayerChatMessages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs font-medium space-y-1 py-12">
-                <Mail size={24} className="opacity-40 text-sky-500 mb-1" />
-                <p className="font-bold text-slate-600">暂无与 {selectedChatPlayer.username} 的私信记录</p>
-                <p className="text-[11px] text-slate-400">在下方输入框直接发消息发起第一条私信。</p>
+                <div className="w-12 h-12 rounded-full bg-indigo-50/50 flex items-center justify-center text-indigo-400 mb-1">
+                  <MessageSquare size={22} />
+                </div>
+                <p className="font-bold text-slate-400 text-xs">暂无消息</p>
               </div>
             ) : (
               activePlayerChatMessages.map((msg) => {
@@ -813,23 +834,23 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                     className={`flex flex-col ${isFromAdmin ? 'items-end' : 'items-start'} space-y-1`}
                   >
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-400 px-1 font-mono">
-                      {!isFromAdmin && <span className="font-bold text-sky-600">{msg.senderName}</span>}
+                      {!isFromAdmin && <span className="font-bold text-slate-600">{msg.senderName}</span>}
                       <span>{msg.date}</span>
-                      {isFromAdmin && <span className="font-bold text-indigo-500">我(管理员)</span>}
+                      {isFromAdmin && <span className="font-bold text-indigo-600">我(管理员)</span>}
                     </div>
 
                     <div className="flex items-start gap-2 max-w-[85%]">
                       {!isFromAdmin && (
-                        <div className="w-7 h-7 rounded-full bg-sky-500 text-white flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
+                        <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
                           {selectedChatPlayer.username.slice(0, 1).toUpperCase()}
                         </div>
                       )}
 
                       <div 
-                        className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words shadow-2xs ${
+                        className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words shadow-2xs font-medium ${
                           isFromAdmin 
-                            ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white rounded-tr-xs shadow-sky-500/10 font-medium' 
-                            : 'bg-white text-slate-800 border border-slate-200/70 rounded-tl-xs font-medium'
+                            ? 'bg-indigo-600 text-white rounded-tr-xs shadow-indigo-600/10' 
+                            : 'bg-white text-slate-800 border border-slate-200/80 rounded-tl-xs'
                         }`}
                       >
                         {msg.content}
@@ -860,22 +881,18 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                     handleSendAdminPrivateMsg();
                   }
                 }}
-                placeholder={`发送私信给 ${selectedChatPlayer.username} (按 Enter 发送)...`}
+                placeholder=""
                 rows={2}
                 className="flex-1 bg-transparent border-0 text-xs text-slate-800 font-medium outline-none resize-none p-1 placeholder:text-slate-400"
               />
               <button
                 disabled={!adminReplyText.trim() || sendingAdminReply}
                 onClick={handleSendAdminPrivateMsg}
-                className="px-4 py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all flex items-center gap-1.5 shrink-0"
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all flex items-center gap-1.5 shrink-0"
               >
                 {sendingAdminReply ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                发送私信
+                发送
               </button>
-            </div>
-            <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-slate-400 font-medium">
-              <span>按 Enter 发送，Shift + Enter 换行</span>
-              <span className="text-sky-600 font-bold">无标题限制，直接沟通</span>
             </div>
           </div>
         </motion.div>

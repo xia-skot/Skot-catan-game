@@ -448,7 +448,30 @@ async function startServer() {
         return false;
       });
 
-      res.json({ messages: filtered.map((m: any) => {
+      let adminUsername = '肖隐弦';
+      if (usersCollection) {
+        try {
+          const adminUser = await usersCollection.findOne({ role: 'admin' });
+          if (adminUser?.username) {
+            adminUsername = adminUser.username;
+          }
+        } catch (e) {}
+      }
+
+      let allPlayerNames: string[] = [];
+      if (isAdmin && usersCollection) {
+        try {
+          const players = await usersCollection.find({ isGuest: false }).project({ username: 1, role: 1 }).toArray();
+          allPlayerNames = players
+            .filter((p: any) => p.username && p.role !== 'admin' && p.username !== currentUsername)
+            .map((p: any) => p.username);
+        } catch (e) {}
+      }
+
+      res.json({ 
+        adminUsername,
+        allPlayers: allPlayerNames,
+        messages: filtered.map((m: any) => {
         const d = m.createdAt ? new Date(m.createdAt) : new Date();
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -465,7 +488,7 @@ async function startServer() {
           type: m.type || (m.targetUserId ? 'private' : 'system'),
           targetUserId: m.targetUserId || null,
           targetUserName: m.targetUserName || null,
-          senderName: m.senderName || (m.targetUserId ? '管理员' : '系统'),
+          senderName: m.senderName || (m.targetUserId ? adminUsername : '系统'),
           senderId: m.senderId || null,
           date: timeStr,
           createdAt: m.createdAt || Date.now()
@@ -483,6 +506,16 @@ async function startServer() {
       if (!content || !content.trim()) return res.status(400).json({ error: '私信内容不能为空' });
       if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
 
+      let adminUsername = '肖隐弦';
+      if (usersCollection) {
+        try {
+          const adminUser = await usersCollection.findOne({ role: 'admin' });
+          if (adminUser?.username) {
+            adminUsername = adminUser.username;
+          }
+        } catch (e) {}
+      }
+
       const senderName = req.user?.username || '玩家';
       const senderId = req.user?.userId ? req.user.userId.toString() : 'user';
 
@@ -491,7 +524,7 @@ async function startServer() {
         content: content.trim(), 
         type: 'private',
         targetUserId: targetUserId ? targetUserId.toString() : 'admin',
-        targetUserName: '管理员',
+        targetUserName: adminUsername,
         senderName: senderName,
         senderId: senderId,
         createdAt: Date.now() 
@@ -1012,6 +1045,56 @@ async function startServer() {
     }
   });
 
+  // In-memory image buffer cache for ultra-fast, zero-failure image delivery
+  const serverImageBufferCache = new Map<string, { buffer: Buffer; contentType: string }>();
+
+  // Preload all critical game assets on startup so proxy-image responds in 0ms
+  const PRELOAD_IMAGE_FILENAMES = [
+    '森林.jpg', '麦田.jpg', '牧场.jpg', '沙漠.jpg', '矿山.jpg', '丘陵.jpg', '金矿.jpg', '海洋.jpg',
+    '树.png', '砖块.png', '羊2.png', '小麦.png', '铁矿石.png', '强盗2.png', '脚印.png', '船锚.png',
+    '海盗船.png', '帆船.png', 'catan_logo.png', '发展卡.png', '资源卡.png', '道路.png', '地图册.png',
+    '骑士.png', '胜利点.png', '道路建设.png', '丰收.png', '垄断.png'
+  ];
+
+  async function preloadServerAssets() {
+    console.log('[AssetPreloader] Starting server-side prefetch of Catan assets...');
+    for (const filename of PRELOAD_IMAGE_FILENAMES) {
+      const encodedFilename = encodeURIComponent(filename);
+      const urlCandidates = [
+        `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
+        `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
+        `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
+        `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/img/${encodedFilename}`
+      ];
+
+      for (const targetUrl of urlCandidates) {
+        try {
+          const resp = await fetch(targetUrl, {
+            headers: { 'User-Agent': 'Catan-Image-Proxy/1.0' },
+            signal: AbortSignal.timeout(6000)
+          });
+          if (resp.ok) {
+            const arrayBuffer = await resp.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const contentType = resp.headers.get('content-type') || (filename.endsWith('.jpg') ? 'image/jpeg' : 'image/png');
+            
+            // Cache by all candidate URLs and direct URL
+            for (const c of urlCandidates) {
+              serverImageBufferCache.set(c, { buffer, contentType });
+            }
+            serverImageBufferCache.set(targetUrl, { buffer, contentType });
+            break;
+          }
+        } catch (err) {
+          // try next candidate
+        }
+      }
+    }
+    console.log(`[AssetPreloader] Server prefetch complete! Cached ${serverImageBufferCache.size} asset variants in memory.`);
+  }
+  // Run prefetch in background without blocking startup
+  preloadServerAssets().catch(err => console.warn('[AssetPreloader] Prefetch warning:', err));
+
   app.get('/api/proxy-image', async (req, res) => {
     try {
       let imageUrl = req.query.url as string;
@@ -1020,25 +1103,63 @@ async function startServer() {
         return;
       }
 
-      // Use URL constructor which handles encoding correctly for fetch
-      const targetUrl = new URL(imageUrl).toString();
-      const response = await fetch(targetUrl);
-      
-      if (!response.ok) {
-        console.error(`Failed to fetch image: ${response.status} ${response.statusText}`, targetUrl);
-        res.status(response.status).send('Failed to fetch image');
+      // Check in-memory RAM cache first
+      const cached = serverImageBufferCache.get(imageUrl);
+      if (cached) {
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.send(cached.buffer);
         return;
       }
 
-      const contentType = response.headers.get('content-type');
-      if (contentType) {
-        res.setHeader('Content-Type', contentType);
+      // Build fallback fetch candidate list
+      const candidates: string[] = [imageUrl];
+      const match = imageUrl.match(/\/gh\/xia-skot\/Catan_Pics\/(img|audio)\/(.+)$/);
+      if (match) {
+        const folder = match[1];
+        const filename = match[2];
+        candidates.push(
+          `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`,
+          `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`,
+          `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/${folder}/${filename}`,
+          `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`
+        );
       }
-      
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
+
+      let response: Response | null = null;
+      for (const targetUrl of Array.from(new Set(candidates))) {
+        try {
+          const resp = await fetch(new URL(targetUrl).toString(), {
+            headers: { 'User-Agent': 'Catan-Image-Proxy/1.0' },
+            signal: AbortSignal.timeout(5000)
+          });
+          if (resp.ok) {
+            response = resp;
+            break;
+          }
+        } catch (e) {
+          // continue to next candidate
+        }
+      }
+
+      if (!response || !response.ok) {
+        res.status(502).send('Failed to fetch image from any source');
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || 'image/png';
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
 
       const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
+      const buffer = Buffer.from(arrayBuffer);
+      
+      // Store in RAM cache (max 200 items)
+      if (serverImageBufferCache.size < 200) {
+        serverImageBufferCache.set(imageUrl, { buffer, contentType });
+      }
+
+      res.send(buffer);
     } catch (error) {
       console.error('Proxy image error:', error);
       res.status(500).send('Internal server error');

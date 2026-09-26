@@ -238,6 +238,7 @@ import {
   RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
   getImageUrl, getImageCandidates, getDevCardImg
 } from './images';
+import { useGameImage } from './imageManager';
 
 export const SmartImg = ({ src, alt, className, onClick, ...props }: any) => {
   const [currentSrc, setCurrentSrc] = useState(() => getImageUrl(src));
@@ -282,17 +283,9 @@ const HEX_HEIGHT = 2 * HEX_RADIUS;
 
 
 const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, flip: boolean }) => {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    if (type === '3:1') return;
-    const resourceType = type as ResourceType;
-    const img = new window.Image();
-    img.src = RESOURCE_ICONS[resourceType];
-    img.referrerPolicy = 'no-referrer';
-    img.crossOrigin = 'Anonymous';
-    img.onload = () => setImage(img);
-  }, [type]);
+  const resourceType = type as ResourceType;
+  const iconSrc = type !== '3:1' ? (RESOURCE_ICONS[resourceType] || '') : '';
+  const { image } = useGameImage(iconSrc);
 
   if (type === '3:1') {
     return (
@@ -425,16 +418,8 @@ const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx:
 
 
 const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const { image: img } = useGameImage(ROBBER_IMG);
   const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    const image = new window.Image();
-    image.src = ROBBER_IMG;
-    image.referrerPolicy = 'no-referrer';
-    image.crossOrigin = 'Anonymous';
-    image.onload = () => setImg(image);
-  }, []);
 
   useEffect(() => {
     if (!isPhaseRobber) return;
@@ -481,28 +466,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 };
 
 const FootprintToken = () => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const resolvedUrl = getImageUrl(FOOTPRINT_IMG);
-    const candidates = getImageCandidates(FOOTPRINT_IMG);
-    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
-    let idx = 0;
-
-    const tryLoad = () => {
-      if (idx >= attempts.length) return;
-      const image = new window.Image();
-      image.src = attempts[idx];
-      image.referrerPolicy = 'no-referrer';
-      image.crossOrigin = 'Anonymous';
-      image.onload = () => setImg(image);
-      image.onerror = () => {
-        idx++;
-        tryLoad();
-      };
-    };
-    tryLoad();
-  }, []);
+  const { image: img } = useGameImage(FOOTPRINT_IMG);
 
   if (img) {
     return (
@@ -531,28 +495,7 @@ const FootprintToken = () => {
 };
 
 const AnchorToken = () => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const resolvedUrl = getImageUrl(ANCHOR_IMG);
-    const candidates = getImageCandidates(ANCHOR_IMG);
-    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
-    let idx = 0;
-
-    const tryLoad = () => {
-      if (idx >= attempts.length) return;
-      const image = new window.Image();
-      image.src = attempts[idx];
-      image.referrerPolicy = 'no-referrer';
-      image.crossOrigin = 'Anonymous';
-      image.onload = () => setImg(image);
-      image.onerror = () => {
-        idx++;
-        tryLoad();
-      };
-    };
-    tryLoad();
-  }, []);
+  const { image: img } = useGameImage(ANCHOR_IMG);
 
   if (img) {
     return (
@@ -579,16 +522,8 @@ const AnchorToken = () => {
 };
 
 const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const { image: img } = useGameImage(PIRATE_SHIP_IMG);
   const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    const image = new window.Image();
-    image.src = PIRATE_SHIP_IMG;
-    image.referrerPolicy = 'no-referrer';
-    image.crossOrigin = 'Anonymous';
-    image.onload = () => setImg(image);
-  }, []);
 
   useEffect(() => {
     if (!isPhaseRobber) return;
@@ -1318,6 +1253,50 @@ export default function App() {
   const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
   
   const [showCopyToast, setShowCopyToast] = useState(false);
+  const [hasUnreadPrivateMsgs, setHasUnreadPrivateMsgs] = useState(false);
+  const [gameActionToast, setGameActionToast] = useState<string | null>(null);
+
+  const showGameToast = useCallback((msg: string) => {
+    setGameActionToast(msg);
+    setTimeout(() => {
+      setGameActionToast(prev => (prev === msg ? null : prev));
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setHasUnreadPrivateMsgs(false);
+      return;
+    }
+    const checkUnread = async () => {
+      try {
+        const token = localStorage.getItem('catan_auth_token');
+        const res = await fetch('/api/messages', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+          const data = await safeFetchJson(res);
+          if (data?.messages) {
+            const readStorageKey = `catan_read_msgs_${currentUser.username || 'user'}`;
+            const readMsgs: string[] = JSON.parse(localStorage.getItem(readStorageKey) || '[]');
+            const unread = data.messages.some((m: any) => 
+              m.type === 'private' && 
+              !readMsgs.includes(m.id) && 
+              m.senderName !== currentUser.username && 
+              m.senderId !== currentUser.id
+            );
+            setHasUnreadPrivateMsgs(unread);
+          }
+        }
+      } catch (e) {
+        // ignore background poll errors
+      }
+    };
+
+    checkUnread();
+    const interval = setInterval(checkUnread, 4000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
   const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
   const [inputRoomId, setInputRoomId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3131,14 +3110,14 @@ export default function App() {
     const hasShipAtV2 = gameState.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v2Id));
 
     if (mode === 'road') {
-      // Roads can connect to other roads OR ships (at coastal vertices)
-      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1) || (hasShipAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2) || (hasShipAtV2 && !oppSettlementAtV2);
+      // 道路可连接现有道路；若要与船只连接，该交汇顶点必须建有自己的村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2);
       return canConnectV1 || canConnectV2;
     } else {
-      // Ships can connect to other ships OR roads (at coastal vertices)
-      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1) || (hasRoadAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2) || (hasRoadAtV2 && !oppSettlementAtV2);
+      // 船只可连接现有船只；若要与道路/陆地相连修船，必须在交汇顶点修建村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2);
       return canConnectV1 || canConnectV2;
     }
   }, [gameState]);
@@ -3238,13 +3217,37 @@ export default function App() {
     if (buildMode === 'road') {
         if (checkIsValidEdge(edgeId, 'road')) {
             setPendingBuild({ type: 'road', id: edgeId, x, y });
+        } else {
+            const player = gameState?.players[gameState.currentPlayerIndex];
+            if (player && gameState) {
+                const [v1, v2] = edgeId.split('|');
+                const hasShipV1 = gameState.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(v1));
+                const hasShipV2 = gameState.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(v2));
+                const hasVillageV1 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v1);
+                const hasVillageV2 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v2);
+                if ((hasShipV1 && !hasVillageV1) || (hasShipV2 && !hasVillageV2)) {
+                    showGameToast("连接路和船必须修建村庄，否则无法修路！");
+                }
+            }
         }
     } else if (buildMode === 'ship') {
         if (checkIsValidEdge(edgeId, 'ship')) {
             setPendingBuild({ type: 'ship', id: edgeId, x, y });
+        } else {
+            const player = gameState?.players[gameState.currentPlayerIndex];
+            if (player && gameState) {
+                const [v1, v2] = edgeId.split('|');
+                const hasRoadV1 = gameState.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(v1));
+                const hasRoadV2 = gameState.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(v2));
+                const hasVillageV1 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v1);
+                const hasVillageV2 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v2);
+                if ((hasRoadV1 && !hasVillageV1) || (hasRoadV2 && !hasVillageV2)) {
+                    showGameToast("连接路和船必须修建村庄，否则无法修船！");
+                }
+            }
         }
     }
-  }, [canBuild, buildMode, checkIsValidEdge]);
+  }, [canBuild, buildMode, checkIsValidEdge, gameState, showGameToast]);
 
   const handleHexClick = useCallback((hexId: string, type: HexType, x: number, y: number) => {
       // Only allow phase-related hex clicks (robber/pirate movement) if it's the active player's turn
@@ -4297,8 +4300,11 @@ export default function App() {
              onClick={() => setActiveLobbyTab('profile')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'profile' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'profile' ? '' : ''}`}>
+             <div className="p-1 rounded-xl transition-all relative">
                <User size={18} />
+               {hasUnreadPrivateMsgs && (
+                 <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+               )}
              </div>
              <span className="text-[9px] font-bold tracking-widest">我的</span>
            </button>
@@ -4783,6 +4789,21 @@ export default function App() {
           调试
         </button>
       )}
+
+      {/* Game Action / Rule Warning Toast */}
+      <AnimatePresence>
+        {gameActionToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-12 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-[12px] sm:text-sm px-4 py-2 rounded-xl shadow-2xl whitespace-nowrap z-[99999] font-bold flex items-center gap-1.5"
+          >
+            <span>⚠️</span>
+            <span>{gameActionToast}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Copy Toast fixed at screen level */}
       <AnimatePresence>
@@ -7680,49 +7701,22 @@ function BuildItem({ id, icon, label, cost, onClick, active, disabled, compact, 
 }
 
 function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, isSelected: boolean, isRobber: boolean, isPirate: boolean, onClick: () => void }) {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    let src = '';
-    switch (hex.type) {
-      case HexType.Forest: src = FOREST_IMG; break;
-      case HexType.Hills: src = HILLS_IMG; break;
-      case HexType.Pasture: src = PASTURE_IMG; break;
-      case HexType.Fields: src = FIELDS_IMG; break;
-      case HexType.Mountains: src = Mountains_IMG; break;
-      case HexType.Desert: src = Desert_IMG; break;
-      case HexType.Gold: src = GOLD_IMG; break;
-      case HexType.Sea: src = SEA_HEX_IMG; break;
+  const getHexImgSrc = (type: HexType) => {
+    switch (type) {
+      case HexType.Forest: return FOREST_IMG;
+      case HexType.Hills: return HILLS_IMG;
+      case HexType.Pasture: return PASTURE_IMG;
+      case HexType.Fields: return FIELDS_IMG;
+      case HexType.Mountains: return Mountains_IMG;
+      case HexType.Desert: return Desert_IMG;
+      case HexType.Gold: return GOLD_IMG;
+      case HexType.Sea: return SEA_HEX_IMG;
+      default: return '';
     }
-    if (src) {
-      const resolvedSrc = getImageUrl(src);
-      const candidates = getImageCandidates(src);
-      const attempts = Array.from(new Set([resolvedSrc, ...candidates]));
-      let idx = 0;
+  };
 
-      const tryLoad = () => {
-        if (idx >= attempts.length) return;
-        const currentUrl = attempts[idx];
-        const img = new window.Image();
-        img.referrerPolicy = 'no-referrer';
-        img.onload = () => {
-          if (img.naturalWidth > 0) {
-            setImage(img);
-          } else {
-            idx++;
-            tryLoad();
-          }
-        };
-        img.onerror = () => {
-          idx++;
-          tryLoad();
-        };
-        img.src = currentUrl;
-      };
-
-      tryLoad();
-    }
-  }, [hex.type]);
+  const src = getHexImgSrc(hex.type);
+  const { image } = useGameImage(src);
 
   const color = RESOURCE_COLORS[hex.type === HexType.Gold ? 'gold' : hex.type === HexType.Desert ? 'desert' : hex.type === HexType.Sea ? 'sea' : (HEX_RESOURCES[hex.type as HexType] as any)] || '#ccc';
 

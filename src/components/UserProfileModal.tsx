@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, Volume2, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info, RotateCw, ChevronDown } from 'lucide-react';
@@ -120,7 +120,9 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     if (disableHistory) return;
     const handlePopState = () => {
       isPopStateRef.current = true;
-      if (activeView !== 'menu') {
+      if (inPrivateChatDetail) {
+        setInPrivateChatDetail(false);
+      } else if (activeView !== 'menu') {
         setActiveView('menu');
       } else {
         onClose();
@@ -171,10 +173,22 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     }).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }, [allRawPrivateMsgs, isAdmin, currentUser]);
 
+  const [selectedChatPlayer, setSelectedChatPlayer] = useState<string | null>(null);
+  const [adminUsername, setAdminUsername] = useState<string>('肖隐弦');
+  const [allPlayerNames, setAllPlayerNames] = useState<string[]>([]);
+
   // 管理员账号按不同玩家划分的私信会话列表 (竖向QQ列表，完美过滤自己与自己)
   const adminConversations = React.useMemo(() => {
     if (!isAdmin) return [];
     const map = new Map<string, { username: string; msgs: any[]; lastMsg: any }>();
+
+    // 预先填入所有已注册玩家，不论对方有没有发消息，统一显示对方昵称
+    allPlayerNames.forEach(pName => {
+      const clean = pName.trim();
+      if (clean && clean !== currentUser?.username && clean !== '管理员' && clean !== 'admin') {
+        map.set(clean, { username: clean, msgs: [], lastMsg: null });
+      }
+    });
 
     allRawPrivateMsgs.forEach(msg => {
       // 1. 判断是否是发给/发自自己的“自己与自己对话”
@@ -220,15 +234,30 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     const result: { username: string; msgs: any[]; lastMsg: any }[] = [];
     map.forEach((conv) => {
       conv.msgs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-      conv.lastMsg = conv.msgs[conv.msgs.length - 1];
+      conv.lastMsg = conv.msgs.length > 0 ? conv.msgs[conv.msgs.length - 1] : null;
       result.push(conv);
     });
 
-    result.sort((a, b) => (b.lastMsg?.createdAt || 0) - (a.lastMsg?.createdAt || 0));
+    result.sort((a, b) => {
+      const timeA = a.lastMsg?.createdAt || 0;
+      const timeB = b.lastMsg?.createdAt || 0;
+      if (timeA && timeB) return timeB - timeA;
+      if (timeA) return -1;
+      if (timeB) return 1;
+      return a.username.localeCompare(b.username);
+    });
     return result;
-  }, [allRawPrivateMsgs, isAdmin, currentUser]);
+  }, [allRawPrivateMsgs, isAdmin, currentUser, allPlayerNames]);
 
-  const [selectedChatPlayer, setSelectedChatPlayer] = useState<string | null>(null);
+  const adminDisplayName = React.useMemo(() => {
+    if (currentUser?.role === 'admin' && currentUser?.username) return currentUser.username;
+    if (adminUsername && adminUsername !== '管理员') return adminUsername;
+    const adminMsg = messages.find(m => m.type === 'private' && m.senderName && m.senderName !== '管理员' && m.senderName !== currentUser?.username);
+    if (adminMsg?.senderName) return adminMsg.senderName;
+    return '肖隐弦';
+  }, [adminUsername, messages, currentUser]);
+
+  const chatPartnerName = isAdmin ? (selectedChatPlayer || '玩家') : adminDisplayName;
 
   const activeChatMsgs = React.useMemo(() => {
     if (!isAdmin) {
@@ -239,10 +268,49 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     return conv ? conv.msgs : [];
   }, [isAdmin, playerPrivateMsgs, selectedChatPlayer, adminConversations]);
 
+  const formatChatTime = (rawTime: any): string => {
+    let d: Date;
+    if (typeof rawTime === 'number') d = new Date(rawTime);
+    else if (typeof rawTime === 'string') {
+      const parsed = new Date(rawTime);
+      d = isNaN(parsed.getTime()) ? new Date() : parsed;
+    } else {
+      return '';
+    }
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const mins = String(d.getMinutes()).padStart(2, '0');
+    if (isToday) {
+      return `${hours}:${mins}`;
+    }
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${month}-${day} ${hours}:${mins}`;
+  };
+
+  const processedChatMsgs = React.useMemo(() => {
+    let lastShownTimeMs = 0;
+    return activeChatMsgs.map((msg, index) => {
+      const rawTime = msg.createdAt || (msg.date ? new Date(msg.date).getTime() : 0);
+      const timeMs = typeof rawTime === 'number' ? rawTime : (rawTime ? new Date(rawTime).getTime() : 0);
+      let showTime = false;
+      if (index === 0 || !lastShownTimeMs || (timeMs && Math.abs(timeMs - lastShownTimeMs) >= 60 * 1000)) {
+        showTime = true;
+        if (timeMs) lastShownTimeMs = timeMs;
+      }
+      return {
+        ...msg,
+        showTime,
+        timeLabel: formatChatTime(rawTime || msg.date)
+      };
+    });
+  }, [activeChatMsgs]);
+
   const [deletingConv, setDeletingConv] = useState(false);
 
   const handleDeleteConversation = async (partnerName?: string) => {
-    const targetName = partnerName || selectedChatPlayer || '官方客服';
+    const targetName = partnerName || selectedChatPlayer || adminDisplayName;
     if (!window.confirm(`确定要删除与“${targetName}”的对话框及所有聊天记录吗？`)) return;
 
     setDeletingConv(true);
@@ -304,8 +372,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   const systemUnreadCount = systemMsgs.filter(m => !m.read).length;
   const privateUnreadCount = isAdmin 
-    ? adminConversations.reduce((acc, c) => acc + c.msgs.filter(m => !m.read).length, 0)
-    : playerPrivateMsgs.filter(m => !m.read).length;
+    ? adminConversations.reduce((acc, c) => acc + c.msgs.filter(m => !m.read && m.senderName === c.username).length, 0)
+    : playerPrivateMsgs.filter(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id).length;
 
   const scrollToChatBottom = () => {
     setTimeout(() => {
@@ -313,14 +381,76 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     }, 100);
   };
 
-  useEffect(() => {
-    if (activeView === 'private_chat') {
-      scrollToChatBottom();
-      activeChatMsgs.forEach(m => {
-        if (!m.read) markMessageAsRead(m.id);
+  const markMessagesAsRead = useCallback((ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setMessages(prev => {
+      const updated = prev.map(m => idSet.has(m.id) ? { ...m, read: true } : m);
+      const readStorageKey = `catan_read_msgs_${currentUser?.username || 'user'}`;
+      const existingRead: string[] = JSON.parse(localStorage.getItem(readStorageKey) || '[]');
+      const newRead = Array.from(new Set([...existingRead, ...ids]));
+      localStorage.setItem(readStorageKey, JSON.stringify(newRead));
+      return updated;
+    });
+  }, [currentUser?.username]);
+
+  const markMessageAsRead = (id: string) => {
+    markMessagesAsRead([id]);
+  };
+
+  const markAllMessagesAsRead = () => {
+    const unreadIds = messages.filter(m => !m.read).map(m => m.id);
+    markMessagesAsRead(unreadIds);
+  };
+
+  const fetchMessagesData = useCallback(async (silent = false) => {
+    if (!silent) setMessagesLoading(true);
+    try {
+      const token = localStorage.getItem('catan_auth_token');
+      const res = await fetch('/api/messages', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
       });
+      if (!res.ok) return;
+      const data = await safeFetchJson(res);
+      if (data?.messages) {
+        const readStorageKey = `catan_read_msgs_${currentUser?.username || 'user'}`;
+        const readMsgs: string[] = JSON.parse(localStorage.getItem(readStorageKey) || '[]');
+        setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.includes(m.id) })));
+      }
+      if (data?.adminUsername) {
+        setAdminUsername(data.adminUsername);
+      }
+      if (data?.allPlayers && Array.isArray(data.allPlayers)) {
+        setAllPlayerNames(data.allPlayers);
+      }
+    } catch (err) {
+      console.error('Fetch messages error:', err);
+    } finally {
+      if (!silent) setMessagesLoading(false);
     }
-  }, [activeView, activeChatMsgs.length]);
+  }, [currentUser?.username]);
+
+  // 定时自动同步消息 (每3秒)，保证私信及时显示
+  useEffect(() => {
+    fetchMessagesData(false);
+    const interval = setInterval(() => {
+      fetchMessagesData(true);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [fetchMessagesData]);
+
+  // 仅当用户真正进入某个人的私信详情时，才将该对话中的新私信标记为已读
+  useEffect(() => {
+    if (activeView === 'private_chat' && inPrivateChatDetail) {
+      scrollToChatBottom();
+      const unreadIds = activeChatMsgs
+        .filter(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id)
+        .map(m => m.id);
+      if (unreadIds.length > 0) {
+        markMessagesAsRead(unreadIds);
+      }
+    }
+  }, [activeView, inPrivateChatDetail, activeChatMsgs.length, markMessagesAsRead, currentUser?.username, currentUser?.id]);
 
   const handleSendPrivateMessage = async () => {
     if (!replyText.trim() || sendingReply) return;
@@ -346,8 +476,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         });
         const data = await safeFetchJson(res);
         if (res.ok && data?.success && data?.message) {
-          setMessages(prev => [...prev, data.message]);
           setReplyText('');
+          await fetchMessagesData(true);
           scrollToChatBottom();
         } else {
           alert(data?.error || '发送私信失败');
@@ -366,8 +496,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         });
         const data = await safeFetchJson(res);
         if (res.ok && data?.success && data?.message) {
-          setMessages(prev => [...prev, data.message]);
           setReplyText('');
+          await fetchMessagesData(true);
           scrollToChatBottom();
         } else {
           alert(data?.error || '发送私信失败');
@@ -402,37 +532,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   }, [activeView]);
 
   const unreadCount = messages.filter(m => !m.read).length;
-
-  useEffect(() => {
-    setMessagesLoading(true);
-    const token = localStorage.getItem('catan_auth_token');
-    fetch('/api/messages', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    })
-      .then(safeFetchJson)
-      .then(data => {
-        if (data?.messages) {
-          const readMsgs = JSON.parse(localStorage.getItem('catan_read_messages') || '[]');
-          setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.includes(m.id) })));
-        }
-      })
-      .catch(console.error)
-      .finally(() => setMessagesLoading(false));
-  }, []);
-
-  const markMessageAsRead = (id: string) => {
-    const newMessages = messages.map(m => m.id === id ? { ...m, read: true } : m);
-    setMessages(newMessages);
-    const readMsgs = newMessages.filter(m => m.read).map(m => m.id);
-    localStorage.setItem('catan_read_messages', JSON.stringify(readMsgs));
-  };
-
-  const markAllMessagesAsRead = () => {
-    const newMessages = messages.map(m => ({ ...m, read: true }));
-    setMessages(newMessages);
-    const readMsgs = newMessages.map(m => m.id);
-    localStorage.setItem('catan_read_messages', JSON.stringify(readMsgs));
-  };
 
   const handleDeleteMessage = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -635,8 +734,159 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       animate={inline ? false : { opacity: 1, scale: 1, y: 0 }}
       className={`relative z-10 flex flex-col overflow-hidden ${inline ? 'w-full h-full bg-transparent' : fullScreen ? 'bg-slate-50 w-full h-full max-w-none rounded-none' : 'bg-slate-50 rounded-3xl w-full shadow-2xl max-h-[90%] md:max-w-md'}`}
     >
+      {/* Full-screen Private Chat View using createPortal to escape transformed parent container and cover entire screen */}
+      {activeView === 'private_chat' && inPrivateChatDetail && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[99999] flex flex-col bg-slate-50 w-screen h-screen">
+      {/* Top Chat Header */}
+          <div className="bg-white px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] border-b border-slate-200/80 text-slate-800 shadow-xs flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <button 
+                onClick={() => setInPrivateChatDetail(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-full transition-colors text-slate-600 hover:text-slate-900 shrink-0"
+                title="返回"
+              >
+                <ArrowLeft size={18} />
+              </button>
+
+              <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-sm shrink-0">
+                {chatPartnerName.slice(0, 1).toUpperCase()}
+              </div>
+
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-sm font-black text-slate-800 truncate leading-tight">
+                  {chatPartnerName}
+                </span>
+                {!isAdmin && (
+                  <span className="bg-amber-500/10 text-amber-600 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-500/20 shrink-0">
+                    官方
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={() => handleDeleteConversation(isAdmin ? (selectedChatPlayer || undefined) : adminDisplayName)}
+              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-colors shrink-0"
+              title="删除对话框"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+
+          {/* Messages Area */}
+          <div className="flex-1 p-3.5 bg-slate-50 overflow-y-auto space-y-3 no-scrollbar">
+            {processedChatMsgs.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs font-medium space-y-2 py-12">
+                <div className="w-12 h-12 rounded-full bg-indigo-50/50 flex items-center justify-center text-indigo-400 mb-1">
+                  <MessageSquare size={22} />
+                </div>
+                <p className="font-bold text-slate-400 text-xs">暂无消息</p>
+              </div>
+            ) : (
+              processedChatMsgs.map((msg) => {
+                const isMe = isAdmin 
+                  ? (msg.senderName === '管理员' || msg.senderId === 'admin' || (currentUser?.username && msg.senderName === currentUser.username) || (currentUser?.id && msg.senderId === currentUser.id))
+                  : (msg.senderId === currentUser?.id || (currentUser?.username && msg.senderName === currentUser.username));
+
+                return (
+                  <React.Fragment key={msg.id}>
+                    {/* Centered Timestamp (仅超过1分钟才显示，1分钟以内不重复显示) */}
+                    {msg.showTime && (
+                      <div className="flex justify-center my-2 select-none">
+                        <span className="text-[10px] text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full font-medium shadow-2xs">
+                          {msg.timeLabel || msg.date}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Message Bubble Row - 双方头像上方均不显示昵称 */}
+                    <div className={`flex items-start gap-2 max-w-[85%] group ${isMe ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
+                      {/* Avatar */}
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shrink-0 shadow-2xs mt-0.5 ${
+                        isMe 
+                          ? 'bg-indigo-600 text-white' 
+                          : 'bg-indigo-100 text-indigo-700 border border-indigo-200/60'
+                      }`}>
+                        {(isMe ? (currentUser?.username || '我') : (chatPartnerName || 'Ta')).slice(0, 1).toUpperCase()}
+                      </div>
+
+                      {/* Bubble and Delete Button on Hover */}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {isMe && (
+                          <button
+                            onClick={() => handleDeleteSingleMessage(msg.id)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-300 hover:text-red-500 rounded shrink-0"
+                            title="删除此条消息"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+
+                        <div 
+                          className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words shadow-2xs font-medium ${
+                            isMe 
+                              ? 'bg-indigo-600 text-white rounded-tr-xs shadow-indigo-600/10' 
+                              : 'bg-white text-slate-800 border border-slate-200/80 rounded-tl-xs'
+                          }`}
+                        >
+                          {msg.title && msg.title !== '玩家私信' && msg.title !== '私信回复' && msg.title !== '私信' && (
+                            <div className={`font-black text-[11px] mb-1 pb-1 border-b ${isMe ? 'border-white/20 text-indigo-100' : 'border-slate-100 text-slate-700'}`}>
+                              {msg.title}
+                            </div>
+                          )}
+                          {msg.content}
+                        </div>
+
+                        {!isMe && (
+                          <button
+                            onClick={() => handleDeleteSingleMessage(msg.id)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-300 hover:text-red-500 rounded shrink-0"
+                            title="删除此条消息"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </React.Fragment>
+                );
+              })
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Bottom Chat Input */}
+          <div className="p-3 bg-white border-t border-slate-200 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
+            <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 focus-within:border-indigo-500 focus-within:bg-white rounded-2xl p-2 transition-all">
+              <textarea 
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendPrivateMessage();
+                  }
+                }}
+                placeholder=""
+                rows={2}
+                className="flex-1 bg-transparent border-0 text-xs text-slate-800 font-medium outline-none resize-none p-1 placeholder:text-slate-400"
+              />
+              <button
+                disabled={!replyText.trim() || sendingReply}
+                onClick={handleSendPrivateMessage}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all flex items-center gap-1.5 shrink-0"
+              >
+                {sendingReply ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                发送
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Header Profile Section */}
-      <div className="bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm">
+      <div className="bg-white px-5 py-3.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <User size={22} />
@@ -1208,7 +1458,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         {/* Dedicated QQ-Style Private Chat View */}
         {activeView === 'private_chat' && (
           <AnimatePresence mode="wait">
-            {!inPrivateChatDetail ? (
+            {!inPrivateChatDetail && (
               /* Messages List View (不同的玩家显示独立的条形框) */
               <motion.div
                 key="private_chat_list"
@@ -1218,29 +1468,33 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 className="space-y-3 font-sans py-2"
               >
                 {!isAdmin ? (
-                  /* 普通玩家：系统管理员 / 官方客服 专属条形框 */
+                  /* 普通玩家：与管理员私信条形框 */
                   <div 
                     onClick={() => {
                       setSelectedChatPlayer(null);
                       setInPrivateChatDetail(true);
                     }}
-                    className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-sky-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
+                    className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-indigo-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
                   >
                     <div className="flex items-center gap-3.5 min-w-0 flex-1">
                       <div className="relative shrink-0">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-sky-500 via-indigo-500 to-indigo-600 text-white flex items-center justify-center font-black text-sm shadow-md shadow-indigo-500/20">
-                          管
+                        <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-sm shadow-xs">
+                          {adminDisplayName.slice(0, 1).toUpperCase()}
                         </div>
-                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-white rounded-full"></span>
+                        {playerPrivateMsgs.some(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id) ? (
+                          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white shadow-xs"></span>
+                        ) : (
+                          <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-white rounded-full"></span>
+                        )}
                       </div>
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-black text-slate-800 group-hover:text-sky-600 transition-colors">
-                              系统管理员 / 官方客服
+                            <span className="text-sm font-black text-slate-800 group-hover:text-indigo-600 transition-colors">
+                              {adminDisplayName}
                             </span>
-                            <span className="bg-sky-50 text-sky-600 text-[10px] font-bold px-1.5 py-0.2 rounded border border-sky-100">
+                            <span className="bg-amber-500/10 text-amber-600 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-500/20">
                               官方
                             </span>
                           </div>
@@ -1249,7 +1503,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 truncate mt-1 font-medium">
-                          {playerPrivateMsgs.length > 0 ? playerPrivateMsgs[playerPrivateMsgs.length - 1].content : '点击发起双向私信对话...'}
+                          {playerPrivateMsgs.length > 0 ? playerPrivateMsgs[playerPrivateMsgs.length - 1].content : '暂无消息'}
                         </p>
                       </div>
                     </div>
@@ -1257,7 +1511,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDeleteConversation('系统管理员 / 官方客服');
+                        handleDeleteConversation(adminDisplayName);
                       }}
                       className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 ml-2"
                       title="删除对话框及聊天记录"
@@ -1270,12 +1524,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                   <div className="space-y-2.5">
                     <div className="text-xs font-bold text-slate-500 px-1 mb-2 flex items-center justify-between">
                       <span>玩家私信列表 ({adminConversations.length})</span>
-                      <span className="text-[10px] text-slate-400 font-normal">点击任意玩家开启独占私信对话</span>
                     </div>
 
                     {adminConversations.length === 0 ? (
                       <div className="py-12 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 space-y-2">
-                        <MessageSquare className="w-8 h-8 opacity-40 text-sky-500" />
+                        <MessageSquare className="w-8 h-8 opacity-40 text-indigo-500" />
                         <p className="font-bold text-slate-600">暂无玩家私信记录</p>
                       </div>
                     ) : (
@@ -1286,19 +1539,24 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                             setSelectedChatPlayer(conv.username);
                             setInPrivateChatDetail(true);
                           }}
-                          className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-sky-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
+                          className="p-3.5 bg-white rounded-2xl border border-slate-200/80 hover:border-indigo-400 hover:shadow-md transition-all flex items-center justify-between cursor-pointer group active:scale-[0.99]"
                         >
                           <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                            <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-sky-500 via-indigo-500 to-indigo-600 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-md shadow-indigo-500/15">
-                              {conv.username.slice(0, 1).toUpperCase()}
+                            <div className="relative shrink-0">
+                              <div className="w-11 h-11 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60 flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+                                {conv.username.slice(0, 1).toUpperCase()}
+                              </div>
+                              {conv.msgs.some((m: any) => !m.read && m.senderName === conv.username) && (
+                                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white shadow-xs"></span>
+                              )}
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
-                                <span className="text-sm font-black text-slate-800 group-hover:text-sky-600 transition-colors">
+                                <span className="text-sm font-black text-slate-800 group-hover:text-indigo-600 transition-colors">
                                   {conv.username}
                                 </span>
                                 <span className="text-[10px] text-slate-400 font-mono shrink-0">
-                                  {conv.lastMsg?.date}
+                                  {conv.lastMsg?.date || ''}
                                 </span>
                               </div>
                               <p className="text-xs text-slate-500 truncate mt-1 font-medium">
@@ -1322,164 +1580,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     )}
                   </div>
                 )}
-              </motion.div>
-            ) : (
-              /* QQ Style Chat Window (独立的对话窗口) */
-              <motion.div
-                key="private_chat_detail_inline"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="bg-white rounded-2xl border border-slate-200/80 shadow-sm flex flex-col font-sans overflow-hidden h-[520px]"
-              >
-                {/* QQ Chat Header with Back Button & Delete Conversation Button */}
-                <div className="bg-gradient-to-r from-sky-500 via-indigo-500 to-indigo-600 px-4 py-3 text-white flex items-center justify-between shrink-0 shadow-xs">
-                  <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => setInPrivateChatDetail(false)}
-                      className="p-1.5 hover:bg-white/20 rounded-full transition-colors text-white"
-                      title="返回私信列表"
-                    >
-                      <ArrowLeft size={18} />
-                    </button>
-
-                    <div className="relative shrink-0">
-                      <div className="w-9 h-9 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center font-black text-sm border border-white/30 shadow-inner">
-                        {isAdmin && selectedChatPlayer ? selectedChatPlayer.slice(0, 1).toUpperCase() : '管'}
-                      </div>
-                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-400 border-2 border-indigo-600 rounded-full"></span>
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-black flex items-center gap-2 leading-tight">
-                        {isAdmin && selectedChatPlayer ? (
-                          <>与玩家 <span className="underline decoration-sky-300 font-extrabold">{selectedChatPlayer}</span> 私信会话</>
-                        ) : (
-                          <>系统管理员 / 官方客服 <span className="bg-white/20 text-[9px] px-1.5 py-0.2 rounded font-bold border border-white/20">官方</span></>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-sky-100 font-medium flex items-center gap-1.5 mt-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        在线 · 独享即时双向通道
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleDeleteConversation(isAdmin ? (selectedChatPlayer || undefined) : '系统管理员 / 官方客服')}
-                    className="p-1.5 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-colors flex items-center gap-1 text-[11px] font-bold"
-                    title="删除对话框"
-                  >
-                    <Trash2 size={15} />
-                    <span className="hidden sm:inline">删除对话框</span>
-                  </button>
-                </div>
-
-                {/* QQ Chat Messages Container */}
-                <div className="flex-1 p-3.5 bg-slate-50 overflow-y-auto space-y-3.5 no-scrollbar">
-                  {activeChatMsgs.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs font-medium space-y-2 py-12">
-                      <div className="w-12 h-12 rounded-full bg-sky-50 flex items-center justify-center text-sky-500 mb-1">
-                        <MessageSquare size={24} />
-                      </div>
-                      <p className="font-bold text-slate-600 text-sm">
-                        {isAdmin ? `暂无与 ${selectedChatPlayer} 的私信记录` : '暂无与管理员的私信记录'}
-                      </p>
-                      <p className="text-[11px] text-slate-400 max-w-[220px] text-center leading-relaxed">
-                        您可以在下方输入框输入私信内容发起对话。
-                      </p>
-                    </div>
-                  ) : (
-                    activeChatMsgs.map((msg) => {
-                      const isMe = isAdmin 
-                        ? (msg.senderName === '管理员' || msg.senderId === 'admin' || (currentUser?.username && msg.senderName === currentUser.username) || (currentUser?.id && msg.senderId === currentUser.id))
-                        : (msg.senderId === currentUser?.id || (currentUser?.username && msg.senderName === currentUser.username));
-
-                      return (
-                        <div 
-                          key={msg.id} 
-                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1 group`}
-                        >
-                          {/* Timestamp & Sender Name */}
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 px-1 font-mono">
-                            {!isMe && <span className="font-bold text-sky-600">{msg.senderName || '管理员'}</span>}
-                            <span>{msg.date}</span>
-                            {isMe && <span className="font-bold text-indigo-500">我</span>}
-                            <button
-                              onClick={() => handleDeleteSingleMessage(msg.id)}
-                              className="p-0.5 text-slate-300 hover:text-red-500 transition-colors rounded opacity-0 group-hover:opacity-100"
-                              title="删除此条消息"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-
-                          {/* QQ Style Message Bubble */}
-                          <div className="flex items-start gap-2 max-w-[85%]">
-                            {!isMe && (
-                              <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-sky-500 to-indigo-500 text-white flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
-                                {(msg.senderName || '管').slice(0, 1).toUpperCase()}
-                              </div>
-                            )}
-
-                            <div 
-                              className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap break-words shadow-2xs ${
-                                isMe 
-                                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white rounded-tr-xs shadow-sky-500/10 font-medium' 
-                                  : 'bg-white text-slate-800 border border-slate-200/70 rounded-tl-xs font-medium'
-                              }`}
-                            >
-                              {msg.title && msg.title !== '玩家私信' && msg.title !== '私信回复' && (
-                                <div className={`font-black text-[11px] mb-1 pb-1 border-b ${isMe ? 'border-white/20 text-sky-100' : 'border-slate-100 text-sky-700'}`}>
-                                  {msg.title}
-                                </div>
-                              )}
-                              {msg.content}
-                            </div>
-
-                            {isMe && (
-                              <div className="w-7 h-7 rounded-full bg-indigo-600 text-white flex items-center justify-center font-black text-[11px] shrink-0 shadow-2xs mt-0.5">
-                                {(currentUser?.username || '我').slice(0, 1).toUpperCase()}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-
-                {/* QQ Chat Bottom Input Footer */}
-                <div className="p-3 bg-white border-t border-slate-200 shrink-0">
-                  <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 focus-within:border-indigo-500 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-500/10 rounded-2xl p-2 transition-all">
-                    <textarea 
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendPrivateMessage();
-                        }
-                      }}
-                      placeholder={isAdmin && selectedChatPlayer ? `发送私信给 ${selectedChatPlayer} (按 Enter 发送)...` : "给管理员发私信 (按 Enter 发送)..."}
-                      rows={2}
-                      className="flex-1 bg-transparent border-0 text-xs text-slate-800 font-medium outline-none resize-none p-1 placeholder:text-slate-400"
-                    />
-                    <button
-                      disabled={!replyText.trim() || sendingReply}
-                      onClick={handleSendPrivateMessage}
-                      className="px-4 py-2 bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-600 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all flex items-center gap-1.5 shrink-0"
-                    >
-                      {sendingReply ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      发送
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between mt-1.5 px-1 text-[10px] text-slate-400 font-medium">
-                    <span>按 Enter 发送，Shift + Enter 换行</span>
-                    <span className="text-sky-600 font-bold">私信将直接送达对方</span>
-                  </div>
-                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -1726,22 +1826,22 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
               <button 
                 onClick={() => setActiveView('private_chat')} 
-                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-sky-100 transition-colors"
+                className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors"
               >
                 <div className="flex items-center gap-3">
                   <div className="relative">
-                    <Mail size={18} className="text-slate-400 group-hover:text-sky-500 transition-colors" />
+                    <Mail size={18} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
                     {privateUnreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-sky-500 border-2 border-white rounded-full"></span>
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
                     )}
                   </div>
                   <h3 className="font-bold text-slate-700 text-sm">私信</h3>
                 </div>
                 <div className="flex items-center gap-2">
                   {privateUnreadCount > 0 && (
-                    <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">{privateUnreadCount}</span>
+                    <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">{privateUnreadCount}</span>
                   )}
-                  <div className="text-slate-300 group-hover:text-sky-400 transition-colors">
+                  <div className="text-slate-300 group-hover:text-indigo-400 transition-colors">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                   </div>
                 </div>

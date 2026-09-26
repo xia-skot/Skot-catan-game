@@ -10,13 +10,15 @@ export function getImageUrl(url: string): string {
 export function getImageCandidates(url: string): string[] {
   if (!url) return [];
   const match = url.match(/\/gh\/xia-skot\/Catan_Pics\/img\/(.+)$/);
-  if (!match) return [url];
+  if (!match) return [`/api/proxy-image?url=${encodeURIComponent(url)}`, url];
   const filename = match[1];
+  const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(`https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`)}`;
   return [
+    proxyUrl,
     `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
     `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
-    `https://jsd.cdn.zzko.cn/gh/xia-skot/Catan_Pics/img/${filename}`,
     `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
+    `https://jsd.cdn.zzko.cn/gh/xia-skot/Catan_Pics/img/${filename}`,
     `https://testingcf.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${filename}`,
     `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/img/${filename}`,
   ];

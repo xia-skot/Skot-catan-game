@@ -54,6 +54,7 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
   const playerShips = ships.filter(e => e.playerId === playerId).map(e => e.edgeId);
   if (playerRoads.length === 0 && playerShips.length === 0) return 0;
 
+  const ownSettlements = new Set(settlements.filter(s => s.playerId === playerId).map(s => s.vertexId));
   const opponentSettlements = new Set(settlements.filter(s => s.playerId !== playerId).map(s => s.vertexId));
 
   const allPlayerEdges = [
@@ -81,7 +82,7 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
 
   let maxLength = 0;
 
-  function dfsFast(currentVertex: string, visitedMask: number, currentLength: number) {
+  function dfsFast(currentVertex: string, visitedMask: number, currentLength: number, lastEdgeType: string | null) {
     if (currentLength > maxLength) {
       maxLength = currentLength;
     }
@@ -95,13 +96,17 @@ export function calculateLongestRoad(playerId: number, roads: Road[], ships: Shi
       const edge = edges[i];
       const bit = 1 << edge.idx;
       if ((visitedMask & bit) === 0) {
-        dfsFast(edge.nextVertex, visitedMask | bit, currentLength + 1);
+        // 连接路和船必须修建村庄
+        if (lastEdgeType !== null && lastEdgeType !== edge.type && !ownSettlements.has(currentVertex)) {
+          continue;
+        }
+        dfsFast(edge.nextVertex, visitedMask | bit, currentLength + 1, edge.type);
       }
     }
   }
 
   for (const startVertex of Object.keys(adj)) {
-    dfsFast(startVertex, 0, 0);
+    dfsFast(startVertex, 0, 0, null);
   }
 
   return maxLength;
@@ -1634,8 +1639,9 @@ export function useCatanGame() {
       const hasShipAtV1 = prev.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v1Id));
       const hasShipAtV2 = prev.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v2Id));
       
-      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1) || (hasShipAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2) || (hasShipAtV2 && !oppSettlementAtV2);
+      // 道路可连接现有道路；若要与船只连接，该交汇顶点必须建有自己的村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2);
       const hasConnection = canConnectV1 || canConnectV2;
 
       // In setup, the road must connect to the settlement just placed
@@ -1762,8 +1768,9 @@ export function useCatanGame() {
       const hasRoadAtV1 = prev.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v1Id));
       const hasRoadAtV2 = prev.roads.some(r => r.playerId === player.id && r.edgeId !== edgeId && r.edgeId.split('|').includes(v2Id));
 
-      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1) || (hasRoadAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2) || (hasRoadAtV2 && !oppSettlementAtV2);
+      // 船只可连接现有船只；若要与道路/陆地相连修船，必须在交汇顶点修建村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2);
       const hasConnection = canConnectV1 || canConnectV2;
 
       if (!hasConnection) return prev;

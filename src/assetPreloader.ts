@@ -1,5 +1,6 @@
-import { ALL_GAME_IMAGES, SAILING_BOAT_IMG, CATAN_LOGO_IMG, getImageCandidates, RESOLVED_IMAGE_MAP } from './images';
+import { ALL_GAME_IMAGES, SAILING_BOAT_IMG, CATAN_LOGO_IMG } from './images';
 import { audioService } from './audioService';
+import { loadGameImage, getCachedImageElement } from './imageManager';
 
 type ProgressCallback = (progressPercent: number, label: string) => void;
 
@@ -9,7 +10,7 @@ let currentProgress = 0;
 let currentLabel = '资源加载中...';
 const progressListeners: ProgressCallback[] = [];
 
-const CACHE_KEY = 'catan_assets_cached_v3';
+const CACHE_KEY = 'catan_assets_cached_v4';
 
 export function checkIsAssetsCached(): boolean {
   try {
@@ -33,75 +34,22 @@ export function clearAssetsCache(): void {
   } catch {}
 }
 
-function preloadSingleImageCandidate(candidateUrl: string, timeoutMs: number = 3000): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    let finished = false;
-    const done = (success: boolean) => {
-      if (!finished) {
-        finished = true;
-        clearTimeout(timer);
-        resolve(success);
-      }
-    };
-
-    const timer = setTimeout(() => done(false), timeoutMs);
-
-    const img = new Image();
-    img.referrerPolicy = 'no-referrer';
-
-    img.onload = () => {
-      if (img.naturalWidth > 0) {
-        done(true);
-      } else {
-        done(false);
-      }
-    };
-
-    img.onerror = () => done(false);
-    img.src = candidateUrl;
-
-    if (img.complete && img.naturalWidth > 0) {
-      done(true);
-    }
-  });
-}
-
-async function preloadSingleImage(originalSrc: string): Promise<void> {
-  const candidates = getImageCandidates(originalSrc);
-  if (candidates.length === 0) return;
-
-  // 1. Try primary CDN candidate fast with 1200ms timeout
-  const primarySuccess = await preloadSingleImageCandidate(candidates[0], 1200);
-  if (primarySuccess) {
-    RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
-    return;
-  }
-
-  // 2. If primary CDN is slow or blocked, race remaining CDN candidates concurrently
-  if (candidates.length > 1) {
-    const fallbackPromises = candidates.slice(1).map(url => 
-      preloadSingleImageCandidate(url, 1500).then(ok => ok ? url : Promise.reject())
-    );
-    try {
-      const winnerUrl = await Promise.any(fallbackPromises);
-      RESOLVED_IMAGE_MAP[originalSrc] = winnerUrl;
-      return;
-    } catch {
-      // All fallback promises rejected or timed out
-    }
-  }
-
-  // Default fallback
-  RESOLVED_IMAGE_MAP[originalSrc] = candidates[0];
-}
-
 export async function preloadAllAssets(
   onProgress?: ProgressCallback
 ): Promise<void> {
-  if (checkIsAssetsCached()) {
+  const isAlreadyCached = checkIsAssetsCached();
+
+  // If already marked as cached, quickly parallel-warm the RAM cache with a fast timeout
+  if (isAlreadyCached && !isPreloading) {
+    // Warm key images into memory first so zero blank frames happen
+    await Promise.race([
+      Promise.allSettled(ALL_GAME_IMAGES.map(src => loadGameImage(src))),
+      new Promise(resolve => setTimeout(resolve, 800))
+    ]);
     isPreloaded = true;
     currentProgress = 100;
     if (onProgress) onProgress(100, '资源已就绪');
+    audioService.preloadAllAudio().catch(() => {});
     return;
   }
 
@@ -128,8 +76,8 @@ export async function preloadAllAssets(
   // Priority load sailboat and logo first
   broadcastProgress(5, '正在初始化关键动画资源...');
   await Promise.allSettled([
-    preloadSingleImage(SAILING_BOAT_IMG),
-    preloadSingleImage(CATAN_LOGO_IMG),
+    loadGameImage(SAILING_BOAT_IMG),
+    loadGameImage(CATAN_LOGO_IMG),
   ]);
 
   const totalImages = ALL_GAME_IMAGES.length;
@@ -144,11 +92,16 @@ export async function preloadAllAssets(
     broadcastProgress(percent, label);
   };
 
-  // Preload all remaining images with candidate failover
+  // Preload and decode all images into RAM
   const imagePromises = ALL_GAME_IMAGES.map((src) => {
-    return preloadSingleImage(src).then(() => {
-      notifyProgress('正在加载游戏贴图与图标...');
-    });
+    return loadGameImage(src)
+      .then(() => {
+        notifyProgress('正在加载游戏贴图与图标...');
+      })
+      .catch((err) => {
+        console.warn(`[AssetPreloader] Warning loading image ${src}:`, err);
+        notifyProgress('正在加载游戏贴图与图标...');
+      });
   });
 
   // Preload audio

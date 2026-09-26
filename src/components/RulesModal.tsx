@@ -136,11 +136,11 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
           ? 'w-full h-full bg-transparent' 
           : isMobileDevice
             ? 'bg-slate-50 w-full h-full rounded-none shadow-none'
-            : 'bg-slate-50 w-full h-full sm:h-auto sm:max-h-[90%] sm:max-w-lg sm:rounded-3xl rounded-none shadow-2xl'
+            : 'bg-slate-50 w-full h-full sm:h-auto sm:max-h-[95%] sm:max-w-xl sm:rounded-3xl rounded-none shadow-2xl'
       }`}
     >
       {/* Header Profile Section */}
-      <div className="bg-white px-5 py-3.5 shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-sm">
+      <div className="bg-white px-5 py-3.5 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <BookOpen size={22} />
@@ -647,18 +647,23 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose, inline 
                     </div>
                   </div>
 
-                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-slate-500">
-                        <ShipIcon size={16} />
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-slate-500">
+                          <ShipIcon size={16} />
+                        </div>
+                        <span className="font-bold text-slate-700 text-sm">船只 (群岛世界)</span>
                       </div>
-                      <span className="font-bold text-slate-700 text-sm">船只</span>
+                      <div className="flex items-center gap-1">
+                        <img src={WOOL_ICON} alt="羊毛" className="w-5 h-5 object-contain" />
+                        <span className="text-slate-300 mx-0.5">+</span>
+                        <img src={LUMBER_ICON} alt="木材" className="w-5 h-5 object-contain" />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <img src={WOOL_ICON} alt="羊毛" className="w-5 h-5 object-contain" />
-                      <span className="text-slate-300 mx-0.5">+</span>
-                      <img src={LUMBER_ICON} alt="木材" className="w-5 h-5 object-contain" />
-                    </div>
+                    <p className="text-[10px] text-amber-600 font-medium pl-11">
+                      ⚠️ 建造规则：连接路和船必须修建村庄，否则无法修船。
+                    </p>
                   </div>
 
                   <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
