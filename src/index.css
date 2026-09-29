@@ -1,5 +1,82 @@
 @import "tailwindcss";
 
+.join-room-button[aria-busy="true"] .join-room-sheen {
+  animation: join-room-sheen 1s ease-in-out infinite;
+}
+@keyframes join-room-sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.app-screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overflow: clip;
+  box-sizing: border-box;
+}
+
+.app-safe-top { padding-top: var(--safe-top); }
+.startup-ocean { background: #e1f0fa; z-index: 99999; }
+.startup-sea { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.startup-boat { position: absolute; top: 0; left: 0; will-change: transform; }
+.loading-dots { display: inline-flex; width: 1.2em; }
+.loading-dots > span { animation: loading-dot 1.2s infinite; }
+.loading-dots > span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots > span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes loading-dot { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
+.startup-progress { position: absolute; bottom: calc(var(--safe-bottom) + 32px); left: 8%; width: 84%; display: flex; flex-direction: column; align-items: center; gap: 12px; color: white; font-size: 14px; font-weight: 600; text-align: center; }
+.startup-progress.is-sailing { top: 78%; bottom: auto; color: #0c4a6e; font-size: 20px; font-weight: 900; font-style: italic; letter-spacing: 0; text-shadow: 0 2px 4px rgba(255,255,255,.8); }
+@media (min-width: 640px) { .startup-progress.is-sailing { top: 80%; font-size: 24px; } }
+.dice-result { display: flex; align-items: center; justify-content: center; flex: 0 0 1.55em; width: 1.55em; min-height: 1.4em; overflow: visible; font-family: "Times New Roman", Times, serif; font-weight: 700; font-style: italic; }
+.dice-result > p { display: block; width: 100%; padding: .1em .12em; margin: 0; line-height: 1.2; white-space: nowrap; text-align: center; overflow: visible; }
+.startup-meter { width: 100%; max-width: 640px; height: 18px; border-radius: 8px; background: #286c98; position: relative; overflow: hidden; }
+.startup-meter > div { height: 100%; background: #56c4f9; transition: width 450ms cubic-bezier(.22,.61,.36,1); }
+.startup-meter > span { position: absolute; inset: 0; font-size: 12px; line-height: 18px; text-shadow: 0 1px 2px #174966; }
+.startup-elapsed { font-size: 12px; font-weight: 400; min-height: 18px; }
+.startup-retry { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; color: #25425b; background: white; }
+.lobby-tab-bar { padding-bottom: max(6px, var(--safe-bottom)); min-height: 48px; }
+.lobby-tab-bar[hidden] { display: none; }
+[data-subpage="true"] { padding-bottom: var(--safe-bottom); }
+/* A sliding strip must not also become a focus-driven scroll container. */
+[data-lobby-tabs], [data-lobby-panels] > div { overflow: clip; }
+.exit-toast {
+  position: fixed;
+  z-index: 100000;
+  bottom: calc(var(--safe-bottom) + 80px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 12px 18px;
+  border-radius: 8px;
+  background: #202731;
+  color: white;
+  font-size: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+.chat-screen {
+  position: fixed;
+  left: 0;
+  width: 100%;
+  top: var(--chat-top, 0px);
+  height: var(--chat-height, 100dvh);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-screen * { scroll-behavior: auto !important; }
+}
+
 @layer base {
   html, body, #root {
     width: 100%;
@@ -10,9 +87,13 @@
     right: 0;
     bottom: 0;
     overflow: hidden;
+    overflow: clip;
+    overscroll-behavior: none;
     margin: 0;
     padding: 0;
     background-color: #f8fafc; /* bg-slate-50 */
+    touch-action: pan-x pan-y;
+    -webkit-tap-highlight-color: transparent;
   }
 
   /* Hide scrollbar globally for all elements while maintaining scroll functionality */

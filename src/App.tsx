@@ -174,7 +174,15 @@ import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLOR
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence, useDragControls, MotionConfig } from 'motion/react';
 import { audioService } from './audioService';
-import { preloadAllAssets, checkIsAssetsCached } from './assetPreloader';
+import { preloadAllAssets } from './assetPreloader';
+import { SailingTransition, SailingScene, LoadingDots } from './components/SailingScene';
+import { getSetupSlots, getRoomController } from '../shared/roomSetup';
+import { StartupScreen } from './components/StartupScreen';
+import { AssetGate } from './components/AssetGate';
+import { SmartImage } from './components/SmartImage';
+import { useLobbySwipe } from './useLobbySwipe';
+import { MESSAGE_READ_EVENT, readMessageIds } from './messageReadState';
+import { hasBackHandler, isInstalledDisplay, requestAppBack, runTopBackHandler, shouldSuppressGestureClick, suppressGestureClick, useBackHandler } from './navigation';
 import { 
   Dices, 
   User, 
@@ -201,8 +209,6 @@ import {
   Copy,
   LogOut,
   Trash2,
-  Maximize,
-  Minimize,
   RotateCw,
   RotateCcw,
   RefreshCw,
@@ -238,36 +244,9 @@ import {
   RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
   getImageUrl, getImageCandidates, getDevCardImg
 } from './images';
-import { useGameImage } from './imageManager';
+import { getCachedImageElement, loadGameImage, useGameImage } from './imageManager';
 
-export const SmartImg = ({ src, alt, className, onClick, ...props }: any) => {
-  const [currentSrc, setCurrentSrc] = useState(() => getImageUrl(src));
-  const candidateIdxRef = useRef(0);
-
-  useEffect(() => {
-    setCurrentSrc(getImageUrl(src));
-  }, [src]);
-
-  const handleError = () => {
-    const candidates = getImageCandidates(src);
-    candidateIdxRef.current += 1;
-    if (candidateIdxRef.current < candidates.length) {
-      setCurrentSrc(candidates[candidateIdxRef.current]);
-    }
-  };
-
-  return (
-    <img
-      src={currentSrc}
-      alt={alt || ''}
-      className={className}
-      onClick={onClick}
-      onError={handleError}
-      referrerPolicy="no-referrer"
-      {...props}
-    />
-  );
-};
+export const SmartImg = SmartImage;
 
 const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
   <SmartImg 
@@ -417,33 +396,27 @@ const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx:
 
 
 
+const TokenPulse = () => {
+  const circle = useRef<Konva.Circle>(null);
+  useEffect(() => {
+    const node = circle.current;
+    if (!node) return;
+    const animation = new Konva.Animation(frame => {
+      const pulse = (frame!.time % 1200) / 1200;
+      node.setAttrs({ radius: 18 + pulse * 12, strokeWidth: 4 * (1 - pulse), opacity: 1 - pulse });
+    }, node.getLayer());
+    animation.start();
+    return () => { animation.stop(); };
+  }, []);
+  return <Circle ref={circle} radius={18} stroke="#EF4444" strokeWidth={4} listening={false} perfectDrawEnabled={false} />;
+};
+
 const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
   const { image: img } = useGameImage(ROBBER_IMG);
-  const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    if (!isPhaseRobber) return;
-    let animationFrame: number;
-    const animate = () => {
-      setPulse((Date.now() % 1200) / 1200);
-      animationFrame = requestAnimationFrame(animate);
-    };
-    animate();
-    return () => cancelAnimationFrame(animationFrame);
-  }, [isPhaseRobber]);
 
   return (
-    <Group x={x} y={y}>
-      {isPhaseRobber && (
-        <Circle 
-          radius={18 + pulse * 12} 
-          stroke="#EF4444" 
-          strokeWidth={4 * (1 - pulse)} 
-          opacity={1 - pulse} 
-          listening={false} 
-          perfectDrawEnabled={false}
-        />
-      )}
+    <Group x={x} y={y} listening={false}>
+      {isPhaseRobber && <TokenPulse />}
       {img ? (
         <Image 
           image={img} 
@@ -523,31 +496,10 @@ const AnchorToken = () => {
 
 const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
   const { image: img } = useGameImage(PIRATE_SHIP_IMG);
-  const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    if (!isPhaseRobber) return;
-    let animationFrame: number;
-    const animate = () => {
-      setPulse((Date.now() % 1200) / 1200);
-      animationFrame = requestAnimationFrame(animate);
-    };
-    animate();
-    return () => cancelAnimationFrame(animationFrame);
-  }, [isPhaseRobber]);
 
   return (
-    <Group x={x} y={y}>
-      {isPhaseRobber && (
-        <Circle 
-          radius={18 + pulse * 12} 
-          stroke="#EF4444" 
-          strokeWidth={4 * (1 - pulse)} 
-          opacity={1 - pulse} 
-          listening={false} 
-          perfectDrawEnabled={false}
-        />
-      )}
+    <Group x={x} y={y} listening={false}>
+      {isPhaseRobber && <TokenPulse />}
       {img ? (
         <Image 
           image={img} 
@@ -578,248 +530,9 @@ const seededRandom = (seed: number) => {
   };
 };
 
-function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false, onCancel }: { onComplete: () => void, text?: string, loop?: boolean, onCancel?: () => void }) {
-  const isCached = useRef(checkIsAssetsCached());
-  const [preloadProgress, setPreloadProgress] = useState(isCached.current ? 100 : 0);
-  const [preloadStatusText, setPreloadStatusText] = useState('资源加载中...');
-  const [preloadFinished, setPreloadFinished] = useState(isCached.current);
-  const [boatLoaded, setBoatLoaded] = useState(false);
-  const [showCancelBtn, setShowCancelBtn] = useState(false);
-  const [boatAnimKey, setBoatAnimKey] = useState(0);
-
-  const finishTriggeredRef = useRef(isCached.current);
-  const completedRef = useRef(false);
-
-  const triggerComplete = useCallback(() => {
-    if (!completedRef.current) {
-      completedRef.current = true;
-      onComplete();
-    }
-  }, [onComplete]);
-
-  useEffect(() => {
-    let isMounted = true;
-    if (checkIsAssetsCached()) {
-      setPreloadFinished(true);
-      setPreloadProgress(100);
-      finishTriggeredRef.current = true;
-      return;
-    }
-
-    preloadAllAssets((percent, label) => {
-      if (!isMounted) return;
-      setPreloadProgress(percent);
-      if (label) setPreloadStatusText(label);
-
-      if (percent >= 100 && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setTimeout(() => {
-          if (isMounted) {
-            setPreloadFinished(true);
-            setBoatAnimKey(k => k + 1);
-          }
-        }, 150);
-      }
-    }).then(() => {
-      if (isMounted && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setPreloadProgress(100);
-        setPreloadFinished(true);
-        setBoatAnimKey(k => k + 1);
-      }
-    }).catch(() => {
-      if (isMounted && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setPreloadProgress(100);
-        setPreloadFinished(true);
-        setBoatAnimKey(k => k + 1);
-      }
-    });
-
-    const cancelTimer = setTimeout(() => {
-      if (isMounted) setShowCancelBtn(true);
-    }, 6000);
-
-    return () => { 
-      isMounted = false; 
-      clearTimeout(cancelTimer);
-    };
-  }, []);
-
-  // When boat animation starts (preloadFinished is true), guarantee transition complete after 2.6s even if onAnimationEnd doesn't fire
-  useEffect(() => {
-    if (preloadFinished) {
-      const timer = setTimeout(() => {
-        triggerComplete();
-      }, 2600);
-      return () => clearTimeout(timer);
-    }
-  }, [preloadFinished, triggerComplete]);
-
-  const calculatePaths = (w: number, h: number) => {
-    const isPortrait = w < h;
-    const baseY = h / 2 - h * 0.05;
-    const wavelength = isPortrait ? w / 2.0 : w / 3.5;
-    const amplitude = isPortrait ? wavelength * 0.05 : wavelength * 0.03;
-    const finalAmplitude = Math.min(amplitude, isPortrait ? h * 0.02 : h * 0.03);
-    const currentBoatSize = isPortrait ? w / 8 : h / 6;
-
-    let pts = [];
-    const startX = -300;
-    const endX = w + currentBoatSize * 0.6;
-
-    for(let x = startX; x <= w + currentBoatSize + 100; x += 10) {
-       const y = Math.sin((x / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-       pts.push(x + "," + y);
-    }
-
-    let framesArr = [];
-    const steps = 100;
-    for (let i = 0; i <= steps; i++) {
-        const progress = i / steps;
-        const currentX = startX + (endX - startX) * progress;
-        const currentY = Math.sin((currentX / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-        const dy = Math.cos((currentX / wavelength) * Math.PI * 2) * finalAmplitude * (Math.PI * 2 / wavelength);
-        
-        let angleRad = Math.atan(dy) * (isPortrait ? 0.2 : 0.12); 
-        let angleDeg = angleRad * (180 / Math.PI); 
-        framesArr.push(`${i}% { transform: translate3d(${currentX}px, ${currentY}px, 0) rotate(${angleDeg}deg); }`);
-    }
-    const framesCss = `@keyframes sailBoatAnim {\n${framesArr.join('\n')}\n}`;
-
-    return {
-        line: "M " + pts.join(" L "),
-        fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + (h + 500) + " L " + startX + "," + (h + 500) + " Z",
-        framesCss,
-        boatSize: currentBoatSize
-    };
-  };
-
-  const [paths, setPaths] = useState(() => calculatePaths(window.innerWidth, window.innerHeight));
-  
-  const loopRef = useRef(loop);
-  useEffect(() => {
-    loopRef.current = loop;
-  }, [loop]);
-
-  useEffect(() => {
-     let isMounted = true;
-     const upds = () => {
-         const w = window.innerWidth;
-         const h = window.innerHeight;
-         const newPaths = calculatePaths(w, h);
-         if (isMounted) setPaths(newPaths);
-     };
-
-     const handleOrientation = () => {
-         upds();
-         setTimeout(upds, 150);
-         setTimeout(upds, 350);
-     };
-
-     window.addEventListener('resize', upds);
-     window.addEventListener('orientationchange', handleOrientation);
-
-     return () => {
-         isMounted = false;
-         window.removeEventListener('resize', upds);
-         window.removeEventListener('orientationchange', handleOrientation);
-     };
-  }, []);
-
-  const handleAnimCycleComplete = () => {
-    if (preloadFinished) {
-      triggerComplete();
-    }
-  };
-
-  return (
-    <div className="absolute inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto select-none">
-        <div className="w-full h-full relative">
-            <style>{`
-              ${paths.framesCss}
-            `}</style>
-            
-            {/* 资源加载完毕后再显示帆船并执行1次完整的驶过海域动画 */}
-            {preloadFinished && (
-              <div 
-                  key={boatAnimKey}
-                  onAnimationEnd={handleAnimCycleComplete}
-                  style={{
-                    animation: 'sailBoatAnim 2.5s linear 1 forwards',
-                    position: 'absolute', left: 0, top: 0, zIndex: 10
-                  }} className="will-change-transform pointer-events-none">
-                  <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                      <SmartImg 
-                        src={SAILING_BOAT_IMG} 
-                        alt="Sailing Boat" 
-                        className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
-                        onLoad={() => setBoatLoaded(true)}
-                      />
-                      {/* SVG Fallback boat so it is instantly visible before/if image loads */}
-                      {!boatLoaded && (
-                        <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" fill="none">
-                          <path d="M15 65 L85 65 L70 85 L30 85 Z" fill="#7c2d12" stroke="#451a03" strokeWidth="2" />
-                          <path d="M48 15 L48 65" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
-                          <path d="M50 18 L80 40 L50 48 Z" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="2" />
-                          <path d="M46 22 L22 42 L46 48 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2" />
-                        </svg>
-                      )}
-                  </div>
-              </div>
-            )}
-
-            <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
-                <path d={paths.fill} fill="#27a6e6" />
-                <path d={paths.line} stroke="#85caec" strokeWidth="4" fill="none" />
-                <path d={paths.line} stroke="#1e6b9c" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
-            </svg>
-
-            {/* When preload is finished: show main text ("正在驶入海域......") */}
-            {preloadFinished ? (
-              <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4 pointer-events-none">
-                  <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
-                      {text}
-                  </span>
-              </div>
-            ) : (
-              /* When preload is loading: show small text and simplified progress bar */
-              <div className="absolute bottom-8 sm:bottom-12 left-0 right-0 w-full flex flex-col items-center justify-center gap-2.5 z-[10000] px-6 sm:px-12 pointer-events-auto">
-                  <span className="text-xs sm:text-sm font-bold tracking-wider text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] animate-pulse">
-                    资源加载中...
-                  </span>
-                  
-                  {/* Minimalist ocean-style progress bar */}
-                  <div className="w-[85vw] max-w-3xl h-3.5 sm:h-4 bg-sky-950/50 rounded-full border border-sky-300/30 p-0.5 shadow-inner backdrop-blur-sm relative overflow-hidden">
-                      <div 
-                        className="h-full bg-sky-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_10px_rgba(56,189,248,0.5)]"
-                        style={{ width: `${preloadProgress}%` }}
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center text-[10px] sm:text-xs font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] tracking-wider">
-                        {preloadProgress}%
-                      </div>
-                  </div>
-
-                  {showCancelBtn && onCancel && (
-                    <button 
-                      onClick={onCancel}
-                      className="mt-1 px-3 py-1 bg-white/95 text-slate-700 hover:bg-white text-xs font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
-                    >
-                      超时？点击返回大厅
-                    </button>
-                  )}
-              </div>
-            )}
-            
-            {/* Hidden pre-decoded DOM images to keep GPU textures warm */}
-            <div className="hidden" aria-hidden="true" style={{ display: 'none' }}>
-              {ALL_GAME_IMAGES.map((src) => (
-                <img key={src} src={src} decoding="sync" alt="" />
-              ))}
-            </div>
-        </div>
-    </div>
-  );
+function SailingLoadingScreen({ onComplete, text = '正在驶入海域', loop = false, onCancel, loadAssets = true }: { onComplete: () => void; text?: string; loop?: boolean; onCancel?: () => void; loadAssets?: boolean }) {
+  const screen = <SailingTransition onComplete={onComplete} loop={loop} text={text} />;
+  return loadAssets ? <AssetGate onCancel={onCancel || onComplete}>{screen}</AssetGate> : screen;
 }
 
 export default function App() {
@@ -834,12 +547,9 @@ export default function App() {
   const dissolveRoomDragControls = useDragControls();
 
   useEffect(() => {
-    let audioUnlocked = false;
+    const unlockAudio = () => { void audioService.unlockAll(); };
     const handleGlobalClick = (e: MouseEvent) => {
-      if (!audioUnlocked) {
-        audioService.unlockAll();
-        audioUnlocked = true;
-      }
+      unlockAudio();
       const target = e.target as HTMLElement;
       if (target.closest('.no-click-sound')) return;
       // Check if it's a button or inside a button
@@ -848,8 +558,12 @@ export default function App() {
       }
     };
     document.addEventListener('click', handleGlobalClick);
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
     return () => {
       document.removeEventListener('click', handleGlobalClick);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
     };
   }, []);
 
@@ -883,15 +597,6 @@ export default function App() {
   const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
   const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
   
-  useEffect(() => {
-    // Preload all game textures and audio into browser cache
-    preloadAllAssets().catch(err => console.warn('[App] Preload error:', err));
-
-    const timer = setTimeout(() => {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
   
   const { 
     gameState, 
@@ -991,6 +696,7 @@ export default function App() {
   }, [gameState]);
 
   const [diceSum, setDiceSum] = useState<string>("?");
+  const controllerRef = useRef<string | null>(null);
   useEffect(() => {
     // If we are currently rolling, always show "?"
     if (isDiceRolling) {
@@ -1071,9 +777,9 @@ export default function App() {
           // Fix: only the active player (or the host if the active player is a bot) should resolve the dice.
           const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerIndex;
           const isActivePlayerBot = gameState.players[gameState.currentPlayerIndex]?.isBot;
-          const isTrueHost = roomState?.hostId === socketService.playerId;
+          const isTrueHost = controllerRef.current === socketService.playerId;
           
-          if (isMyTurn || (isActivePlayerBot && isTrueHost)) {
+          if (socketService.isConnected && ((!isActivePlayerBot && isMyTurn) || (isActivePlayerBot && isTrueHost))) {
             resolveDiceRoll();
           }
         }
@@ -1144,7 +850,7 @@ export default function App() {
       try {
         const newUrl = new URL(window.location.href);
         newUrl.searchParams.delete('room');
-        window.history.replaceState({}, '', newUrl.pathname);
+        window.history.replaceState(window.history.state, '', newUrl.pathname);
       } catch (err) {}
     } else {
       // Keep existing room code
@@ -1166,7 +872,7 @@ export default function App() {
         } else {
           newUrl.searchParams.delete('room');
         }
-        window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+        window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
       } catch (err) {}
     }
     
@@ -1268,6 +974,11 @@ export default function App() {
       setHasUnreadPrivateMsgs(false);
       return;
     }
+    let latestMessages: any[] = [];
+    const updateUnread = () => {
+      const read = readMessageIds(currentUser.username || 'user');
+      setHasUnreadPrivateMsgs(latestMessages.some(m => (m.type === 'private' || m.targetUserId) && !read.has(m.id) && m.senderName !== currentUser.username && m.senderId !== currentUser.id));
+    };
     const checkUnread = async () => {
       try {
         const token = localStorage.getItem('catan_auth_token');
@@ -1277,15 +988,8 @@ export default function App() {
         if (res.ok) {
           const data = await safeFetchJson(res);
           if (data?.messages) {
-            const readStorageKey = `catan_read_msgs_${currentUser.username || 'user'}`;
-            const readMsgs: string[] = JSON.parse(localStorage.getItem(readStorageKey) || '[]');
-            const unread = data.messages.some((m: any) => 
-              m.type === 'private' && 
-              !readMsgs.includes(m.id) && 
-              m.senderName !== currentUser.username && 
-              m.senderId !== currentUser.id
-            );
-            setHasUnreadPrivateMsgs(unread);
+            latestMessages = data.messages;
+            updateUnread();
           }
         }
       } catch (e) {
@@ -1295,7 +999,13 @@ export default function App() {
 
     checkUnread();
     const interval = setInterval(checkUnread, 4000);
-    return () => clearInterval(interval);
+    window.addEventListener(MESSAGE_READ_EVENT, updateUnread);
+    window.addEventListener('storage', updateUnread);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(MESSAGE_READ_EVENT, updateUnread);
+      window.removeEventListener('storage', updateUnread);
+    };
   }, [currentUser]);
   const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
   const [inputRoomId, setInputRoomId] = useState(() => {
@@ -1402,13 +1112,24 @@ export default function App() {
         } else {
           setGameStarted(true);
         }
+        gameStartedRef.current = true;
       } else {
         localStorage.removeItem('catan_game_active');
+        gameStartedRef.current = false;
         setGameStarted(false);
+        setShowSailingScreen(false);
       }
     });
 
-    socketService.onGameInit((newState) => {
+    socketService.onGameInit((newState, context) => {
+      // Entry metadata stays correct even if a room update arrives later.
+      if (context || !gameStartedRef.current) {
+        setSailingText(context?.entry === 'resume' ? '重新驶入海域' : '正在驶入海域');
+      }
+      if (context?.entry === 'start' || !gameStartedRef.current) {
+        setShowSailingScreen(true);
+      }
+      gameStartedRef.current = true;
       isRemoteUpdateRef.current = true;
       syncGameState(newState);
       setGameStarted(true);
@@ -1418,6 +1139,11 @@ export default function App() {
     });
 
     socketService.onGameUpdate((newState) => {
+      if (!gameStartedRef.current) {
+        setSailingText('重新驶入海域');
+        setShowSailingScreen(true);
+      }
+      gameStartedRef.current = true;
       isRemoteUpdateRef.current = true;
       syncGameState(newState);
       setGameStarted(true); // Always ensure UI switches to game
@@ -1455,7 +1181,7 @@ export default function App() {
       setShowSailingScreen(false);
       
       // 4. Remove room param from URL
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState(window.history.state, '', window.location.pathname);
     });
 
     socketService.onReturnedToLobby(() => {
@@ -1602,20 +1328,22 @@ export default function App() {
     setIsJoinSpectator(false);
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', finalRoomId);
-    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
 
     socketService.joinRoom(finalRoomId, playerName);
     setIsJoinedLobby(true);
   };
 
   const handleRestoreGame = (restoredRoomId: string) => {
+    setSailingText('重新驶入海域');
+    setShowSailingScreen(true);
     setInputRoomId(restoredRoomId);
     setIsRoomLocked(true);
     localStorage.setItem('catan_active_room', restoredRoomId);
     localStorage.setItem('catan_game_active', 'true');
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', restoredRoomId);
-    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
     
     socketService.connect();
     socketService.joinRoom(restoredRoomId, playerName, false);
@@ -1654,7 +1382,7 @@ export default function App() {
     setInputRoomId(newRoomId);
     setActiveLobbyTab('lobby');
 
-    window.history.replaceState({}, '', window.location.pathname);
+    window.history.replaceState(window.history.state, '', window.location.pathname);
   }, [roomState?.roomId]);
 
   const handleCopyRoomCode = () => {
@@ -1714,7 +1442,7 @@ export default function App() {
 
   const syncSettings = (newSettings: Partial<RoomState['settings']>) => {
     if (!roomState?.roomId) return;
-    socketService.updateSettings(roomState.roomId, { ...roomState.settings, ...newSettings });
+    socketService.updateSettings(roomState.roomId, newSettings);
   };
 
   const activePlayerId = (gameState?.phase === 'discard' && (gameState?.pendingDiscards?.length || 0) > 0)
@@ -1723,22 +1451,16 @@ export default function App() {
     ? gameState!.pendingGoldRewards[0].playerId
     : gameState?.currentPlayerIndex ?? 0;
 
-  const botProcessorId = useMemo(() => {
-    if (!roomState) return socketService.playerId;
-    // 1. Host (if not disconnected)
-    const hostPlayer = roomState.players.find(p => p.id === roomState.hostId);
-    if (hostPlayer && !hostPlayer.disconnected) return hostPlayer.id;
-    
-    // 2. Any other non-bot non-disconnected player
-    const fallbackPlayer = roomState.players.find(p => !p.disconnected && !p.isBot);
-    if (fallbackPlayer) return fallbackPlayer.id;
-    
-    // 3. Any non-disconnected spectator (important for bot-only games)
-    const fallbackSpectator = roomState.spectators?.find(s => !s.disconnected);
-    if (fallbackSpectator) return fallbackSpectator.id;
-    
-    return roomState.players[0]?.id || 0;
-  }, [roomState]);
+  const botProcessorId = roomState && socketService.isConnected ? getRoomController(roomState) : null;
+  controllerRef.current = botProcessorId;
+
+  useEffect(() => {
+    if (!gameState?.diceRollPending || isDiceRolling || botProcessorId !== socketService.playerId ||
+      !gameState.players[gameState.currentPlayerIndex]?.isBot) return;
+    // A new controller can finish the previous controller's in-flight dice roll.
+    const timer = setTimeout(resolveDiceRoll, 150);
+    return () => clearTimeout(timer);
+  }, [gameState?.diceRollPending, gameState?.currentPlayerIndex, gameState?.players, isDiceRolling, botProcessorId, resolveDiceRoll]);
 
   const amIActivePlayer = useMemo(() => {
     if (!gameState || isSpectator) return false;
@@ -1794,7 +1516,8 @@ export default function App() {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      setWindowSize({ width: w, height: h });
+      if (document.activeElement?.matches('input, textarea, [contenteditable="true"]')) return;
+      setWindowSize(previous => previous.width === w && previous.height === h ? previous : { width: w, height: h });
       if (w > h) {
         setDeviceOrientation('landscape');
       } else {
@@ -2018,28 +1741,18 @@ export default function App() {
 
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
-  });
-
+  const [isStandalone, setIsStandalone] = useState(isInstalledDisplay);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    
-    const mediaQuery = window.matchMedia('(display-mode: standalone)');
-    const handleMediaChange = (e: MediaQueryListEvent) => {
-      setIsStandalone(e.matches);
-    };
-    mediaQuery.addEventListener('change', handleMediaChange);
-
+    const handleInstall = (event: Event) => { event.preventDefault(); setDeferredPrompt(event); };
+    const update = () => setIsStandalone(isInstalledDisplay());
+    const queries = ['standalone', 'fullscreen', 'minimal-ui'].map(mode => matchMedia(`(display-mode: ${mode})`));
+    window.addEventListener('beforeinstallprompt', handleInstall);
+    window.addEventListener('appinstalled', update);
+    queries.forEach(query => query.addEventListener('change', update));
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      mediaQuery.removeEventListener('change', handleMediaChange);
+      window.removeEventListener('beforeinstallprompt', handleInstall);
+      window.removeEventListener('appinstalled', update);
+      queries.forEach(query => query.removeEventListener('change', update));
     };
   }, []);
 
@@ -2067,131 +1780,11 @@ export default function App() {
      }
    };
  
-   const lobbyTouchStartRef = useRef<{ x: number; y: number } | null>(null);
-   const [lobbyDragOffset, setLobbyDragOffset] = useState(0);
-   const [isLobbyDragging, setIsLobbyDragging] = useState(false);
-   const lobbySwipeLockedRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
-
-   const handleLobbyTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-     const target = e.target as HTMLElement;
-     if (
-       target.tagName === 'INPUT' || 
-       target.tagName === 'TEXTAREA' || 
-       target.closest('input') || 
-       target.closest('textarea') ||
-       target.closest('[role="slider"]') ||
-       target.closest('.no-swipe')
-     ) {
-       return;
-     }
-
-     const touch = e.touches[0];
-     if (touch) {
-       lobbyTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
-       lobbySwipeLockedRef.current = 'none';
-       setIsLobbyDragging(false);
-       setLobbyDragOffset(0);
-     }
-   };
-
-   const handleLobbyTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-     if (!lobbyTouchStartRef.current) return;
-     const touch = e.touches[0];
-     if (!touch) return;
-
-     const deltaX = touch.clientX - lobbyTouchStartRef.current.x;
-     const deltaY = touch.clientY - lobbyTouchStartRef.current.y;
-
-     if (lobbySwipeLockedRef.current === 'none') {
-       const xDist = Math.abs(deltaX);
-       const yDist = Math.abs(deltaY);
-       if (xDist > 8 || yDist > 8) {
-         if (xDist > yDist * 1.2) {
-           lobbySwipeLockedRef.current = 'horizontal';
-           setIsLobbyDragging(true);
-         } else {
-           lobbySwipeLockedRef.current = 'vertical';
-         }
-       }
-     }
-
-     if (lobbySwipeLockedRef.current === 'vertical') {
-       return;
-     }
-
-     if (lobbySwipeLockedRef.current === 'horizontal') {
-       if (e.cancelable) {
-         e.preventDefault();
-       }
-       const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
-       const currentIndex = tabs.indexOf(activeLobbyTab);
-
-       let currentDrag = deltaX;
-       if (currentIndex === 0 && deltaX > 0) {
-         currentDrag = deltaX * 0.25; // rubber band
-       } else if (currentIndex === tabs.length - 1 && deltaX < 0) {
-         currentDrag = deltaX * 0.25; // rubber band
-       }
-       setLobbyDragOffset(currentDrag);
-     }
-   };
-
-   const handleLobbyTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-     if (!lobbyTouchStartRef.current) return;
-     
-     const finalDrag = lobbyDragOffset;
-     const wasHorizontal = lobbySwipeLockedRef.current === 'horizontal';
-
-     lobbyTouchStartRef.current = null;
-     lobbySwipeLockedRef.current = 'none';
-     setIsLobbyDragging(false);
-     setLobbyDragOffset(0);
-
-     if (!wasHorizontal) return;
-
-     const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
-     const currentIndex = tabs.indexOf(activeLobbyTab);
-     if (currentIndex === -1) return;
-
-     const threshold = Math.min(window.innerWidth * 0.08, 40);
-
-     if (finalDrag < -threshold) {
-       const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
-       if (nextIndex !== currentIndex) {
-         setActiveLobbyTab(tabs[nextIndex]);
-       }
-     } else if (finalDrag > threshold) {
-       const prevIndex = Math.max(0, currentIndex - 1);
-       if (prevIndex !== currentIndex) {
-         setActiveLobbyTab(tabs[prevIndex]);
-       }
-     }
-   };
-
-  // Auto-restore fullscreen on any user click/touch during active gameplay if exited by system gestures
-  useEffect(() => {
-    if (!gameStarted || isStandalone) return;
-
-    const handleAutoFullscreenRestore = (e: MouseEvent | TouchEvent) => {
-      // Don't auto-restore if the user explicitly clicked an action that handles its own fullscreen or modals
-      if (!document.fullscreenElement) {
-        console.log("Auto-restoring fullscreen on gameplay interaction...");
-        const elem = document.documentElement as any;
-        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-        if (request) {
-          request.call(elem).catch(() => {});
-        }
-      }
-    };
-
-    window.addEventListener('click', handleAutoFullscreenRestore, { capture: true, passive: true });
-    window.addEventListener('touchstart', handleAutoFullscreenRestore, { capture: true, passive: true });
-
-    return () => {
-      window.removeEventListener('click', handleAutoFullscreenRestore, { capture: true });
-      window.removeEventListener('touchstart', handleAutoFullscreenRestore, { capture: true });
-    };
-  }, [gameStarted, isStandalone]);
+   const lobbySwipe = useLobbySwipe(activeLobbyTab, setActiveLobbyTab, () =>
+     !hasBackHandler() && !showSailingScreen && !showMapAlbum && !showMapGenerator &&
+     (activeLobbyTab !== 'profile' || profileActiveView === 'menu') &&
+     (activeLobbyTab !== 'rules' || rulesActiveView === 'menu')
+   );
 
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isStartingGame, setIsStartingGame] = useState(false);
@@ -2225,7 +1818,7 @@ export default function App() {
 
     const checkAndPlayBgm = () => {
       if (!isFullyInGame) return;
-      if (!audioService.enabled) return;
+      if (!audioService.enabled || showSoundModal || document.hidden) return;
 
       if (!audioService.isBgmPlaying) {
         audioService.playBgm();
@@ -2255,9 +1848,8 @@ export default function App() {
       window.removeEventListener('focus', checkAndPlayBgm);
       document.removeEventListener('visibilitychange', checkAndPlayBgm);
     };
-  }, [isAuthLoading, gameStarted, showSailingScreen, isJoinedLobby]);
+  }, [isAuthLoading, gameStarted, showSailingScreen, isJoinedLobby, showSoundModal]);
 
-  const sailingStartTimeRef = useRef(0);
   const [showDebugConsole, setShowDebugConsole] = useState(false);
   const [debugSaveName, setDebugSaveName] = useState('');
   const [debugSaveStatus, setDebugSaveStatus] = useState<{type: 'success' | 'error', text: string} | null>(null);
@@ -2266,25 +1858,7 @@ export default function App() {
   const logoClickCountRef = useRef(0);
   const logoStartTimeRef = useRef<number>(0);
 
-  const prevGameStarted = useRef(gameStarted);
-  
-  useEffect(() => {
-    if (gameStarted && !prevGameStarted.current && isJoinedLobby) {
-        if (!showSailingScreen && !isAutoReconnectingRef.current) {
-           sailingStartTimeRef.current = performance.now();
-           setSailingText("正在驶入海域......");
-           setShowSailingScreen(true);
-        }
-        // After game starts once, we no longer consider it an "auto-reconnect" trigger
-        if (isAutoReconnectingRef.current) {
-          isAutoReconnectingRef.current = false;
-        }
-    }
-    prevGameStarted.current = gameStarted;
-  }, [gameStarted, isJoinedLobby, showSailingScreen]);
-
   const [showGameOver, setShowGameOver] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDissolveRoomConfirm, setShowDissolveRoomConfirm] = useState(false);
   const [showExitOptions, setShowExitOptions] = useState(false);
   const [showReserveRoomModal, setShowReserveRoomModal] = useState(false);
@@ -2350,9 +1924,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let wasConnected = socketService.isConnected;
     return socketService.onConnectionChange((connected) => {
+      const reconnected = connected && !wasConnected;
+      wasConnected = connected;
       setIsConnected(connected);
-      if (connected && isJoinedLobby && !isAuthLoading && currentUser) {
+      if (reconnected && isJoinedLobby && !isAuthLoading && currentUser) {
         const roomId = roomState?.roomId || inputRoomId;
         if (roomId) {
           console.log('[App] Reconnected, rejoining room:', roomId);
@@ -2363,81 +1940,7 @@ export default function App() {
     });
   }, [isJoinedLobby, roomState?.roomId, inputRoomId, playerName, isAuthLoading, currentUser]);
 
-  // Auto-request fullscreen on first interaction and handle orientation
-  useEffect(() => {
-    const handleOrientation = () => {
-      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener('resize', handleOrientation);
-    window.addEventListener('orientationchange', handleOrientation);
-    return () => {
-      window.removeEventListener('resize', handleOrientation);
-      window.removeEventListener('orientationchange', handleOrientation);
-    };
-  }, []);
-
-  // Set meta tags for "Desktop" scaling feel on mobile
-  useEffect(() => {
-    if (isMobile) {
-      let meta = document.querySelector('meta[name="viewport"]');
-      if (!meta) {
-        meta = document.createElement('meta');
-        meta.setAttribute('name', 'viewport');
-        document.head.appendChild(meta);
-      }
-      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover');
-    }
-  }, [isMobile]);
-
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      const elem = document.documentElement as any;
-      const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-      if (request) {
-        request.call(elem).catch(() => {});
-      }
-      setIsFullscreen(true);
-    } else {
-      const exit = document.exitFullscreen || (document as any).webkitExitFullscreen || (document as any).mozCancelFullScreen || (document as any).msExitFullscreen;
-      if (exit) {
-        exit.call(document);
-      }
-      setIsFullscreen(false);
-    }
-  }, []);
-
-  // Force fullscreen on immediate load (might be blocked by browser) and listener as fallback
-  useEffect(() => {
-    const triggerFullscreen = () => {
-      if (!document.fullscreenElement) {
-        toggleFullscreen();
-      }
-    };
-    
-    // Attempt immediate
-    triggerFullscreen();
-
-    // Fallback listeners
-    window.addEventListener('click', triggerFullscreen);
-    window.addEventListener('touchstart', triggerFullscreen);
-    return () => {
-      window.removeEventListener('click', triggerFullscreen);
-      window.removeEventListener('touchstart', triggerFullscreen);
-    };
-  }, [toggleFullscreen]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
   const [isInitializingGame, setIsInitializingGame] = useState(false);
-  const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [playerCount, setPlayerCount] = useState(4);
   const [botConfig, setBotConfig] = useState<boolean[]>(Array(6).fill(false));
   const [mapType, setMapType] = useState<MapType>('archipelago');
@@ -2569,20 +2072,12 @@ export default function App() {
     }
   }, [gameState, gameStarted]);
 
-  const prevShowSailingScreen = useRef(showSailingScreen);
-  useEffect(() => {
-    if (prevShowSailingScreen.current && !showSailingScreen && gameStarted) {
-      hasManuallyInteractedRef.current = false;
-      centerMap(true);
-    }
-    prevShowSailingScreen.current = showSailingScreen;
-  }, [showSailingScreen, gameStarted, centerMap]);
-
   useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
-      setWindowSize({ width, height });
+      if (document.activeElement?.matches('input, textarea, [contenteditable="true"]')) return;
+      setWindowSize(previous => previous.width === width && previous.height === height ? previous : { width, height });
       
       // Force panels to always show
       setShowLeftPanel(true);
@@ -2736,38 +2231,53 @@ export default function App() {
   }, [rulesActiveView]);
 
   const [profileActiveView, setProfileActiveView] = useState<'menu' | string>('menu');
+  useBackHandler(showPwaGuide, () => { setShowPwaGuide(false); return true; }, 120);
+  useBackHandler(showSoundModal, () => { setShowSoundModal(false); return true; }, 110);
+  useBackHandler(!!confirmAction, () => { setConfirmAction(null); return true; }, 150);
+  useBackHandler(showDissolveRoomConfirm, () => { setShowDissolveRoomConfirm(false); return true; }, 140);
+  useBackHandler(showReserveRoomModal, () => { setShowReserveRoomModal(false); return true; }, 130);
+  useBackHandler(showExitOptions, () => { setShowExitOptions(false); return true; }, 100);
+  useBackHandler(showMapGenerator, () => { setShowMapGenerator(false); return true; }, 100);
+  useBackHandler(showMapAlbum, () => { setShowMapAlbum(false); return true; }, 90);
+  useBackHandler(showPlayerTradeModal, () => { setShowPlayerTradeModal(false); return true; }, 100);
+  useBackHandler(showTradeModal, () => { setShowTradeModal(false); return true; }, 100);
   const profileActiveViewRef = useRef(profileActiveView);
   useEffect(() => {
     profileActiveViewRef.current = profileActiveView;
   }, [profileActiveView]);
 
   useEffect(() => {
+    window.dispatchEvent(new Event('catan:navigation'));
+  }, [activeLobbyTab]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Push state to protect the stack
-    window.history.pushState({ preventBack: true }, "");
+    if (window.history.state?.catanHistoryVersion !== 5) {
+      window.history.replaceState({ catanBase: true, catanHistoryVersion: 5 }, '');
+      window.history.pushState({ catanBuffer: true, catanHistoryVersion: 5 }, '');
+      window.history.pushState({ catanApp: true, catanHistoryVersion: 5 }, '');
+    }
 
-    const handlePopState = () => {
-      // Re-push state immediately to block navigation
-      window.history.pushState({ preventBack: true }, "");
-
+    const performAppBackAction = () => {
+      if (runTopBackHandler()) return true;
       // 1. In game
       if (gameStartedRef.current) {
         if (showSoundModalRef.current) {
           setShowSoundModal(false);
-          return;
+          return true;
         }
         if (showRulesModalRef.current) {
           if (rulesActiveViewRef.current !== 'menu') {
             setRulesActiveView('menu');
-            return;
+            return true;
           }
           setShowRulesModal(false);
           setRulesActiveView('menu');
-          return;
+          return true;
         }
         // In game and no modals open -> do nothing (suppress exit / fullscreen interception prompt)
-        return;
+        return true;
       }
 
       // 2. Matching screen
@@ -2776,82 +2286,188 @@ export default function App() {
         if (handleReturnToLobbyRef.current) {
           handleReturnToLobbyRef.current();
         }
-        return;
+        return true;
       }
 
       // 3. Modals open in lobby
       if (showSoundModalRef.current) {
         setShowSoundModal(false);
-        return;
+        return true;
       }
       if (showRulesModalRef.current) {
         if (rulesActiveViewRef.current !== 'menu') {
           setRulesActiveView('menu');
-          return;
+          return true;
         }
         setShowRulesModal(false);
         setRulesActiveView('menu');
-        return;
+        return true;
       }
 
-      // 4. Lobby tabs (profile sub-views, rules sub-views, or non-main tabs -> return to profile/rules main view or lobby 'lobby')
+      // Primary tabs are peers. Only a nested view consumes an in-app back.
       const inLobby = !roomStateRef.current && !isJoinedLobbyRef.current;
       if (inLobby) {
         if (activeLobbyTabRef.current === 'profile') {
           if (profileActiveViewRef.current !== 'menu') {
             setProfileActiveView('menu');
-            return;
+            return true;
           }
-          setActiveLobbyTab('lobby');
-          return;
         }
         if (activeLobbyTabRef.current === 'rules') {
           if (rulesActiveViewRef.current !== 'menu') {
             setRulesActiveView('menu');
-            return;
+            return true;
           }
-          setActiveLobbyTab('lobby');
-          return;
-        }
-        if (activeLobbyTabRef.current !== 'lobby') {
-          setActiveLobbyTab('lobby');
-          setRulesActiveView('menu');
-          setProfileActiveView('menu');
-          return;
         }
       }
+
+      return false;
     };
 
-    window.addEventListener("popstate", handlePopState);
-
-    // Active touch interceptor near screen edges to block swipe-to-back/forward gesture on iOS and Android
-    let startX = 0;
-    let isEdgeTouch = false;
-
-    const handleTouchStart = (e) => {
-      const touch = e.touches[0];
-      if (!touch) return;
-      startX = touch.clientX;
-      const edgeThreshold = 40; // Pixels from left/right edges
-      isEdgeTouch = startX < edgeThreshold || startX > (window.innerWidth - edgeThreshold);
-    };
-
-    const handleTouchMove = (e) => {
-      if (isEdgeTouch) {
-        // Prevent default swipe-back or pull-to-navigate gestures
-        if (e.cancelable) {
-          e.preventDefault();
-        }
+    let lastEdgeBack = -Infinity;
+    let exitArmedAt = -Infinity;
+    let leaving = false;
+    let releasingGuard = false;
+    let restoringGuard = false;
+    const historyPosition = () => window.history.state?.catanApp ? 2 : window.history.state?.catanBuffer ? 1 : 0;
+    let lastHistoryPosition = historyPosition();
+    let exitRecoveryTimer: ReturnType<typeof setTimeout>;
+    const restoreGuard = () => {
+      if (!window.history.state?.catanApp && !restoringGuard) {
+        // Reuse the existing entry. pushState after Back makes Chromium mark
+        // every same-document entry skippable until the next real interaction.
+        restoringGuard = true;
+        window.history.go(2 - historyPosition());
       }
     };
-
-    window.addEventListener("touchstart", handleTouchStart, { passive: false });
-    window.addEventListener("touchmove", handleTouchMove, { passive: false });
-
+    const handleBack = (fromPop = false) => {
+      if (leaving) return;
+      if (performAppBackAction()) {
+        restoreGuard();
+        exitArmedAt = -Infinity;
+        setShowBackInterceptToast(false);
+      } else if (performance.now() - exitArmedAt < 1000) {
+        leaving = true;
+        setShowBackInterceptToast(false);
+        if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+        window.history.go(-historyPosition() - 1);
+        // An installed app may have no previous document to return to.
+        // Do not leave its in-app navigation permanently disabled in that case.
+        exitRecoveryTimer = setTimeout(() => {
+          leaving = false;
+          exitArmedAt = -Infinity;
+          restoreGuard();
+        }, 700);
+        return;
+      } else {
+        exitArmedAt = performance.now();
+        setShowBackInterceptToast(true);
+        // Leave the base entry exposed for one second so a native Back can exit
+        // an installed app even when it has no previous web document.
+        if (historyPosition() > 0) {
+          releasingGuard = true;
+          window.history.go(-historyPosition());
+        }
+        if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+        backToastTimeoutRef.current = setTimeout(() => {
+          exitArmedAt = -Infinity;
+          setShowBackInterceptToast(false);
+          if (!leaving) restoreGuard();
+        }, 1000);
+      }
+    };
+    const handlePopState = () => {
+      const position = historyPosition();
+      const movingForward = position > lastHistoryPosition;
+      lastHistoryPosition = position;
+      if (movingForward) {
+        restoringGuard = false;
+        if (position < 2 && exitArmedAt === -Infinity) restoreGuard();
+        return;
+      }
+      if (releasingGuard) { releasingGuard = false; return; }
+      if (leaving) return;
+      if (performance.now() - lastEdgeBack > 400) handleBack(true);
+      else {
+        lastEdgeBack = -Infinity;
+        restoreGuard();
+      }
+    };
+    const appBack = () => { handleBack(); };
+    const resetExit = () => {
+      leaving = false;
+      clearTimeout(exitRecoveryTimer);
+      exitArmedAt = -Infinity;
+      setShowBackInterceptToast(false);
+      if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+      restoreGuard();
+    };
+    const restoreOnVisible = () => { if (!document.hidden) resetExit(); };
+    const suppressClick = (event: MouseEvent) => {
+      if (shouldSuppressGestureClick()) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    let edge: { x: number; y: number; id: number; horizontal: boolean; cancelled: boolean } | null = null;
+    const cancelEdge = () => { edge = null; };
+    const handleTouchStart = (event: TouchEvent) => {
+      edge = null;
+      if (event.touches.length !== 1) return;
+      const target = event.target as HTMLElement;
+      if (target.closest('input,textarea,select,button,[role="slider"],[data-no-back],canvas')) return;
+      const canGoBack = hasBackHandler() || !gameStartedRef.current;
+      const touch = event.touches[0];
+      if (!canGoBack || touch.clientX > 32) return;
+      edge = { x: touch.clientX, y: touch.clientY, id: touch.identifier, horizontal: false, cancelled: false };
+      if (event.cancelable) event.preventDefault();
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!edge || edge.cancelled) return;
+      if (event.touches.length !== 1) { cancelEdge(); return; }
+      const touch = event.touches[0];
+      const dx = touch.clientX - edge.x;
+      const dy = touch.clientY - edge.y;
+      if (!edge.horizontal && Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
+        edge.horizontal = dx > Math.abs(dy) * 1.2;
+        edge.cancelled = !edge.horizontal;
+      }
+      if (edge.horizontal && event.cancelable) event.preventDefault();
+    };
+    const handleTouchEnd = (event: TouchEvent) => {
+      const gesture = edge;
+      edge = null;
+      if (!gesture || gesture.cancelled) return;
+      const touch = [...event.changedTouches].find(item => item.identifier === gesture.id);
+      if (touch && touch.clientX - gesture.x >= 48 && Math.abs(touch.clientY - gesture.y) < 60) {
+        lastEdgeBack = performance.now();
+        suppressGestureClick();
+        handleBack();
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('catan:back', appBack);
+    window.addEventListener('catan:navigation', resetExit);
+    window.addEventListener('pageshow', resetExit);
+    window.addEventListener('focus', resetExit);
+    document.addEventListener('visibilitychange', restoreOnVisible);
+    window.addEventListener('click', suppressClick, true);
+    window.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', cancelEdge);
+    // A refresh during the exit-confirmation second may restore the base entry.
+    restoreGuard();
     return () => {
-      window.removeEventListener("popstate", handlePopState);
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
+      clearTimeout(exitRecoveryTimer);
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('catan:back', appBack);
+      window.removeEventListener('catan:navigation', resetExit);
+      window.removeEventListener('pageshow', resetExit);
+      window.removeEventListener('focus', resetExit);
+      document.removeEventListener('visibilitychange', restoreOnVisible);
+      window.removeEventListener('click', suppressClick, true);
+      window.removeEventListener('touchstart', handleTouchStart, true);
+      window.removeEventListener('touchmove', handleTouchMove, true);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', cancelEdge);
       if (backToastTimeoutRef.current) {
         clearTimeout(backToastTimeoutRef.current);
       }
@@ -3445,13 +3061,14 @@ export default function App() {
     if (!isBotProcessor) return;
 
     const botPendingDiscards = gameState.pendingDiscards.filter(pd => gameState.players[pd.playerId]?.isBot);
-    
+    const timers: ReturnType<typeof setTimeout>[] = [];
     botPendingDiscards.forEach(pd => {
       if (!processedDiscardsRef.current[pd.playerId]) {
         processedDiscardsRef.current[pd.playerId] = true;
         
         // We use a small timeout to avoid hammering the state and simulate thinking
-        setTimeout(() => {
+        timers.push(setTimeout(() => {
+          if (controllerRef.current !== socketService.playerId || !socketService.isConnected) return;
           const player = gameState.players[pd.playerId];
           const resPool = Object.entries(player.resources).flatMap(([res, count]) => Array(count).fill(res as ResourceType));
           const toDiscard: Record<ResourceType, number> = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
@@ -3465,9 +3082,10 @@ export default function App() {
             }
           }
           discardCards(pd.playerId, toDiscard);
-        }, 1500 + (Math.random() * 1000));
+        }, 1500 + (Math.random() * 1000)));
       }
     });
+    return () => { timers.forEach(clearTimeout); processedDiscardsRef.current = {}; };
   }, [gameState?.phase, gameState?.pendingDiscards, botProcessorId, isDiceRolling, discardCards, gameState?.players, roomState]);
 
   // --- BOT LOGIC ---
@@ -3808,37 +3426,8 @@ export default function App() {
     }
   }, [gameState?.tradeOffers, botProcessorId, roomState?.roomId]);
 
-  useEffect(() => {
-    const imagesToPreload = [
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png',
-      FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png', // Icon Lumber (resource mapping)
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png', // Icon Dev
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png'  // Icon Road
-    ];
-    
-    let loadedCount = 0;
-    imagesToPreload.forEach(src => {
-      const img = new window.Image();
-      img.src = src;
-      img.onload = () => {
-        loadedCount++;
-        if (loadedCount === imagesToPreload.length) {
-          setAssetsLoaded(true);
-        }
-      };
-      img.onerror = () => {
-        loadedCount++;
-        if (loadedCount === imagesToPreload.length) {
-          setAssetsLoaded(true);
-        }
-      };
-    });
-  }, []);
-
   const handleStartGame = async () => {
     setIsStartingGame(true);
-    sailingStartTimeRef.current = performance.now();
     setSailingText("正在驶入海域......");
     setShowSailingScreen(true);
     // Yield to the browser so the Sailing screen renders before blocking
@@ -3870,13 +3459,15 @@ export default function App() {
     const assignedNames = roomState.players.map(p => p.name);
     
     // Instead of directly initGame, set to initial_dice_roll phase
+    const configuredSlots = getSetupSlots(roomState).filter(slot => slot.isBot || slot.player);
     const initialState = initGame(
       roomState.settings.playerCount, 
       roomState.settings.mapType as MapType, 
       roomState.settings.customBoard, 
-      roomState.settings.botConfig, 
+      configuredSlots.map(slot => slot.isBot),
       assignedSessions,
-      assignedNames
+      assignedNames,
+      configuredSlots.map(slot => slot.index + 1)
     );
     
     if (initialState) {
@@ -3968,21 +3559,13 @@ export default function App() {
     padding: 0
   };
 
-  if (isAuthLoading || !isAuthAnimFinished) {
-    return (
-      <SailingLoadingScreen 
-        key="auth-loading-sailing" 
-        onComplete={() => {
-          if (!isAuthLoading) setIsAuthAnimFinished(true);
-        }} 
-        text="正在驶入海域......" 
-        loop={isAuthLoading} 
-      />
-    );
+  const exitToast = showBackInterceptToast ? <div role="status" className="exit-toast">再按一次返回键退出卡坦岛</div> : null;
+  if (!isAuthAnimFinished) {
+    return <><StartupScreen waitingForAccount={isAuthLoading} onComplete={() => setIsAuthAnimFinished(true)} />{exitToast}</>;
   }
 
   if (!currentUser) {
-    return <LoginScreen onLoginSuccess={user => setCurrentUser(user)} />;
+    return <><LoginScreen onLoginSuccess={user => setCurrentUser(user)} />{exitToast}</>;
   }
 
   const actingPlayer = gameState?.players ? gameState.players[activePlayerId] : undefined;
@@ -4084,43 +3667,40 @@ export default function App() {
   const renderNonGameWrapper = (content: React.ReactNode) => {
     return (
       <div 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          position: 'fixed', 
-          top: 0, 
-          left: 0, 
-          overflow: 'hidden'
-        }} 
-        className="bg-slate-50"
+        className="app-screen app-safe-top bg-slate-50"
       >
         {content}
-        {renderGameModals()}
       </div>
     );
   };
 
   let mainContent: React.ReactNode = null;
 
-  if (!roomState && !isJoinedLobby) {
+  if (!roomState) {
     mainContent = renderNonGameWrapper(
       <div 
-        onTouchStart={handleLobbyTouchStart}
-        onTouchMove={handleLobbyTouchMove}
-        onTouchEnd={handleLobbyTouchEnd}
+        onTouchStart={lobbySwipe.onTouchStart}
+        onTouchMove={lobbySwipe.onTouchMove}
+        onTouchEnd={lobbySwipe.onTouchEnd}
+        onTouchCancel={lobbySwipe.onTouchCancel}
+        data-lobby-tabs={activeLobbyTab}
+        data-subpage={(activeLobbyTab === 'profile' && profileActiveView !== 'menu') || (activeLobbyTab === 'rules' && rulesActiveView !== 'menu') ? 'true' : undefined}
+        style={{ touchAction: 'pan-y' }}
         className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900"
       >
         <div
+          data-lobby-panels
           style={{
             width: '400%',
             display: 'flex',
-            height: '100%',
-            transform: `translate3d(calc(-${['lobby', 'rooms', 'profile', 'rules'].indexOf(activeLobbyTab) * 25}% + ${lobbyDragOffset}px), 0, 0)`,
-            transition: isLobbyDragging ? 'none' : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+            flex: '1 1 0%',
+            minHeight: 0,
+            transform: `translate3d(calc(-${['lobby', 'rooms', 'profile', 'rules'].indexOf(activeLobbyTab) * 25}% + ${lobbySwipe.offset}px), 0, 0)`,
+            transition: lobbySwipe.dragging ? 'none' : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
           {/* Tab 1: lobby */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+          <div inert={activeLobbyTab !== 'lobby'} aria-hidden={activeLobbyTab !== 'lobby'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
             <motion.div 
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }}
@@ -4149,7 +3729,7 @@ export default function App() {
                       <input 
                         type="text" 
                         value={inputRoomId}
-                        readOnly={isRoomLocked}
+                        readOnly={isRoomLocked || isJoinedLobby}
                         onChange={e => {
                           if (isRoomLocked) return;
                           const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
@@ -4164,9 +3744,13 @@ export default function App() {
                   <button 
                     id="join-room-button"
                     type="button"
+                    disabled={isJoinedLobby}
+                    aria-busy={isJoinedLobby}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
+                      if (isJoinedLobbyRef.current) return;
+                      isJoinedLobbyRef.current = true;
                       const activeRoom = localStorage.getItem('catan_active_room');
                       const enteredCode = inputRoomId.trim();
                       const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
@@ -4186,27 +3770,31 @@ export default function App() {
 
                       const newUrl = new URL(window.location.href);
                       newUrl.searchParams.set('room', targetRoom);
-                      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                      window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
 
+                      if (localStorage.getItem('catan_game_active') === 'true') {
+                        setSailingText('重新驶入海域');
+                        setShowSailingScreen(true);
+                      }
                       setIsJoinedLobby(true);
                       socketService.connect();
                       socketService.joinRoom(targetRoom, playerName, asSpec);
                     }}
-                    className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
+                    className="join-room-button w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer disabled:cursor-wait touch-manipulation z-20"
                   >
                     <span className="relative z-10 flex items-center justify-center gap-2">
                       <Swords size={16} />
                       进入海域
                     </span>
-                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                    <div className="join-room-sheen absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                   </button>
               </div>
             </motion.div>
           </div>
 
           {/* Tab 2: rooms */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-             <div className="w-full h-full flex flex-col items-center justify-center p-6">
+          <div inert={activeLobbyTab !== 'rooms'} aria-hidden={activeLobbyTab !== 'rooms'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+             <div className="w-full h-full flex flex-col">
                <GameRoomsTab 
                  currentUser={currentUser} 
                  isRoomLocked={isRoomLocked}
@@ -4220,6 +3808,8 @@ export default function App() {
                  onReturnToGame={(roomId) => {
                   const activeRoom = roomId || localStorage.getItem('catan_active_room');
                   if (activeRoom) {
+                    setSailingText('重新驶入海域');
+                    setShowSailingScreen(true);
                     setInputRoomId(activeRoom);
                     const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
                     setIsJoinedLobby(true);
@@ -4252,14 +3842,16 @@ export default function App() {
           </div>
 
           {/* Tab 3: profile */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
+          <div inert={activeLobbyTab !== 'profile'} aria-hidden={activeLobbyTab !== 'profile'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative overflow-hidden">
               <UserProfileModal
                 currentUser={currentUser}
                 onClose={() => {}}
                 onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
                 onLogout={handleFullLogout}
                 inline={true}
+                isActive={activeLobbyTab === 'profile'}
+                disableHistory={true}
                 onRestoreGame={handleRestoreGame}
                 activeView={profileActiveView}
                 onActiveViewChange={setProfileActiveView}
@@ -4268,14 +3860,14 @@ export default function App() {
           </div>
 
           {/* Tab 4: rules */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
-              <RulesModal isOpen={true} onClose={() => {}} inline={true} activeView={rulesActiveView} onActiveViewChange={setRulesActiveView} />
+          <div inert={activeLobbyTab !== 'rules'} aria-hidden={activeLobbyTab !== 'rules'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative overflow-hidden">
+              <RulesModal isOpen={true} isActive={activeLobbyTab === 'rules'} onClose={() => {}} inline={true} activeView={rulesActiveView} onActiveViewChange={setRulesActiveView} />
             </div>
           </div>
         </div>
         {/* Bottom Tab Bar */}
-        <div className="absolute bottom-0 left-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-6 flex justify-center gap-10 sm:gap-16 z-50">
+        <div hidden={(activeLobbyTab === 'profile' && profileActiveView !== 'menu') || (activeLobbyTab === 'rules' && rulesActiveView !== 'menu')} className="lobby-tab-bar shrink-0 w-full bg-white border-t border-slate-100 pt-1.5 px-6 flex justify-center gap-10 sm:gap-16 z-50">
            <button
              onClick={() => setActiveLobbyTab('lobby')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
@@ -4434,7 +4026,7 @@ export default function App() {
                   return (
                     <button
                       key={map.id}
-                      onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined }); }}
+                      onClick={() => syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined })}
                       className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-md shadow-indigo-100 ring-2 ring-indigo-500/10' : 'bg-white/60 border-slate-100 hover:border-indigo-200 hover:bg-white text-slate-700'}`}
                     >
                       <div className={`w-12 h-8 sm:w-16 sm:h-10 relative overflow-hidden flex items-center justify-center transition-transform duration-300 ${isSelected ? 'scale-105' : ''}`}>
@@ -4466,7 +4058,7 @@ export default function App() {
                     <>
                       <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center relative mb-0.5">
                         {!atlasLogoError ? (
-                          <img 
+                          <SmartImg 
                             src={MAP_ALBUM_ICON} 
                             className="w-full h-full object-contain relative z-10" 
                             alt="Atlas" 
@@ -4563,7 +4155,6 @@ export default function App() {
                         value={playerCount} 
                         onChange={e => {
                           const newCount = Number(e.target.value);
-                          setPlayerCount(newCount);
                           syncSettings({ playerCount: newCount });
                         }}
                         disabled={!isHostInLobby}
@@ -4600,11 +4191,7 @@ export default function App() {
 
             {/* Players List */}
             <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-0.5 no-scrollbar py-0.5">
-              {Array.from({ length: Math.max(playerCount, (roomState?.players.length || 0) + botConfig.filter(b => b).length) }).map((_, globalIndex) => {
-                const paddedBotConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
-                const isBot = paddedBotConfig[globalIndex];
-                const nonBotSlotsBefore = paddedBotConfig.slice(0, globalIndex).filter(b => !b).length;
-                const p = roomState?.players[nonBotSlotsBefore];
+              {(roomState ? getSetupSlots(roomState) : []).map(({ index: globalIndex, isBot, player: p }) => {
 
                 if (!isBot && p) {
                   return (
@@ -4668,27 +4255,24 @@ export default function App() {
                 }
 
                 return (
-                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-1.5 sm:p-2 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100/80 shadow-2xs' : 'bg-slate-50/50 border-dashed border-slate-200/80 hover:border-indigo-200 group'}`}>
+                  <div key={`empty-${globalIndex}`} data-ai-slot={globalIndex} data-configured={isBot} className={`flex items-center justify-between p-1.5 sm:p-2 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100/80 shadow-2xs' : 'bg-slate-50/50 border-dashed border-slate-200/80 hover:border-indigo-200 group'}`}>
                     <div className="flex items-center gap-2">
                       <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200/80 bg-white group-hover:bg-indigo-50/50'}`}>
                         {isBot ? <Bot size={12} className="text-indigo-600" /> : <Users size={10} className="text-slate-300" />}
                       </div>
                       <div className="flex flex-col">
-                        <span className={`text-[10px] sm:text-[11px] font-black leading-tight ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
+                        <span className={`text-[10px] sm:text-[11px] font-black leading-tight ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? `领主 AI ${globalIndex + 1}` : '未占领席位'}</span>
                         {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest leading-none mt-0.5">高级AI</span>}
                       </div>
                     </div>
                     {isHostInLobby && (
                       <button 
-                        onClick={() => {
-                          const newConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
-                          newConfig[globalIndex] = !newConfig[globalIndex];
-                          setBotConfig(newConfig);
-                          syncSettings({ botConfig: newConfig });
-                        }}
-                        className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
+                        onClick={() => socketService.toggleBot(roomState.roomId, globalIndex)}
+                        disabled={!isBot && roomState.players.length + botConfig.filter(Boolean).length >= playerCount}
+                        title={!isBot && roomState.players.length + botConfig.filter(Boolean).length >= playerCount ? '配置人数已满' : undefined}
+                        className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
                       >
-                        {isBot ? '撤防' : '配置AI玩家'}
+                        {isBot ? '取消配置' : '配置AI玩家'}
                       </button>
                     )}
                   </div>
@@ -4840,7 +4424,7 @@ export default function App() {
     mainContent = (
       <>
         <div style={lockedLandscapeStyle}>
-          <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
+          <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" >
             {/* Ocean atmosphere */}
             <div className="absolute inset-0 bg-white/40 pointer-events-none" />
             
@@ -5014,7 +4598,7 @@ export default function App() {
                       )}
                       {gameState.longestRoadPlayerId === p.id && (
                         <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-[#b79148]/20 border border-[#b79148]/40 shadow-sm" title={`最长道路 (${p.longestRoadLength})`}>
-                          <img src={ROAD_ICON} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
+                          <SmartImg src={ROAD_ICON} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
                         </div>
                       )}
                       {gameState.largestArmyPlayerId === p.id && (
@@ -5033,15 +4617,15 @@ export default function App() {
                     <div className="flex items-center mt-0.5 leading-none">
                       <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}/{gameState.mapType === 'standard' ? 10 : 14}分</span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
-                        <img src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
+                        <SmartImg src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
                         {resourceCount}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
-                        <img src={DEV_CARD_ICON} alt="dev" className="w-2.5 h-2.5 object-contain" />
+                        <SmartImg src={DEV_CARD_ICON} alt="dev" className="w-2.5 h-2.5 object-contain" />
                         {p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
-                        <img src={ROAD_ICON} alt="road" className="w-2.5 h-2.5 object-contain" />
+                        <SmartImg src={ROAD_ICON} alt="road" className="w-2.5 h-2.5 object-contain" />
                         {p.longestRoadLength}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="骑士">
@@ -5068,6 +4652,7 @@ export default function App() {
               className={`border-r border-black/5 flex flex-col bg-white h-full max-h-full min-h-0 shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
             >
               <RotatedScroll
+                data-game-resource-scroll
                 shouldApplyPortraitRotation={shouldApplyPortraitRotation}
                 className={`flex-1 flex flex-col min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'}`}
               >
@@ -5350,7 +4935,7 @@ export default function App() {
             </button>
           )}
 
-          <div className={`w-full h-full transition-opacity duration-700 ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`w-full h-full ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
             <Stage 
             ref={stageRef}
             width={stageWidth} 
@@ -5393,7 +4978,7 @@ export default function App() {
               }
             }}
           >
-            <Layer ref={boardLayerRef}>
+            <Layer ref={boardLayerRef} name="board-terrain">
               {hexCoords.filter(hex => !hex.isOuterSea).map((hex) => (
                 <HexCell 
                   key={hex.id} 
@@ -5732,6 +5317,9 @@ export default function App() {
                 );
               })}
 
+            </Layer>
+            {/* Animated markers must not redraw every terrain tile while scrolling. */}
+            <Layer name="board-markers">
               {/* Robber/Pirate Icons - Rendered last to be on top */}
               {hexCoords.map(hex => {
                 const isRobber = gameState.robberHexId === hex.id;
@@ -5876,10 +5464,9 @@ export default function App() {
                       size={isMobile ? 24 : 44}
                     />
                   </div>
-                  <div className="flex items-center justify-center text-center">
+                  <div data-dice-result className="dice-result" style={{ fontSize: `${(isMobile ? 24 : 44) * 0.8}px` }}>
                     <p 
-                      className={`font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}
-                      style={{ fontSize: `${(isMobile ? 24 : 44) * 0.8}px` }}
+                      className={`text-orange-500 ${isDiceRolling ? 'animate-pulse opacity-60' : ''}`}
                     >
                       {diceSum}
                     </p>
@@ -6313,7 +5900,7 @@ export default function App() {
                       setRoomState(null);
                       syncGameState(null as any);
                       setGameStarted(false);
-                      window.history.replaceState({}, '', window.location.pathname);
+                      window.history.replaceState(window.history.state, '', window.location.pathname);
                       setShowDissolveRoomConfirm(false);
                     }}
                     className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
@@ -6768,7 +6355,8 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            data-resource-choice-overlay
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-none flex items-center justify-center p-2 sm:p-4 w-full"
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
@@ -7404,16 +6992,18 @@ export default function App() {
       return point;
     }}>
       <>
-        {mainContent}
+        {gameStarted && roomState ? <AssetGate onCancel={handleReturnToLobby}>{mainContent}</AssetGate> : mainContent}
+        {!roomState && !isJoinedLobby && exitToast}
         {showSailingScreen && (
           <SailingLoadingScreen 
             key="sailing-loader" 
+            loop={!gameStarted || !isBoardReady}
             onComplete={() => {
               if (roomState) {
                 setShowSailingScreen(false);
               }
             }} 
-            onCancel={() => setShowSailingScreen(false)}
+            onCancel={() => { setShowSailingScreen(false); handleReturnToLobby(); }}
             text={sailingText} 
           />
         )}
@@ -7550,6 +7140,7 @@ function MapPreview({ board, isTopologyOnly = false, isLogo = false }: { board: 
                       text={hex.number.toString()}
                       fontSize={14}
                       fontStyle="bold"
+                      fontFamily="Times New Roman, Times, serif"
                       fill={hex.number === 6 || hex.number === 8 ? '#d32f2f' : '#333'}
                       offsetX={hex.number > 9 ? 8 : 4}
                       offsetY={6}
@@ -7766,11 +7357,16 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
           <Text
             text={hex.number.toString()}
             fontSize={12}
-            fontStyle="900"
+            name="hex-number"
+            fontStyle="bold"
             fill={hex.number === 6 || hex.number === 8 ? '#E74C3C' : '#1a1a1a'}
-            offsetX={hex.number > 9 ? 7 : 3.5}
-            offsetY={6}
-            fontFamily="Inter"
+            width={24}
+            height={16}
+            offsetX={12}
+            offsetY={8}
+            align="center"
+            verticalAlign="middle"
+            fontFamily="Times New Roman, Times, serif"
           />
           <ProbabilityDots value={hex.number} />
         </Group>
@@ -8060,4 +7656,3 @@ function DiscardPanel({ player, amount, onDiscard, onChange, shouldApplyPortrait
     </div>
   );
 }
-

@@ -1106,7 +1106,7 @@ export function useCatanGame() {
 
 
 
-  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[]) => {
+  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[], seatNumbers?: number[]) => {
     let cpIndex = 0;
     const players: Player[] = Array.from({ length: playerCount }, (_, i) => {
       const isConfiguredBot = botConfig ? botConfig[i] : false;
@@ -1120,7 +1120,7 @@ export function useCatanGame() {
         pSessionId = connectedPlayers?.[cpIndex];
         cpIndex++;
       } else if (isConfiguredBot) {
-        pName = `领主 AI ${i + 1}`;
+        pName = `领主 AI ${seatNumbers?.[i] ?? i + 1}`;
       }
 
       return {
@@ -1407,18 +1407,18 @@ export function useCatanGame() {
       
       const d1 = Math.floor(Math.random() * 6) + 1;
       const d2 = Math.floor(Math.random() * 6) + 1;
-      return { ...prev, dice: [d1, d2] as [number, number], hasRolled: true };
+      return { ...prev, dice: [d1, d2] as [number, number], hasRolled: true, diceRollPending: true };
     });
   }, []);
 
   const resolveDiceRoll = useCallback(() => {
     setGameState(prev => {
-      if (!prev || !prev.hasRolled) return prev;
+      if (!prev || !prev.hasRolled || prev.diceRollPending === false) return prev;
       if (prev.phase === 'initial_dice_roll' || prev.phase === 'setup') return prev;
       if (prev.dice[0] === 0 || prev.dice[1] === 0) return prev;
 
       const total = prev.dice[0] + prev.dice[1];
-      const next = { ...prev };
+      const next = { ...prev, diceRollPending: false };
 
       if (total === 7) {
         next.activeBuildMode = null;
