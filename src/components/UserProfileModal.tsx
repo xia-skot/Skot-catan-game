@@ -1380,7 +1380,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                       <td className="py-2 px-2 text-center">{p.breakdown?.largestArmy ? 2 : 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.vpCards || 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.islandBonus || 0}</td>
-                                      <td className="py-2 px-2 text-center font-bold text-emerald-700">{g.rankingStatus === 'pending' ? '待核对' : storedResultRankPoints(sortedPlayers, p, g).points}</td>
+                                      <td className="py-2 px-2 text-center font-bold text-emerald-700">{g.resultValid === false ? '待核对' : storedResultRankPoints(sortedPlayers, p, g).points}</td>
                                     </tr>
                                   );
                                 })}

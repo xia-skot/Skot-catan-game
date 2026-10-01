@@ -6,15 +6,17 @@ const accountId = '111111111111111111111111';
 const accounts = [{ _id: accountId, username: 'zx', isGuest: false, createdAt: new Date('2025-01-01T00:00:00Z') },
   ...['snow', 'haha'].map(name => ({ _id: name, username: name, isGuest: false, createdAt: new Date('2025-01-01T00:00:00Z') }))];
 
-test('two registered history awards and the monthly UI agree after a legacy restore', async ({ page }, info) => {
+for (const opponentRegistered of [true, false]) {
+test(`legacy history and monthly UI agree with opponent registered=${opponentRegistered}`, async ({ page }, info) => {
   const now = Date.now();
-  const records = ['639283', '792081'].map((roomId, index) => ({ roomId, gameId: roomId, identityVersion: index ? 1 : 2,
+  const scenarioAccounts = accounts.map(account => account.username === 'haha' ? { ...account, isGuest: !opponentRegistered } : account);
+  const records = ['639283', '792081'].map((roomId, index) => ({ roomId, gameId: roomId, identityVersion: 2,
     completedAt: new Date(now - index * 1000), mapType: 'archipelago', winnerId: 0, turnCount: 40,
     players: [index ? 'haha' : 'snow', 'zx'].map((name, id) => ({ id, name, isBot: false, isOriginalBot: false,
-      score: id ? (index ? 5 : 9) : 14, userId: index ? null : id ? accountId : name,
+      score: id ? (index ? 5 : 9) : 14, userId: index ? `old-guest-${id}` : id ? accountId : name,
       sessionId: index ? null : id ? accountId : name, isGuest: !!index })) }));
-  const history = buildAccountGameHistory(records, accounts, accountId, now);
-  const monthly = buildMonthlyLeaderboard(records, accounts, shanghaiMonth(new Date(now)), 20, now, accountId);
+  const history = buildAccountGameHistory(records, scenarioAccounts, accountId, now);
+  const monthly = buildMonthlyLeaderboard(records, scenarioAccounts, shanghaiMonth(new Date(now)), 20, now, accountId);
   await page.route('**/api/demo/session*', async route => {
     const original = await (await route.fetch()).json();
     await route.fulfill({ json: { ...original, user: { ...original.user, username: 'zx' } } });
@@ -30,6 +32,8 @@ test('two registered history awards and the monthly UI agree after a legacy rest
   await page.getByText('历史战绩', { exact: true }).click();
   const tables = page.locator('[data-history-scroll] table');
   await expect(tables).toHaveCount(2);
+  await expect(page.getByText(/待核对/)).toHaveCount(0);
+  await expect(tables.last().locator('tbody tr').filter({ hasText: 'haha' }).locator('td').last()).toHaveText('2');
   for (const table of await tables.all()) {
     const row = table.locator('tbody tr').filter({ hasText: 'zx' });
     await expect(row.locator('td').last()).toHaveText('1');
@@ -40,10 +44,12 @@ test('two registered history awards and the monthly UI agree after a legacy rest
   const row = page.locator('[data-leaderboard] tbody tr').filter({ hasText: 'zx' });
   await expect(row.locator('td').nth(1)).toHaveText('2');
   await expect(row.locator('td').nth(2)).toHaveText('2');
+  await expect(page.locator('[data-leaderboard] tbody tr').filter({ hasText: 'haha' })).toHaveCount(opponentRegistered ? 1 : 0);
   await page.getByText('我的本月积分：2', { exact: true }).click();
   await expect(page.locator('[data-leaderboard] details li')).toHaveCount(2);
   await page.screenshot({ path: info.outputPath('zx-monthly-two-points.png'), fullPage: true });
 });
+}
 
 test('the real demo history and leaderboard endpoints use the same recorded awards', async ({ request }) => {
   const session = await (await request.get('/api/demo/session')).json();
