@@ -1,14 +1,15 @@
-# Old Catan site notice
+# 卡坦岛完整项目
 
-Deploy this folder as the root of the old Render Web Service. It is independent of
-the live game, database, and Cloudflare Worker. Do not deploy it to the new
-`skot-game.onrender.com` entry service or to game services 01/02/03.
+当前完整包为 v15。独立入口、管理员分旬网址配置和积分核对步骤见 [入口部署说明](GATEWAY-DEPLOYMENT.md)。
 
-Build command: `npm install && npm run build`
+完整上传、Render 配置和本轮加载修复请查看 [部署说明](DEPLOYMENT.md)。
 
-Start command: `npm start`
+本机安装依赖：`npm ci --include=dev`。
 
-Health check path (optional): `/healthz`
+免配置演示：`npm run demo`，打开 `http://localhost:5174/demo.html`。
 
-The page intentionally does not redirect automatically; visitors can read the
-notice and open the new entry URL themselves. Old deep links show the same page.
+正式构建：`npm run build`；正式运行：配置环境变量和 `NODE_ENV=production` 后执行 `npm start`。
+
+线上数据库和邮件配置继续使用 Render 中已有的值；`.env.example` 仅提供示例。
+
+外部保活请查看 [保活说明](EXTERNAL-KEEP-ALIVE.md)。
