@@ -11,6 +11,7 @@ export interface RoomState {
     playerCount: number;
     mapType: string;
     botConfig: boolean[];
+    botDifficulties?: import('../shared/botDifficulty').BotDifficulty[];
     customBoard?: any[];
     customMapName?: string;
     customMapId?: string;
@@ -317,6 +318,13 @@ class SocketService {
       }
       this.authoritativeRoom = state;
       callback(state ? this.projectedRoom() : state);
+    });
+  }
+
+  onJoinError(callback: (message: string) => void) {
+    this.registerCallback('join_error', (message: string) => {
+      this.pendingJoin = null;
+      callback(message);
     });
   }
 

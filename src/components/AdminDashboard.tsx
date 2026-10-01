@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy } from 'lucide-react';
 import { UserProfileModal } from './UserProfileModal';
+import { GatewaySettings } from './GatewaySettings';
 import { safeFetchJson } from '../fetchUtils';
 import { requestAppBack, useBackHandler } from '../navigation';
 import { DEFAULT_LEADERBOARD_TOP_COUNT, isLeaderboardTopCount, sortAdminPlayers, type PlayerSortField, type SortDirection } from '../../shared/leaderboard';
@@ -325,11 +326,11 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
     }
   };
 
-  const handleOpenUserProfile = async (username: string) => {
+  const handleOpenUserProfile = async (username: string, userId?: string) => {
     setInspectingLoading(true);
     try {
       const token = localStorage.getItem('catan_auth_token');
-      const res = await fetch(`/api/admin/user/${encodeURIComponent(username)}/info`, {
+      const res = await fetch(`/api/admin/user/${encodeURIComponent(username)}/info${userId ? `?userId=${encodeURIComponent(userId)}` : ''}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('获取玩家信息失败');
@@ -496,6 +497,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
   // Sub-View 1: 系统设置
   const renderSystemContent = () => (
     <div className="space-y-4 font-sans">
+      <GatewaySettings />
       <form onSubmit={saveLeaderboardSettings} className="space-y-3 border-b border-slate-200 pb-4">
         <h4 className="flex items-center gap-2 text-xs font-bold text-slate-700"><Trophy size={14} className="text-amber-600" />月度排行榜</h4>
         <div className="flex flex-wrap items-center gap-3">
@@ -681,7 +683,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
             <div key={u._id} className="p-3 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-100 flex flex-wrap gap-y-2 items-center justify-between group transition-all" data-admin-player={u._id}>
               <div className="flex flex-1 items-center gap-3 min-w-0">
                 <div 
-                  onClick={() => handleOpenUserProfile(u.username)}
+                  onClick={() => handleOpenUserProfile(u.username, String(u._id))}
                   className="w-9 h-9 rounded-xl bg-indigo-100 hover:bg-indigo-200 flex items-center justify-center shrink-0 border border-indigo-200/60 cursor-pointer transition-colors"
                   title="点击查看玩家信息"
                 >
@@ -700,7 +702,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                     ) : (
                       <span 
                         className="truncate cursor-pointer hover:text-indigo-600 transition-colors"
-                        onClick={() => handleOpenUserProfile(u.username)}
+                        onClick={() => handleOpenUserProfile(u.username, String(u._id))}
                         title="点击查看玩家战绩"
                       >
                         {u.username}

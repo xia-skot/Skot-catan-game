@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, Volume2, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info, RotateCw, ChevronDown, ChevronRight, MoreHorizontal, Eraser, Eye } from 'lucide-react';
+import { X, User, Lock, Loader2, Trophy, Clock, Swords, LogOut, Settings, Edit3, ArrowLeft, Mail, Volume2, Bug, Trash2, Play, Database, MessageSquare, Send, Bell, Info, RotateCw, ChevronDown, ChevronRight, MoreHorizontal, Eraser } from 'lucide-react';
 import { SoundSettingsModal } from './SoundSettingsModal';
 import { AdminDashboard } from './AdminDashboard';
 import { Leaderboard } from './Leaderboard';
+import { SystemAnnouncements } from './SystemAnnouncements';
+import { recordedPlayerScore, storedResultRankPoints } from '../../shared/gameResult';
 import { safeFetchJson } from '../fetchUtils';
 import { requestAppBack, useBackHandler } from '../navigation';
-import { MESSAGE_READ_EVENT, markMessagesRead, readMessageIds } from '../messageReadState';
-import { MESSAGE_DISPLAY_EVENT, conversationIsHidden, messageDisplayAccount, messageDisplayStorageKey, readMessageDisplay, updateMessageDisplay, visibleConversationMessages } from '../localMessageDisplay';
+import { MESSAGE_READ_EVENT, markMessagesRead, readMessageIds, messageReadKey } from '../messageReadState';
+import { MESSAGE_DISPLAY_EVENT, conversationIsHidden, hideMessageConversations, messageDisplayAccount, messageDisplayStorageKey, readMessageDisplay, updateMessageDisplay } from '../localMessageDisplay';
+import { syncSessionToEntry } from '../entrySessionBridge';
 
 function UnreadBadge({ count }: { count: number }) {
   return count > 0 ? <span aria-label={`${count}条未读消息`} data-unread-count={count} className="absolute -top-1 -right-2 min-w-5 h-5 px-1 flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-white shadow-xs">{count > 99 ? '99+' : count}</span> : null;
@@ -108,6 +111,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
   const [games, setGames] = useState<any[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
+  const [gamesError, setGamesError] = useState('');
   const [serverStats, setServerStats] = useState<{ totalGames: number; wins: number; winRate: number } | null>(null);
 
   const [saves, setSaves] = useState<any[]>([]);
@@ -210,6 +214,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   currentAccountRef.current = account;
   const [messageSnapshot, setMessageSnapshot] = useState<{ account: string; messages: any[] }>({ account, messages: [] });
   const messages = React.useMemo(() => messageSnapshot.account === account ? messageSnapshot.messages : [], [messageSnapshot, account]);
+  const latestMessagesRef = useRef(messages);
+  latestMessagesRef.current = messages;
   const setMessages = useCallback((update: React.SetStateAction<any[]>) => {
     setMessageSnapshot(previous => {
       const before = previous.account === account ? previous.messages : [];
@@ -218,9 +224,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   }, [account]);
   const [displaySnapshot, setDisplaySnapshot] = useState(() => ({ account, state: readMessageDisplay(account) }));
   const displayState = displaySnapshot.account === account ? displaySnapshot.state : readMessageDisplay(account);
-  const [showHiddenConversations, setShowHiddenConversations] = useState(false);
   const [displayNotice, setDisplayNotice] = useState('');
-  const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
 
   const [replyText, setReplyText] = useState('');
@@ -235,7 +239,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     setInPrivateChatDetail(false);
     setSelectedChatPlayer(null);
     setReplyText('');
-    setShowHiddenConversations(false);
+    setShowTimestampDates(false);
     setDisplayNotice('');
     window.addEventListener(MESSAGE_DISPLAY_EVENT, refresh);
     window.addEventListener('storage', onStorage);
@@ -298,12 +302,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     if (!isAdmin) return [];
     const map = new Map<string, { username: string; msgs: any[]; lastMsg: any }>();
 
-    // 预先填入所有已注册玩家，不论对方有没有发消息，统一显示对方昵称
-    allPlayerNames.forEach(pName => {
-      const clean = pName.trim();
-      if (clean && clean !== currentUser?.username && clean !== '管理员' && clean !== 'admin') {
-        map.set(clean, { username: clean, msgs: [], lastMsg: null });
-      }
+    // Explicitly opened conversations can exist before the first message is sent.
+    Object.entries(displayState).forEach(([key, display]) => {
+      if (!key.startsWith('player:') || display.hiddenMessageIds) return;
+      const name = key.slice('player:'.length);
+      if (name && name !== currentUser?.username) map.set(name, { username: name, msgs: [], lastMsg: null });
     });
 
     allRawPrivateMsgs.forEach(msg => {
@@ -363,7 +366,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       return a.username.localeCompare(b.username);
     });
     return result;
-  }, [allRawPrivateMsgs, isAdmin, currentUser, allPlayerNames]);
+  }, [allRawPrivateMsgs, isAdmin, currentUser, displayState]);
 
   const adminDisplayName = React.useMemo(() => {
     if (currentUser?.role === 'admin' && currentUser?.username) return currentUser.username;
@@ -385,12 +388,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   }, [isAdmin, playerPrivateMsgs, selectedChatPlayer, adminConversations]);
 
   const conversationKey = (name?: string | null) => isAdmin ? `player:${name || ''}` : 'admin';
-  const activeConversationKey = conversationKey(selectedChatPlayer);
-  const activeChatMsgs = React.useMemo(() => visibleConversationMessages(displayState[activeConversationKey], activeRawChatMsgs), [displayState, activeConversationKey, activeRawChatMsgs]);
+  const activeChatMsgs = activeRawChatMsgs;
+  const [showTimestampDates, setShowTimestampDates] = useState(false);
   const visibleAdminConversations = adminConversations.filter(conv => !conversationIsHidden(displayState[conversationKey(conv.username)], conv.msgs));
   const playerConversationHidden = conversationIsHidden(displayState.admin, playerPrivateMsgs);
-  const hiddenConversationCount = isAdmin ? adminConversations.length - visibleAdminConversations.length : Number(playerConversationHidden);
-  const visiblePlayerMsgs = visibleConversationMessages(displayState.admin, playerPrivateMsgs);
+  const visiblePlayerMsgs = playerPrivateMsgs;
 
   const changeConversationDisplay = (key: string, action: 'hide' | 'clear' | 'reveal', msgs: any[] = []) => {
     const result = updateMessageDisplay(account, key, action, msgs);
@@ -409,41 +411,47 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     }
   }, [account, displayState, isAdmin, adminConversations, playerPrivateMsgs]);
 
-  const formatChatTime = (rawTime: any): string => {
+  const formatChatTime = (rawTime: any, includeDate?: boolean): string => {
     let d: Date;
     if (typeof rawTime === 'number') d = new Date(rawTime);
     else if (typeof rawTime === 'string') {
       const parsed = new Date(rawTime);
-      d = isNaN(parsed.getTime()) ? new Date() : parsed;
+      d = parsed;
     } else {
       return '';
     }
+    if (isNaN(d.getTime())) return '';
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
     const hours = String(d.getHours()).padStart(2, '0');
     const mins = String(d.getMinutes()).padStart(2, '0');
-    if (isToday) {
+    if (includeDate === false || (includeDate === undefined && isToday)) {
       return `${hours}:${mins}`;
     }
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
-    return `${month}-${day} ${hours}:${mins}`;
+    return `${d.getFullYear() !== now.getFullYear() ? `${d.getFullYear()}-` : ''}${month}-${day} ${hours}:${mins}`;
   };
 
   const processedChatMsgs = React.useMemo(() => {
     let lastShownTimeMs = 0;
+    let previousDay = '';
     return activeChatMsgs.map((msg, index) => {
       const rawTime = msg.createdAt || (msg.date ? new Date(msg.date).getTime() : 0);
       const timeMs = typeof rawTime === 'number' ? rawTime : (rawTime ? new Date(rawTime).getTime() : 0);
+      const day = timeMs && Number.isFinite(timeMs) ? new Date(timeMs).toDateString() : '';
+      const startsDay = !!day && day !== previousDay;
+      if (day) previousDay = day;
       let showTime = false;
-      if (index === 0 || !lastShownTimeMs || (timeMs && Math.abs(timeMs - lastShownTimeMs) >= 60 * 1000)) {
+      if (startsDay || index === 0 || !lastShownTimeMs || (timeMs && Math.abs(timeMs - lastShownTimeMs) >= 60 * 1000)) {
         showTime = true;
         if (timeMs) lastShownTimeMs = timeMs;
       }
       return {
         ...msg,
         showTime,
-        timeLabel: formatChatTime(rawTime || msg.date)
+        rawTime: rawTime || msg.date,
+        startsDay,
       };
     });
   }, [activeChatMsgs]);
@@ -462,14 +470,17 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   const markMessagesAsRead = useCallback((ids: string[]) => {
     if (!ids || ids.length === 0) return;
     const idSet = new Set(ids);
-    markMessagesRead(currentUser?.username || 'user', ids);
+    markMessagesRead(currentUser?.username || 'user', ids.map(id => {
+      const message = latestMessagesRef.current.find(item => item.id === id);
+      return message ? messageReadKey(message) : id;
+    }));
     setMessages(prev => prev.map(m => idSet.has(m.id) ? { ...m, read: true } : m));
   }, [currentUser?.username, setMessages]);
 
   useEffect(() => {
     const syncRead = () => {
       const ids = readMessageIds(currentUser?.username || 'user');
-      setMessages(previous => previous.map(message => ids.has(message.id) ? { ...message, read: true } : message));
+      setMessages(previous => previous.map(message => ({ ...message, read: ids.has(messageReadKey(message)) })));
     };
     window.addEventListener(MESSAGE_READ_EVENT, syncRead);
     window.addEventListener('storage', syncRead);
@@ -480,12 +491,16 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     const msgs = isAdmin ? adminConversations.find(conv => conv.username === partnerName)?.msgs || [] : playerPrivateMsgs;
     markMessagesAsRead(msgs.filter(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id).map(m => m.id));
     changeConversationDisplay(conversationKey(partnerName), 'hide', msgs);
-    setShowHiddenConversations(false);
   };
 
   const handleClearScreen = () => {
-    markMessagesAsRead(activeRawChatMsgs.filter(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id).map(m => m.id));
-    changeConversationDisplay(activeConversationKey, 'clear', activeRawChatMsgs);
+    const conversations = isAdmin
+      ? adminConversations.map(conv => ({ key: conversationKey(conv.username), messages: conv.msgs }))
+      : [{ key: 'admin', messages: playerPrivateMsgs }];
+    markMessagesAsRead(conversations.flatMap(conv => conv.messages.filter(m => !m.read && m.senderName !== currentUser?.username && m.senderId !== currentUser?.id).map(m => m.id)));
+    const result = hideMessageConversations(account, conversations);
+    setDisplaySnapshot({ account, state: result.state });
+    setDisplayNotice(result.persisted ? '' : '本地保存失败，此次显示设置仅在当前页面有效。');
   };
 
   const openConversation = (partnerName?: string) => {
@@ -500,7 +515,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   };
 
   const markAllMessagesAsRead = () => {
-    const unreadIds = messages.filter(m => !m.read).map(m => m.id);
+    const unreadIds = systemMsgs.filter(m => !m.read).map(m => m.id);
     markMessagesAsRead(unreadIds);
   };
 
@@ -516,7 +531,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       if (currentAccountRef.current !== account) return;
       if (data?.messages) {
         const readMsgs = readMessageIds(currentUser?.username || 'user');
-        setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.has(m.id) })));
+        setMessages(data.messages.map((m: any) => ({ ...m, read: readMsgs.has(messageReadKey(m)) })));
       }
       if (data?.adminUsername) {
         setAdminUsername(data.adminUsername);
@@ -612,9 +627,16 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     }
   };
 
-  const [adminMsgTitle, setAdminMsgTitle] = useState('');
-  const [adminMsgContent, setAdminMsgContent] = useState('');
-  const [adminMsgLoading, setAdminMsgLoading] = useState(false);
+  const publishAnnouncement = async (draft: { id?: string; title: string; content: string; revision?: number }) => {
+    const res = await fetch(draft.id ? `/api/admin/messages/${draft.id}` : '/api/admin/messages', {
+      method: draft.id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('catan_auth_token')}` },
+      body: JSON.stringify({ title: draft.title, content: draft.content, revision: draft.revision, targetUserId: null })
+    });
+    const data = await safeFetchJson(res);
+    if (!res.ok || !data?.success || !data.message) throw new Error(data?.error || '公告发布失败');
+    setMessages(previous => [data.message, ...previous.filter(message => message.id !== data.message.id)]);
+  };
 
   const [aboutInfo, setAboutInfo] = useState<{ content: string; updatedAt: string }>({ content: '', updatedAt: '' });
   const [aboutLoading, setAboutLoading] = useState(false);
@@ -656,25 +678,32 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   useEffect(() => {
     setGames([]);
     setServerStats(null);
+    setGamesError('');
     if (!currentUser?.username) return;
     
     setGamesLoading(true);
     const token = localStorage.getItem('catan_auth_token');
+    const controller = new AbortController();
     const fetchUrl = currentUser.isViewingAsAdmin
-      ? `/api/admin/user/${encodeURIComponent(currentUser.username)}/games`
+      ? `/api/admin/user/${encodeURIComponent(currentUser.username)}/games${currentUser.id ? `?userId=${encodeURIComponent(currentUser.id)}` : ''}`
       : '/api/user/games';
       
     fetch(fetchUrl, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` }, signal: controller.signal
     })
-    .then(res => res.ok && res.headers.get('content-type')?.includes('application/json') ? res.json() : null)
+    .then(async res => {
+      if (!res.ok || !res.headers.get('content-type')?.includes('application/json')) throw new Error('历史战绩读取失败，请重新进入此页面');
+      return res.json();
+    })
     .then(data => {
+      if (controller.signal.aborted) return;
       if (data?.games) setGames(data.games);
       if (data?.stats) setServerStats(data.stats);
     })
-    .catch(() => {})
-    .finally(() => setGamesLoading(false));
-  }, [currentUser?.username]);
+    .catch(error => { if (!controller.signal.aborted) setGamesError(error.message || '历史战绩读取失败'); })
+    .finally(() => { if (!controller.signal.aborted) setGamesLoading(false); });
+    return () => controller.abort();
+  }, [currentUser?.id, currentUser?.username, currentUser?.isViewingAsAdmin, activeView === 'history']);
 
   const fetchSaves = async () => {
     if (currentUser?.role !== 'admin') return;
@@ -788,6 +817,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       setSuccessText('修改成功！');
       localStorage.setItem('catan_auth_token', data.token);
       localStorage.setItem('catan_player_name', data.user.username);
+      syncSessionToEntry(data.token, data.user.username);
       setOldPassword('');
       setPassword('');
       
@@ -804,6 +834,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
   };
 
   const isGameWin = (g: any, username?: string) => {
+    if (g?.viewerPlayerId != null) return String(g.viewerPlayerId) === String(g.winnerId);
     if (!g || !username || !g.players) return false;
     const cleanUser = username.trim().toLowerCase();
     if (g.winnerId !== undefined && g.winnerId !== null) {
@@ -870,15 +901,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0"><button
-              onClick={handleClearScreen}
-              disabled={activeChatMsgs.length === 0}
-              className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors shrink-0 disabled:opacity-40 flex items-center gap-1 text-xs"
-              title="清屏（仅本机隐藏现有消息，保留聊天记录）"
-              aria-label="清屏（仅本机）"
-            >
-              <Eraser size={16} />清屏
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
             <button onClick={requestAppBack} title="返回" className="p-2 text-slate-600 hover:bg-slate-100 rounded-full"><ArrowLeft size={18} /></button></div>
           </div>
 
@@ -903,9 +926,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     {/* Centered Timestamp (仅超过1分钟才显示，1分钟以内不重复显示) */}
                     {msg.showTime && (
                       <div className="flex justify-center my-2 select-none">
-                        <span className="text-[10px] text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full font-medium shadow-2xs">
-                          {msg.timeLabel || msg.date}
-                        </span>
+                        <button type="button" title="切换日期显示" aria-label="切换日期显示"
+                          onClick={() => setShowTimestampDates(previous => !previous)}
+                          className="text-[10px] text-slate-400 bg-slate-200/60 px-2.5 py-0.5 rounded-full font-medium shadow-2xs">
+                          {formatChatTime(msg.rawTime, msg.startsDay || showTimestampDates) || msg.date}
+                        </button>
                       </div>
                     )}
 
@@ -971,7 +996,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       )}
 
       {/* Header Profile Section */}
-      {activeView !== 'leaderboard' && <div className={`bg-white px-4 sm:px-5 ${headerPaddingClass} shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 shadow-sm`}>
+      {activeView !== 'leaderboard' && <div data-page-header className={`bg-white px-4 sm:px-5 ${headerPaddingClass} shadow-2xs z-10 shrink-0 relative flex justify-between items-center w-full rounded-none border-b border-slate-200/80 shadow-sm`}>
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center border-2 border-indigo-200/50 relative overflow-hidden shrink-0">
             <User size={22} />
@@ -993,6 +1018,14 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         </div>
         
         <div className="flex items-center gap-1">
+            {activeView === 'private_chat' && !inPrivateChatDetail && (
+              <button type="button" onClick={handleClearScreen}
+                disabled={isAdmin ? visibleAdminConversations.length === 0 : playerConversationHidden}
+                title="清屏（仅本机隐藏会话）" aria-label="清屏（仅本机）"
+                className="flex items-center gap-1 p-2 text-xs text-slate-500 hover:bg-slate-100 rounded-lg disabled:opacity-40">
+                <Eraser size={16} />清屏
+              </button>
+            )}
             {(activeView !== 'menu' || !inline) && (
               <button 
                 onClick={requestAppBack}
@@ -1006,7 +1039,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
       </div>}
 
       <div 
-        className="flex-1 min-h-0 overflow-y-auto no-scrollbar relative p-4 space-y-4 max-w-2xl w-full mx-auto touch-pan-y"
+        className={`flex-1 min-h-0 no-scrollbar relative p-4 ${activeView === 'messages' ? '' : 'max-w-2xl'} w-full mx-auto touch-pan-y ${activeView === 'history' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto space-y-4'}`}
         style={{ overscrollBehaviorY: 'contain', WebkitOverflowScrolling: 'touch' }}
       >
         {activeView === 'edit' && (
@@ -1261,11 +1294,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               initial={inline ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="space-y-6"
+              className="flex-1 min-h-0 flex flex-col gap-4"
             >
               
               {/* Stats Box (moved to top) */}
-              <div className="flex gap-4 p-4 bg-white rounded-3xl shadow-sm border border-slate-100">
+              <div data-history-summary className="shrink-0 flex gap-4 p-4 bg-white rounded-3xl shadow-sm border border-slate-100">
                   <div className="flex-1 flex flex-col items-center">
                     <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">场次</span>
                     <span className="text-xl font-black text-slate-800 mt-1">{totalGames}</span>
@@ -1281,53 +1314,38 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               </div>
 
               {/* Match History (moved below) */}
-              <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-100">
+              <div data-history-scroll className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-white px-1 touch-pan-y">
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
                    <Clock size={16} /> 历史战绩明细
                 </h3>
                   
                 <div className="flex flex-col">
-                  {currentUser.isGuest ? (
-                    <div className="py-8 text-center text-slate-400 text-xs font-medium">
-                      游客无法查阅战绩，请注册正式账号。
-                    </div>
-                  ) : gamesLoading ? (
+                  {currentUser.isGuest ? <div className="text-center text-slate-400 py-8">游客无法查阅战绩，请注册正式账号。</div> : gamesLoading ? (
                     <div className="py-8 flex justify-center text-slate-400">
                       <Loader2 className="w-6 h-6 animate-spin" />
                     </div>
-                  ) : games.length === 0 ? (
+                  ) : gamesError ? <p role="alert" className="py-8 text-center text-sm text-red-600">{gamesError}</p> : games.length === 0 ? (
                     <div className="py-8 text-center text-slate-400 text-xs font-medium border-2 border-dashed border-slate-100 rounded-2xl">
                       暂无历史战绩
                     </div>
                   ) : (
                     games.map((g, i) => {
                       const calcTotalScore = (p: any) => {
-                        const setPts = (p.breakdown?.settlements || 0) * 1;
-                        const cityPts = p.breakdown?.cities ? p.breakdown.cities * 2 : 0;
-                        const roadPts = p.breakdown?.longestRoad ? 2 : 0;
-                        const armyPts = p.breakdown?.largestArmy ? 2 : 0;
-                        const vpCardsPts = p.breakdown?.vpCards || 0;
-                        const islandPts = p.breakdown?.islandBonus || 0;
-                        const breakdownSum = setPts + cityPts + roadPts + armyPts + vpCardsPts + islandPts;
-                        return Math.max(p.score || 0, breakdownSum);
+                        return recordedPlayerScore(p) ?? 0;
                       };
                       const sortedPlayers = [...(g.players || [])].sort((a, b) => calcTotalScore(b) - calcTotalScore(a));
                       const isWin = isGameWin(g, currentUser?.username);
                       return (
                         <div key={i} className="py-4 border-b border-slate-100 last:border-b-0 flex flex-col gap-2 relative group">
-                          {isWin && (
-                            <div className="absolute top-0 right-0 w-12 h-12 bg-yellow-400/10 rounded-bl-full flex items-start justify-end p-2 pointer-events-none">
-                              <Trophy size={14} className="text-yellow-500" />
-                            </div>
-                          )}
-                          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                          <div className="flex items-center gap-3 flex-wrap text-[10px] text-slate-400 mb-1">
                             <span className="font-bold text-slate-600">ID: {g.roomId}</span>
-                            <span className="font-mono">{new Date(g.completedAt).toLocaleDateString()}</span>
+                            <span className="font-mono">{new Date(g.completedAt).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })}</span>
+                            {isWin && <Trophy size={12} className="text-yellow-500" />}
                           </div>
-                          
+                          {g.rankingStatus === 'pending' && <p role="status" className="text-xs text-amber-700">{g.rankingReason}，暂未计入月榜。</p>}
                           {/* Scrolling Table */}
                           <div className="overflow-x-auto pb-2 -mx-2 px-2">
-                            <table className="w-full text-left border-collapse text-xs">
+                            <table className="w-full text-left border-collapse text-xs [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap [&_th]:px-1 [&_td]:px-1">
                               <thead>
                                 <tr className="text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">
                                   <th className="py-2 px-2 text-center w-8">排名</th>
@@ -1339,6 +1357,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                   <th className="py-2 px-2 text-center">骑</th>
                                   <th className="py-2 px-2 text-center">卡</th>
                                   <th className="py-2 px-2 text-center">岛</th>
+                                  <th className="py-2 px-2 text-center">积分</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-50">
@@ -1349,7 +1368,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                   return (
                                     <tr key={idx} className={`${isWinner ? 'bg-yellow-50/30' : ''}`}>
                                       <td className="py-2 px-2 text-center font-black text-slate-400">
-                                        {idx + 1}
+                                        {storedResultRankPoints(sortedPlayers, p, g).rank}
                                       </td>
                                       <td className="py-2 px-2 font-bold text-slate-700 whitespace-nowrap">
                                         {p.name} {isWinner && '👑'}
@@ -1361,6 +1380,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                                       <td className="py-2 px-2 text-center">{p.breakdown?.largestArmy ? 2 : 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.vpCards || 0}</td>
                                       <td className="py-2 px-2 text-center">{p.breakdown?.islandBonus || 0}</td>
+                                      <td className="py-2 px-2 text-center font-bold text-emerald-700">{g.rankingStatus === 'pending' ? '待核对' : storedResultRankPoints(sortedPlayers, p, g).points}</td>
                                     </tr>
                                   );
                                 })}
@@ -1378,155 +1398,8 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
         )}
         
         {activeView === 'messages' && (
-          <AnimatePresence mode="wait">
-            <motion.div
-              key="messages"
-              initial={inline ? false : { opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4 font-sans"
-            >
-              {/* System Messages Card */}
-              <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-100 flex flex-col min-h-[320px]">
-                <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
-                  <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                    <Bell size={16} className="text-indigo-500" /> 系统公告与通知
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    {systemUnreadCount > 0 && (
-                      <button 
-                        onClick={() => {
-                          markMessagesAsRead(systemMsgs.filter(m => !m.read).map(m => m.id));
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
-                        title="标记系统消息为已读"
-                      >
-                        <span className="text-[11px]">一键已读</span>
-                      </button>
-                    )}
-                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                      {systemMsgs.length} 条
-                    </span>
-                  </div>
-                </div>
-                
-                {systemMsgs.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-100 rounded-2xl bg-slate-50/50 py-12">
-                    <Bell className="w-8 h-8 opacity-30 text-indigo-400 mb-2" />
-                    <p>暂无系统公告或系统通知</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
-                    {systemMsgs.map((msg) => {
-                      const isExpanded = expandedMessageId === msg.id;
-                      return (
-                        <div 
-                          key={msg.id} 
-                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${msg.read ? 'bg-slate-50/80 border-slate-100' : 'bg-white border-indigo-100 shadow-xs'}`}
-                          onClick={() => {
-                            setExpandedMessageId(isExpanded ? null : msg.id);
-                            if (!msg.read) markMessageAsRead(msg.id);
-                          }}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className="shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
-                                系统公告
-                              </span>
-                              <div className={`w-2 h-2 rounded-full shrink-0 ${msg.read ? 'bg-transparent' : 'bg-red-500'}`} />
-                              <h4 className={`text-xs truncate ${msg.read ? 'text-slate-500 font-medium' : 'text-slate-800 font-bold'}`}>
-                                {msg.title}
-                              </h4>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className="text-[10px] text-slate-400 font-mono">{msg.date}</span>
-                              {currentUser?.role === 'admin' && (
-                                <button
-                                  onClick={(e) => handleDeleteMessage(e, msg.id)}
-                                  className="p-1 text-slate-300 hover:text-red-500 rounded-lg transition-colors"
-                                  title="删除此条消息"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <AnimatePresence>
-                            {isExpanded && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                                animate={{ height: 'auto', opacity: 1, marginTop: 8 }}
-                                exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                                className="overflow-hidden"
-                              >
-                                <p className="text-xs leading-relaxed text-slate-600 pl-3 border-l-2 border-indigo-200 bg-slate-50/50 p-2.5 rounded-r-xl whitespace-pre-wrap">
-                                  {msg.content}
-                                </p>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {currentUser?.role === 'admin' && (
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col gap-2.5">
-                    <h4 className="text-xs font-bold text-slate-800">发布全服系统消息</h4>
-                    <input 
-                      type="text"
-                      placeholder="标题"
-                      value={adminMsgTitle}
-                      onChange={(e) => setAdminMsgTitle(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all"
-                    />
-                    <textarea 
-                      placeholder="内容"
-                      value={adminMsgContent}
-                      onChange={(e) => setAdminMsgContent(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-700 font-medium outline-none focus:border-indigo-500 transition-all resize-none min-h-[70px]"
-                    />
-                    <button 
-                      disabled={!adminMsgTitle.trim() || !adminMsgContent.trim() || adminMsgLoading}
-                      onClick={() => {
-                        setAdminMsgLoading(true);
-                        fetch('/api/admin/messages', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${localStorage.getItem('catan_auth_token')}`
-                          },
-                          body: JSON.stringify({ 
-                            title: adminMsgTitle, 
-                            content: adminMsgContent,
-                            targetUserId: null
-                          })
-                      })
-                      .then(safeFetchJson)
-                      .then(data => {
-                        if (data?.success) {
-                          setMessages([data.message, ...messages]);
-                          setAdminMsgTitle('');
-                          setAdminMsgContent('');
-                        } else {
-                          alert(data?.error || '发布失败');
-                        }
-                      })
-                        .catch(() => alert('发布失败，请检查网络'))
-                        .finally(() => setAdminMsgLoading(false));
-                      }}
-                      className="w-full bg-indigo-600 text-white font-bold text-xs py-2 rounded-xl shadow-xs hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                    >
-                      {adminMsgLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      发布全服消息
-                    </button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </AnimatePresence>
+          <SystemAnnouncements messages={systemMsgs} loading={messagesLoading} isAdmin={isAdmin} isActive={isActive}
+            onRead={markMessageAsRead} onReadAll={markAllMessagesAsRead} onDelete={handleDeleteMessage} onPublish={publishAnnouncement} />
         )}
 
         {/* Dedicated QQ-Style Private Chat View */}
@@ -1542,13 +1415,15 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                 className="space-y-3 font-sans py-2"
               >
                 {displayNotice && <p role="status" className="text-xs text-amber-700">{displayNotice}</p>}
-                {hiddenConversationCount > 0 && (
-                  <button type="button" onClick={() => setShowHiddenConversations(value => !value)} aria-pressed={showHiddenConversations}
-                    className="flex items-center gap-2 text-xs text-slate-600 p-2 rounded-lg hover:bg-slate-100">
-                    <Eye size={16} />{showHiddenConversations ? '收起已隐藏会话' : `已隐藏会话 (${hiddenConversationCount})`}
-                  </button>
-                )}
-                {!isAdmin ? playerConversationHidden && !showHiddenConversations ? (
+                <select aria-label="选择玩家发起私信" value="" onChange={event => {
+                  if (event.target.value) openConversation(isAdmin ? event.target.value : undefined);
+                }} className="w-full bg-white border border-slate-200 text-indigo-700 text-sm font-bold rounded-lg px-3 py-3 outline-none focus:border-indigo-500">
+                  <option value="" disabled>选择玩家发起私信</option>
+                  {(isAdmin ? [...new Set(allPlayerNames)].filter(name => name && name !== currentUser?.username) : [adminDisplayName]).map(name => (
+                    <option key={name} value={name}>{name}{!isAdmin ? '（管理员）' : ''}</option>
+                  ))}
+                </select>
+                {!isAdmin ? playerConversationHidden ? (
                   <p className="py-12 text-center text-xs text-slate-500">暂无会话</p>
                 ) : (
                   /* 普通玩家：与管理员私信条形框 */
@@ -1585,17 +1460,17 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                   /* 管理员视角：不同玩家显示独立的条形框列表 */
                   <div className="space-y-2.5">
                     <div className="text-xs font-bold text-slate-500 px-1 mb-2 flex items-center justify-between">
-                      <span>玩家私信列表 ({showHiddenConversations ? adminConversations.length : visibleAdminConversations.length})</span>
+                      <span>玩家私信列表 ({visibleAdminConversations.length})</span>
                     </div>
 
-                    {(showHiddenConversations ? adminConversations : visibleAdminConversations).length === 0 ? (
+                    {visibleAdminConversations.length === 0 ? (
                       <div className="py-12 flex flex-col items-center justify-center text-slate-400 text-xs font-medium border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 space-y-2">
                         <MessageSquare className="w-8 h-8 opacity-40 text-indigo-500" />
                         <p className="font-bold text-slate-600">暂无玩家私信记录</p>
                       </div>
                     ) : (
-                      (showHiddenConversations ? adminConversations : visibleAdminConversations).map((conv) => {
-                        const visibleMsgs = visibleConversationMessages(displayState[conversationKey(conv.username)], conv.msgs);
+                      visibleAdminConversations.map((conv) => {
+                        const visibleMsgs = conv.msgs;
                         const lastMsg = visibleMsgs[visibleMsgs.length - 1];
                         return (
                           <ConversationRow key={conv.username} name={conv.username} onOpen={() => openConversation(conv.username)} onHide={() => handleHideConversation(conv.username)}>
@@ -1972,7 +1847,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
              onClick={onLogout}
              className="w-full max-w-[220px] flex items-center justify-center gap-2 text-xs font-black text-red-500 bg-red-50 hover:bg-red-100 py-2.5 px-4 rounded-xl transition-all border border-red-100/80 shadow-2xs hover:shadow-xs active:scale-95"
            >
-             <LogOut size={15} /> 退出登录
+             <LogOut size={15} className="rotate-180" /> 退出登录
            </button>
          </div>
       )}
