@@ -10,13 +10,14 @@ interface EligibleGame { roomId: string; completedAt: number; winnerId: string; 
 export interface LeaderboardUserStats { totalGames: number; wins: number; winRate: number; recent3DayGames: number }
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
+const isRegistered = (user?: StoredDocument): user is StoredDocument => !!user?._id && user.isGuest === false && user.role !== 'guest';
 const seatId = (value: unknown): string | null =>
   (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) ||
   (typeof value === 'string' && value.trim().length > 0) ? String(value) : null;
 
 /** v17 captured identities before the opening dice reordered seats. Repair only complete, unambiguous permutations. */
 export function repairLegacySeatAttribution(record: StoredDocument, users: readonly StoredDocument[]): StoredDocument {
-  if (record?.identityVersion !== 1 || record.scoringVersion || !Array.isArray(record.players)) return record;
+  if (record?.accountBindingVersion === 1 || record?.identityVersion !== 1 || record.scoringVersion || !Array.isArray(record.players)) return record;
   const completedAt = recordTime(record.completedAt);
   if (completedAt === null) return record;
   const names = new Map<string, StoredDocument[]>();
@@ -26,25 +27,6 @@ export function repairLegacySeatAttribution(record: StoredDocument, users: reado
   }
   const linked = record.players.map((player: any) => player?.userId).filter((id: unknown): id is string => typeof id === 'string' && !!id);
   if (new Set(linked).size !== linked.length) return record;
-  // The restore/pre-upgrade writer manufactured guest flags for every seat and
-  // discarded all identities. Treat ONLY that exact legacy shape as name-only history.
-  if (!linked.length && record.players.length >= 2 && record.players.every((player: any) =>
-    player && player.userId === null && player.sessionId === null && player.isGuest === true)) {
-    const mapped = record.players.map((player: any) => {
-      const candidates = typeof player.name === 'string' ? names.get(normalizeName(player.name)) || [] : [];
-      const user = candidates.length === 1 ? candidates[0] : undefined;
-      const registeredAt = user ? recordTime(user.createdAt) : null;
-      const registered = user?.isGuest === false && user.role !== 'guest' && registeredAt !== null && registeredAt <= completedAt;
-      return { ...player, userId: registered ? String(user._id) : null,
-        isGuest: !registered, isOriginalBot: registered ? false : player.isOriginalBot,
-        autoplayMs: undefined };
-    });
-    const recovered = mapped.filter((player: any) => player.userId).map((player: any) => player.userId);
-    if (recovered.length && new Set(recovered).size === recovered.length) {
-      return { ...record, attributionRepair: 'legacy-name-only', players: mapped };
-    }
-    return record;
-  }
   if (!linked.length) return record;
   const matched: Array<StoredDocument | null> = [];
   for (const player of record.players) {
@@ -112,7 +94,7 @@ export function eligibleLeaderboardGames(records: readonly StoredDocument[], now
     if (!game && !explicitId) continue;
     const roster = game?.players.map(player => [player.id, player.name, player.isBot, player.isGuest, player.score, player.userId, player.sessionId, player.autoplayMs, player.rankAward])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-    const signature = JSON.stringify([record.mapType, record.turnCount, game?.winnerId, game?.stableIdentity, game?.durationMs, game?.scoringVersion, roster]);
+    const signature = JSON.stringify([record.mapType, record.turnCount, game?.winnerId, game?.stableIdentity, game?.durationMs, game?.scoringVersion, record.accountBindingVersion, roster]);
     let key: string;
     if (explicitId) key = `id:${explicitId}`;
     else {
@@ -129,21 +111,22 @@ export function eligibleLeaderboardGames(records: readonly StoredDocument[], now
 }
 
 function accountResolver(users: readonly StoredDocument[]) {
-  // Include guests when detecting name collisions: a guest may have used a registered player's name.
+  // Historical results predate reliable socket identity. Match those against
+  // registered accounts only; a guest with the same nickname must not veto credit.
   const names = new Map<string, StoredDocument[]>();
-  const ids = new Map(users.filter(user => user._id).map(user => [String(user._id), user]));
+  const ids = new Map(users.filter(isRegistered).map(user => [String(user._id), user]));
   for (const user of users) {
-    if (typeof user.username !== 'string' || !user.username.trim()) continue;
+    if (!isRegistered(user) || typeof user.username !== 'string' || !user.username.trim()) continue;
     const key = normalizeName(user.username);
     names.set(key, [...(names.get(key) || []), user]);
   }
   return (player: Participant, game: EligibleGame): StoredDocument | null => {
-    if (player.isBot || player.isGuest) return null;
-    const candidates = game.stableIdentity ? (player.userId && ids.has(player.userId) ? [ids.get(player.userId)!] : []) : names.get(player.name) || [];
-    if (candidates.length !== 1) return null;
-    const user = candidates[0], registeredAt = recordTime(user.createdAt);
-    if (!user._id || user.isGuest !== false || user.role === 'guest' || registeredAt === null || registeredAt > game.completedAt) return null;
-    return user;
+    if (player.isBot) return null;
+    const linked = player.userId ? ids.get(player.userId) : undefined;
+    if (game.record.accountBindingVersion === 1) return player.isGuest ? null : linked || null;
+    if (linked) return linked;
+    const candidates = names.get(player.name) || [];
+    return candidates.length === 1 ? candidates[0] : null;
   };
 }
 
@@ -185,15 +168,16 @@ export function buildAccountGameHistory(records: readonly StoredDocument[], user
   userId: string, now = Date.now()) {
   const matches = settledGames(records, users, now).flatMap(({ game, credits }) => {
     const credited = credits.find(entry => String(entry.user!._id) === userId);
-    return credited ? [{ game, player: credited.player }] : [];
+    return credited ? [{ game, player: credited.player, credits }] : [];
   }).sort((a, b) => b.game.completedAt - a.game.completedAt);
-  const games: StoredDocument[] = matches.map(({ game, player }) => ({ ...game.record,
+  const games: StoredDocument[] = matches.map(({ game, player, credits }) => ({ ...game.record,
     rankingStatus: 'counted',
     viewerPlayerId: player.id, scoringVersion: 'rank-points-v18',
     players: game.players.map(participant => ({
       ...game.record.players.find((raw: any) => String(raw.id) === participant.id),
       isOriginalBot: participant.isBot,
       rankAward: storedResultRankPoints(game.players, participant, game),
+      leaderboardUserId: credits.find(entry => entry.player.id === participant.id)?.user?._id?.toString() || null,
     })) }));
   const account = users.find(user => String(user._id) === userId);
   // Preserve unresolved history for review instead of making it disappear to
@@ -214,7 +198,7 @@ export function buildAccountGameHistory(records: readonly StoredDocument[], user
     const rankingReason = !normalized ? '对局结算数据不完整，待核对' :
       candidates.length !== 1 ? '本局存在重复的玩家身份，待核对' :
       candidates[0].userId === userId && !candidates[0].isGuest ? '重复结算或账号时间信息不一致，待核对' : '本局账号关联信息缺失或不一致，待核对';
-    games.push({ ...record, rankingStatus: 'pending', rankingReason,
+    games.push({ ...record, rankingStatus: 'pending', rankingReason, resultValid: !!normalized,
       viewerPlayerId: candidates.length === 1 ? String(candidates[0].id) : undefined });
     shown.add(key(record));
   }
