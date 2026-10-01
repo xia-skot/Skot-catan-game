@@ -177,7 +177,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v20', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v21', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -1384,7 +1384,7 @@ async function startServer() {
       io.to(roomId).emit('room_state', room);
       
       if (room.gameState) {
-        socket.emit('game_init', room.gameState, { entry: returningParticipant ? 'resume' : 'start' });
+        socket.emit('game_init', room.gameState, { entry: returningParticipant ? 'resume' : 'start', roomId });
       }
     });
 
@@ -1518,13 +1518,13 @@ async function startServer() {
       const previousState = room.gameState;
       const actor = room.players.find((player: any) => player.socketId === socket.id);
       if (!canAcceptCriticalGameTransition(previousState, gameState, actor.id, getRoomController(room))) {
-        socket.emit('game_state_updated', previousState);
+        socket.emit('game_state_updated', previousState, { roomId });
         return;
       }
       observeLeaderboardGame(room, gameState);
       // Commit the in-memory transition before awaiting persistence, so two winner updates cannot insert twice.
       room.gameState = gameState;
-      socket.broadcast.to(roomId).emit('game_state_updated', gameState);
+      socket.broadcast.to(roomId).emit('game_state_updated', gameState, { roomId });
       if (room) {
         touchRoom(roomId);
 
@@ -1602,7 +1602,7 @@ async function startServer() {
             if (!offer.rejectedBy.includes(playerId)) offer.rejectedBy.push(playerId);
             offer.acceptedBy = offer.acceptedBy.filter((id: number) => id !== playerId);
           }
-          io.to(roomId).emit('game_state_updated', room.gameState);
+          io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
         }
       }
     });
@@ -1637,7 +1637,7 @@ async function startServer() {
 
         offer.status = 'completed';
         offer.completedWith = partnerId;
-        io.to(roomId).emit('game_state_updated', room.gameState);
+        io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
       }
     });
 
@@ -1645,7 +1645,7 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room && room.gameState) {
         // Send the cached game state only to the player who requested it
-        socket.emit('game_state_updated', room.gameState);
+        socket.emit('game_state_updated', room.gameState, { roomId });
         socket.emit('room_state', room);
       }
     });
@@ -1679,7 +1679,7 @@ async function startServer() {
           }
           
           io.to(roomId).emit('room_state', room);
-          io.to(roomId).emit('game_state_updated', room.gameState);
+          io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
         }
       }
     });
@@ -1694,7 +1694,7 @@ async function startServer() {
         ...player,
         botDifficulty: configured[index]?.isBot ? normalizeBotDifficulty(room.settings.botDifficulties?.[configured[index].index]) : 'expert',
       }));
-      io.to(roomId).emit('game_init', initialGameState, { entry: 'start' });
+      io.to(roomId).emit('game_init', initialGameState, { entry: 'start', roomId });
     });
 
     socket.on('return_to_lobby', (roomId: string, playerId: string) => {
