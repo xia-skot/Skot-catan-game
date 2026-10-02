@@ -172,7 +172,7 @@ export function buildAccountGameHistory(records: readonly StoredDocument[], user
   }).sort((a, b) => b.game.completedAt - a.game.completedAt);
   const games: StoredDocument[] = matches.map(({ game, player, credits }) => ({ ...game.record,
     rankingStatus: 'counted',
-    viewerPlayerId: player.id, scoringVersion: 'rank-points-v18',
+    viewerPlayerId: player.id, scoringVersion: LEADERBOARD_SCORING_VERSION,
     players: game.players.map(participant => ({
       ...game.record.players.find((raw: any) => String(raw.id) === participant.id),
       isOriginalBot: participant.isBot,
