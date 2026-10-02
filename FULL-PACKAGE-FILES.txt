@@ -87,11 +87,14 @@ server/analyticsRoutes.ts
 server/announcementRoutes.ts
 server/databaseStorage.ts
 server/gatewayRoutes.ts
+server/guestIdentity.ts
 server/leaderboard.ts
 server/leaderboardDemo.ts
 server/leaderboardRecording.ts
 server/leaderboardRoutes.ts
 server/messageRoutes.ts
+server/social.ts
+server/socialStore.ts
 server/socketIdentity.ts
 shared/botDifficulty.ts
 shared/criticalGameTransition.ts
@@ -99,6 +102,8 @@ shared/gameResult.ts
 shared/gateway.ts
 shared/leaderboard.ts
 shared/roomSetup.ts
+shared/social.ts
+shared/spectatorView.ts
 src/App.tsx
 src/assetCache.ts
 src/assetManifest.json
@@ -108,6 +113,8 @@ src/botStrategy.ts
 src/components/AdminDashboard.tsx
 src/components/AdminDataCenter.tsx
 src/components/AssetGate.tsx
+src/components/AvatarInteractions.css
+src/components/AvatarInteractions.tsx
 src/components/ErrorBoundary.tsx
 src/components/GameOverModal.tsx
 src/components/GameRoomsTab.tsx
@@ -117,6 +124,7 @@ src/components/Leaderboard.tsx
 src/components/LoginScreen.tsx
 src/components/MapAlbumModal.tsx
 src/components/MapGeneratorModal.tsx
+src/components/OnlineFeatures.tsx
 src/components/PwaGuideModal.tsx
 src/components/ResourceSelector.tsx
 src/components/RotatedScroll.tsx
@@ -173,6 +181,8 @@ tests/refinements-v13.spec.ts
 tests/rising-sea.spec.ts
 tests/room-authority-v6.spec.ts
 tests/slow-assets.spec.ts
+tests/social-v25.spec.ts
+tests/social.test.ts
 tests/spectator-exit-v21.spec.ts
 tests/startup-navigation.spec.ts
 tests/startup-v10.spec.ts

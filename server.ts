@@ -24,7 +24,12 @@ import { createDemoLeaderboardStore } from './server/leaderboardDemo';
 import { beginLeaderboardGame, observeLeaderboardGame, hasUnsavedLeaderboardResult, persistLeaderboardResult } from './server/leaderboardRecording';
 import { verifiedRoomIdentity } from './server/socketIdentity';
 import { registerAnalyticsRoutes } from './server/analyticsRoutes';
+import { createSocialService } from './server/social';
+import { SocialStore } from './server/socialStore';
+import { freeSeats } from './shared/social';
 import { queryDatabaseStorage } from './server/databaseStorage';
+import { loginDeviceGuest, renameGuest } from './server/guestIdentity';
+import { spectatorGameState } from './shared/spectatorView';
 const DEMO_MODE = process.argv.includes('--demo');
 
 dotenv.config();
@@ -83,11 +88,13 @@ async function startServer() {
   let messagesCollection: any = null;
   let feedbackCollection: any = null;
   let aboutCollection: any = null;
+  let presenceCollection: any = null;
+  let invitationsCollection: any = null;
   const demoLeaderboard = DEMO_MODE ? createDemoLeaderboardStore() : null;
   
   if (DEMO_MODE) {
     const { attachDemoApi } = await import('./demo/server');
-    messagesCollection = attachDemoApi(app, JWT_SECRET, () => { rooms.clear(); demoLeaderboard?.reset(); });
+    messagesCollection = attachDemoApi(app, JWT_SECRET, async () => { rooms.clear(); demoLeaderboard?.reset(); await social.resetDemoData(); });
   }
 
   if (MONGODB_URI) {
@@ -110,8 +117,13 @@ async function startServer() {
       messagesCollection = db.collection('system_messages');
       feedbackCollection = db.collection('feedback');
       aboutCollection = db.collection('about_info');
+      presenceCollection = db.collection('online_sessions');
+      invitationsCollection = db.collection('room_invitations');
+      await presenceCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+      await invitationsCollection.createIndex({ deleteAt: 1 }, { expireAfterSeconds: 0 });
       
       await usersCollection.createIndex({ email: 1 }, { unique: true });
+      await usersCollection.createIndex({ guestDeviceHash: 1 }, { unique: true, sparse: true });
       await verificationCodesCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 }); // 10 minutes expiry
       console.log("[Server] Pinged your deployment. You successfully connected to MongoDB!");
 
@@ -171,6 +183,24 @@ async function startServer() {
   });
 
   // API routes FIRST
+  const social = createSocialService(io, rooms, JWT_SECRET, new SocialStore(presenceCollection, invitationsCollection),
+    process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`);
+  app.get('/api/admin/online', authMiddleware, adminMiddleware, async (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { res.json({ users: await social.online() }); }
+    catch { res.status(503).json({ error: '在线名单暂不可用，请稍后重试' }); }
+  });
+  const sendRoomEvent = (target: any, room: any, event: string, payload: any, context?: any) => {
+    const player = room.players.some((member: any) => member.socketId === target.id && !member.disconnected) && !room.spectators?.some((member: any) => member.socketId === target.id);
+    const view = (state: any) => player ? state : spectatorGameState(state, room.settings?.spectatorHands === true);
+    target.emit(event, event === 'room_state' ? { ...payload, gameState: view(payload.gameState) } : view(payload), context);
+  };
+  const broadcastRoomEvent = (room: any, event: string, payload: any, context?: any, except?: string) => {
+    for (const id of io.sockets.adapter.rooms.get(room.roomId) || []) {
+      const target = io.sockets.sockets.get(id);
+      if (target && id !== except) sendRoomEvent(target, room, event, payload, context);
+    }
+  };
   let demoCapacity: number | null = null;
   let storageCache: { time: number; value: Awaited<ReturnType<typeof queryDatabaseStorage>> } | null = null;
   let pendingStorage: Promise<Awaited<ReturnType<typeof queryDatabaseStorage>>> | null = null;
@@ -216,7 +246,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v24', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v25', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -396,46 +426,13 @@ async function startServer() {
 
   // Guest Login
   app.post('/api/guest', async (req, res) => {
-    const { username, guestId } = req.body;
-    let finalUsername = username;
-    let finalGuestId;
-
     try {
-      if (guestId && ObjectId.isValid(guestId)) {
-        finalGuestId = new ObjectId(guestId);
-        if (usersCollection) {
-          const existingGuest = await usersCollection.findOne({ _id: finalGuestId, isGuest: true });
-          if (existingGuest) {
-            // Found existing guest
-            if (!username) {
-              finalUsername = existingGuest.username;
-            } else {
-              // Update username if requested
-              await usersCollection.updateOne({ _id: finalGuestId }, { $set: { username: finalUsername } });
-            }
-          } else {
-            // Valid ID but not in DB, create new with this ID
-            if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-            const dummyEmail = `guest-${finalGuestId.toString()}@guest.local`;
-            await usersCollection.insertOne({ _id: finalGuestId, email: dummyEmail, username: finalUsername, role: 'guest', isGuest: true, createdAt: new Date() });
-          }
-        } else {
-          if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-        }
-      } else {
-        finalGuestId = new ObjectId();
-        if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-        if (usersCollection) {
-           const dummyEmail = `guest-${finalGuestId.toString()}@guest.local`;
-           await usersCollection.insertOne({ _id: finalGuestId, email: dummyEmail, username: finalUsername, role: 'guest', isGuest: true, createdAt: new Date() });
-        }
-      }
-
-      const token = jwt.sign({ userId: finalGuestId.toString(), username: finalUsername, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
-      res.json({ token, user: { id: finalGuestId.toString(), username: finalUsername, role: 'guest', isGuest: true } });
-    } catch (err) {
-      console.error('Guest login error', err);
-      res.status(500).json({ error: '游客登录失败' });
+      const user = await loginDeviceGuest(usersCollection, JWT_SECRET, req.body.deviceKey, req.body.username, req.body.guestProof);
+      const token = jwt.sign({ userId: user.id, username: user.username, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
+      res.json({ token, user });
+    } catch (err: any) {
+      const invalid = ['INVALID_DEVICE', 'INVALID_NAME'].includes(err.message);
+      res.status(invalid ? 400 : 503).json({ error: invalid ? '请刷新页面后重试，昵称最多 30 个字' : '游客登录暂不可用，请稍后重试' });
     }
   });
 
@@ -1022,7 +1019,14 @@ async function startServer() {
       const userId = (req as any).user.userId;
       
       if ((req as any).user.isGuest) {
-        return res.status(400).json({ error: '游客无法修改资料' });
+        if (req.body.password || req.body.oldPassword) return res.status(400).json({ error: '游客仅可修改昵称' });
+        try {
+          const user = await renameGuest(usersCollection, userId, req.body.username);
+          const token = jwt.sign({ userId: user.id, username: user.username, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
+          return res.json({ token, user });
+        } catch (error: any) {
+          return res.status(400).json({ error: error.message === 'INVALID_NAME' ? '昵称须为 1 至 30 个字符' : '游客账号不可用，请重新登录' });
+        }
       }
 
       const { username, password, oldPassword } = req.body;
@@ -1334,6 +1338,7 @@ async function startServer() {
   }, 10 * 60 * 1000); // 10 minutes
 
   io.on('connection', (socket) => {
+    social.attach(socket);
     console.log('A user connected:', socket.id);
 
     socket.onAny((eventName, ...args) => {
@@ -1345,13 +1350,20 @@ async function startServer() {
       }
     });
 
-    socket.on('join_room', (roomId: string, playerId: string, playerName: string, asSpectator?: boolean, authToken?: string) => {
+    socket.on('join_room', async (roomId: string, playerId: string, playerName: string, asSpectator?: boolean, authToken?: string, invitationId?: string) => {
       const identity = verifiedRoomIdentity(authToken, playerId, JWT_SECRET);
       if (!identity && !DEMO_MODE) {
         socket.emit('join_error', '登录状态已失效或页面版本过旧，请刷新页面并重新登录后进入房间。');
         return;
       }
       const verifiedUserId = identity?.userId;
+      if (invitationId) {
+        try {
+          if (!identity || !await social.validateInvitation(playerId, invitationId, roomId) || !freeSeats(rooms.get(roomId))) {
+            socket.emit('join_error', '邀请已失效、房间已开始或已满，请重新选择房间。'); return;
+          }
+        } catch { socket.emit('join_error', '邀请暂不可用，请稍后重试。'); return; }
+      }
       touchRoom(roomId);
       if (!playerId) playerId = socket.id;
       if (!playerName) playerName = '玩家';
@@ -1367,6 +1379,7 @@ async function startServer() {
           players: [],
           spectators: [],
           settings: {
+            spectatorHands: false,
             playerCount: 4,
             mapType: 'archipelago',
             botConfig: DEMO_MODE ? [false, true, true, true] : [false, false, false, false]
@@ -1419,11 +1432,11 @@ async function startServer() {
         }
       }
       
-      socket.emit('room_state', room);
-      io.to(roomId).emit('room_state', room);
+      sendRoomEvent(socket, room, 'room_state', room);
+      broadcastRoomEvent(room, 'room_state', room);
       
       if (room.gameState) {
-        socket.emit('game_init', room.gameState, { entry: returningParticipant ? 'resume' : 'start', roomId });
+        sendRoomEvent(socket, room, 'game_init', room.gameState, { entry: returningParticipant ? 'resume' : 'start', roomId });
       }
     });
 
@@ -1438,7 +1451,7 @@ async function startServer() {
         const spectatorIndex = room.spectators?.findIndex((s: any) => s.id === playerId);
         if (spectatorIndex !== undefined && spectatorIndex !== -1) {
           room.spectators.splice(spectatorIndex, 1);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           return;
         }
 
@@ -1462,7 +1475,7 @@ async function startServer() {
           rooms.delete(roomId);
           console.log(`[Server] Room ${roomId} deleted as it became empty.`);
         } else {
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1489,7 +1502,7 @@ async function startServer() {
         }
 
         if (updateUI) {
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           io.to(roomId).emit('player_kicked', playerToKickId);
         }
       }
@@ -1503,7 +1516,7 @@ async function startServer() {
           const p = room.players.splice(playerIndex, 1)[0];
           if (!room.spectators) room.spectators = [];
           room.spectators.push(p);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1520,7 +1533,7 @@ async function startServer() {
           s.isReady = false;
           s.disconnected = false;
           room.players.push(s);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1531,20 +1544,20 @@ async function startServer() {
         const player = room.players.find((p: any) => p.id === playerId);
         if (player) {
           player.isReady = !player.isReady;
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
 
     socket.on('update_settings', (roomId: string, playerId: string, settings: any, mutation?: { clientId: string; sequence: number }) => {
       const room = rooms.get(roomId);
-      if (room && !room.gameState && room.hostId === playerId && settings && typeof settings === 'object') {
+      if (room && !room.gameState && room.hostId === playerId && room.players.some((p: any) => p.id === playerId && p.socketId === socket.id) && settings && typeof settings === 'object') {
         Object.assign(room, applySettingsPatch(room, settings));
         if (typeof mutation?.clientId === 'string' && mutation.clientId.length < 80 && Number.isSafeInteger(mutation.sequence)) {
           room.settingsMutation = mutation;
         }
         touchRoom(roomId);
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
       }
     });
 
@@ -1557,13 +1570,13 @@ async function startServer() {
       const previousState = room.gameState;
       const actor = room.players.find((player: any) => player.socketId === socket.id);
       if (!canAcceptCriticalGameTransition(previousState, gameState, actor.id, getRoomController(room))) {
-        socket.emit('game_state_updated', previousState, { roomId });
+        sendRoomEvent(socket, room, 'game_state_updated', previousState, { roomId });
         return;
       }
       observeLeaderboardGame(room, gameState);
       // Commit the in-memory transition before awaiting persistence, so two winner updates cannot insert twice.
       room.gameState = gameState;
-      socket.broadcast.to(roomId).emit('game_state_updated', gameState, { roomId });
+      broadcastRoomEvent(room, 'game_state_updated', gameState, { roomId }, socket.id);
       if (room) {
         touchRoom(roomId);
 
@@ -1641,7 +1654,7 @@ async function startServer() {
             if (!offer.rejectedBy.includes(playerId)) offer.rejectedBy.push(playerId);
             offer.acceptedBy = offer.acceptedBy.filter((id: number) => id !== playerId);
           }
-          io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
+          broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
         }
       }
     });
@@ -1676,20 +1689,21 @@ async function startServer() {
 
         offer.status = 'completed';
         offer.completedWith = partnerId;
-        io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
+        broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
       }
     });
 
     socket.on('request_sync', (roomId: string) => {
       const room = rooms.get(roomId);
-      if (room && room.gameState) {
+      if (room && room.gameState && socket.rooms.has(roomId) && [...room.players, ...(room.spectators || [])].some((p: any) => p.socketId === socket.id)) {
         // Send the cached game state only to the player who requested it
-        socket.emit('game_state_updated', room.gameState, { roomId });
-        socket.emit('room_state', room);
+        sendRoomEvent(socket, room, 'game_state_updated', room.gameState, { roomId });
+        sendRoomEvent(socket, room, 'room_state', room);
       }
     });
 
     socket.on('reclaim_slot', (roomId: string, newPlayerId: string, oldPlayerId: string) => {
+      if (socket.data.socialAccount?.userId !== newPlayerId || newPlayerId !== oldPlayerId || !socket.rooms.has(roomId)) return;
       const room = rooms.get(roomId);
       if (room && room.gameState) {
         // Find the old player in the room list
@@ -1717,8 +1731,8 @@ async function startServer() {
             room.hostId = newPlayerId;
           }
           
-          io.to(roomId).emit('room_state', room);
-          io.to(roomId).emit('game_state_updated', room.gameState, { roomId });
+          broadcastRoomEvent(room, 'room_state', room);
+          broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
         }
       }
     });
@@ -1733,7 +1747,7 @@ async function startServer() {
         ...player,
         botDifficulty: configured[index]?.isBot ? normalizeBotDifficulty(room.settings.botDifficulties?.[configured[index].index]) : 'expert',
       }));
-      io.to(roomId).emit('game_init', initialGameState, { entry: 'start', roomId });
+      broadcastRoomEvent(room, 'game_init', room.gameState, { entry: 'start', roomId });
     });
 
     socket.on('return_to_lobby', (roomId: string, playerId: string) => {
@@ -1743,7 +1757,7 @@ async function startServer() {
         room.players.forEach((p: any) => {
           p.isReady = false;
         });
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
         io.to(roomId).emit('returned_to_lobby');
       }
     });
@@ -1770,7 +1784,7 @@ async function startServer() {
           room.reservedUntil = Date.now() + durationMs;
         }
         touchRoom(roomId);
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
       }
     });
 
@@ -1778,6 +1792,7 @@ async function startServer() {
       let activeRooms = Array.from(rooms.values())
         .map(r => ({
           ...r,
+          gameState: undefined,
           status: r.gameState ? 'playing' : 'waiting'
         }))
         .filter(r => {
@@ -1797,9 +1812,9 @@ async function startServer() {
     socket.on('get_my_active_room', (playerId: string, playerName: string, callback: (room: any) => void) => {
       if (typeof callback !== 'function') return;
       const userRoom = Array.from(rooms.values()).find(r => 
-        r.players?.some((p: any) => (playerId && p.id === playerId) || (playerName && p.name === playerName))
+        r.players?.some((p: any) => p.id === playerId && (p.socketId === socket.id || socket.data.socialAccount?.userId === playerId))
       );
-      callback(userRoom || null);
+      callback(userRoom ? { ...userRoom, gameState: userRoom.gameState } : null);
     });
 
     socket.on('admin_delete_room', (roomId: string) => {
@@ -1826,7 +1841,7 @@ async function startServer() {
         if (spectatorIndex !== undefined && spectatorIndex !== -1) {
           room.spectators.splice(spectatorIndex, 1);
           touchRoom(roomId);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           break;
         }
 
@@ -1853,7 +1868,7 @@ async function startServer() {
             rooms.delete(roomId);
             console.log(`[Server] Room ${roomId} deleted as it became empty on disconnect.`);
           } else {
-            io.to(roomId).emit('room_state', room);
+            broadcastRoomEvent(room, 'room_state', room);
           }
           break;
         }
