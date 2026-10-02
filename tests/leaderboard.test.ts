@@ -32,7 +32,7 @@ test('legacy score breakdowns and history award the same monthly points', () => 
   const response = buildMonthlyLeaderboard(records, users, '2026-09', 20, NOW, '0');
   assert.deepEqual(response.myGames?.map(game => game.points), [1, 1, 1]);
   assert.equal(response.myGames?.reduce((sum, game) => sum + game.points, 0), row.points);
-  assert.equal(response.scoringVersion, 'rank-points-v18');
+  assert.equal(response.scoringVersion, 'human-rank-points-v22');
 });
 
 test('a corrected complete breakdown governs ranking while malformed details cannot inflate a score', () => {
@@ -51,13 +51,13 @@ test('N - strictly higher participants awards tied high positions, and monthly r
   assert.equal(result.source, 'stored-client-results');
 });
 
-test('AI count toward rank but not the human cap; guests and spectators never receive leaderboard entries', () => {
+test('AI keep their overall rank but do not reduce human awards; guests and spectators never receive leaderboard entries', () => {
   const record = game();
   record.players[0].isBot = true;
   const accounts = users.map(user => user._id === '1' ? { ...user, isGuest: true } : user);
   record.players.push({ id: 99, name: 'Observer', isBot: false, score: 99, isSpectator: true } as any);
   const result = board([record], accounts);
-  assert.deepEqual(result.entries.map(row => [row.userId, row.points]), [['2', 2], ['3', 0]]);
+  assert.deepEqual(result.entries.map(row => [row.userId, row.points]), [['2', 3], ['3', 1]]);
 });
 
 test('zx October history and monthly totals use the same two awards without mixing a namesake account', () => {
@@ -229,7 +229,7 @@ test('noncontiguous original AI slot 3 compacts to game seat 1; runtime bot/user
   const stored = writes[0][1].$setOnInsert;
   assert.equal(stored.identityVersion, 2);
   assert.equal(stored.accountBindingVersion, 1);
-  assert.equal(stored.scoringVersion, 'rank-points-v18');
+  assert.equal(stored.scoringVersion, 'human-rank-points-v22');
   assert.match(stored.gameId, /^[a-f0-9-]{36}$/);
   assert.equal(stored.players[0].userId, '0');
   assert.equal(stored.players[0].isOriginalBot, false);
@@ -384,7 +384,7 @@ test('legacy account recovery preserves autoplay exclusion and never awards bots
   const result = board([record]);
   assert.equal(result.entries.some(entry => entry.userId === '0'), false);
   assert.equal(result.entries.find(entry => entry.userId === '1')?.points, 0);
-  assert.equal(result.entries.find(entry => entry.userId === '2')?.points, 2);
+  assert.equal(result.entries.find(entry => entry.userId === '2')?.points, 3);
 });
 
 test('history retains unresolved outcomes without hiding them or presenting an invented zero', () => {
@@ -427,17 +427,39 @@ test('Mongo setting persists in its isolated document across store instances; se
   assert.equal(projections[0].accountBindingVersion, 1);
 });
 
-test('mixed rooms use human cap, bots receive zero, and solo humans must actually win', () => {
+test('mixed rooms award human positions independent of AI, bots receive zero, and solo humans must actually win', () => {
   const players = [
     { id: 0, score: 10, isBot: true }, { id: 1, score: 9, isBot: false },
     { id: 2, score: 8, isBot: false }, { id: 3, score: 7, isBot: true },
   ];
-  assert.deepEqual(players.map(player => resultRankPoints(players, player, { winnerId: 0 }).points), [0, 1, 0, 0]);
+  assert.deepEqual(players.map(player => resultRankPoints(players, player, { winnerId: 0 }).points), [0, 2, 1, 0]);
   const solo = players.filter(player => player.id !== 2);
   assert.equal(resultRankPoints(solo, solo[1], { winnerId: 0 }).points, 0);
   solo[1].score = 10;
   assert.equal(resultRankPoints(solo, solo[1], { winnerId: 0 }).points, 0, 'a tied non-winner is not a solo win');
   assert.equal(resultRankPoints(solo, solo[1], { winnerId: 1 }).points, 1);
+});
+
+test('mary receives one point behind an AI and old zero snapshots recalculate consistently in history and monthly totals', () => {
+  const accounts = ['rose', 'mary'].map(username => ({ _id: username, username, isGuest: false, createdAt: new Date('2026-01-01T00:00:00Z') }));
+  const record = game({ roomId: '135569', gameId: 'mary-mixed', identityVersion: 2,
+    scoringVersion: 'rank-points-v18', durationMs: 10000,
+    players: ['rose', '领主 AI 4', 'mary', '领主 AI 3'].map((name, id) => ({
+      id, name, score: [10, 9, 8, 6][id], userId: id === 0 || id === 2 ? name : null,
+      isOriginalBot: id === 1 || id === 3, isGuest: false, autoplayMs: 0,
+      rankAward: { rank: id + 1, points: id === 0 ? 2 : 0 },
+    })),
+  });
+  const original = structuredClone(record);
+  const history = buildAccountGameHistory([record], accounts, 'mary', NOW);
+  assert.deepEqual(history.games[0].players[2].rankAward, { rank: 3, points: 1 });
+  assert.equal(history.games[0].scoringVersion, 'human-rank-points-v22');
+  const monthly = buildMonthlyLeaderboard([record], accounts, '2026-09', 20, NOW, 'mary');
+  assert.equal(monthly.entries.find(entry => entry.userId === 'mary')?.points, 1);
+  assert.equal(monthly.myGames?.[0].points, 1);
+  assert.deepEqual(record, original);
+  record.players[2].autoplayMs = 5001;
+  assert.equal(board([record], accounts).entries.find(entry => entry.userId === 'mary')?.points, 0);
 });
 
 test('server accumulates multiple autoplay periods, freezes at finish, and overrides forged timing', async () => {
