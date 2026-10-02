@@ -1,27 +1,55 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="notranslate" translate="no">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
-    <title>卡坦岛入口已迁移</title>
-    <style>
-      html, body { min-height: 100%; margin: 0; }
-      body {
-        display: grid;
-        place-items: center;
-        padding: 24px;
-        box-sizing: border-box;
-        background: #f8fafc;
-        color: #17212f;
-        font: 18px/1.7 system-ui, -apple-system, "Microsoft YaHei", sans-serif;
-      }
-      p { margin: 0; max-width: 100%; text-align: center; overflow-wrap: anywhere; }
-      a { color: #2856c5; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-      a:hover, a:focus-visible { color: #173a96; }
-    </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <meta name="google" content="notranslate" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="卡坦岛" />
+    <meta name="theme-color" content="#f8fafc" />
+    <link rel="apple-touch-icon" href="/icons/catan-original-v6-192.png" />
+    <title>卡坦岛 - Catan Online</title>
   </head>
-  <body>
-    <p>目前该网址已暂停，请跳转至：<a href="https://skot-game.onrender.com/">https://skot-game.onrender.com/</a></p>
+  <body class="notranslate bg-slate-50" translate="no">
+    <div id="root">
+      <div style="position: absolute; inset: 0; overflow: hidden; background-color: #e1f0fa; color: #0c4a6e; font-family: sans-serif;">
+        <svg id="boot-sea" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true"></svg>
+        <div role="status" class="boot-caption">资源加载中<span class="boot-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+          <div class="boot-meter"><div></div></div>
+          <small>正在加载游戏程序</small>
+        </div>
+      </div>
+      <style>
+        .boot-caption { position:absolute;bottom:calc(env(safe-area-inset-bottom,0px) + 32px);left:8%;width:84%;text-align:center;font-size:14px;font-weight:600; }
+        .boot-caption small { display:block;margin-top:12px;font-size:12px;font-weight:400; }
+        .boot-meter { height:18px;border-radius:8px;background:#286c98;overflow:hidden;margin:12px auto 0;max-width:640px; }
+        .boot-meter>div { height:100%;width:30%;background:#56c4f9;animation:boot-meter 1.4s ease-in-out infinite; }
+        @keyframes boot-meter { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
+        .boot-dots span { animation: boot-dot 1.2s infinite; }
+        .boot-dots span:nth-child(2) { animation-delay: .2s; }
+        .boot-dots span:nth-child(3) { animation-delay: .4s; }
+        @keyframes boot-dot { 0%,80%,100% { opacity: .2; } 40% { opacity: 1; } }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      </style>
+      <script>
+        // Match SailingScene's geometry before the application bundle is available.
+        {
+          const w = innerWidth, h = innerHeight;
+          const y = x => h;
+          let line = `M0 ${y(0)}`;
+          for (let x = 10; x < w; x += 10) line += ` L${x} ${y(x)}`;
+          line += ` L${w} ${y(w)}`;
+          const svg = document.getElementById('boot-sea');
+          svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+          svg.innerHTML = `<path d="${line}" stroke="#1e6b9c" stroke-width="12" opacity=".4" fill="none" style="filter:blur(5px)"/><path d="${line} L${w} ${h} L0 ${h} Z" fill="#27a6e6"/><path d="${line}" stroke="#85caec" stroke-width="4" fill="none"/>`;
+        }
+      </script>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

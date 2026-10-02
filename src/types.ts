@@ -41,10 +41,13 @@ export enum DevCardType {
 }
 
 export interface Player {
+  publicResourceCount?: number;
+  publicDevCardCount?: number;
   id: number;
   name: string;
   color: string;
   isBot: boolean;
+  botDifficulty?: import('../shared/botDifficulty').BotDifficulty;
   resources: Record<ResourceType, number>;
   victoryPoints: number;
   roads: number;
@@ -71,6 +74,7 @@ export interface Port {
 }
 
 export interface TradeOffer {
+  createdAt?: number;
   id: string;
   initiatorId: number;
   targetPlayerId: number | null; // null for all players
@@ -83,6 +87,10 @@ export interface TradeOffer {
 }
 
 export interface GameState {
+  handsHidden?: boolean;
+  publicBankDevCardCount?: number;
+  botTradesThisTurn?: number;
+  botTradeSignatures?: string[];
   board: Hex[];
   ports: Port[];
   players: Player[];
