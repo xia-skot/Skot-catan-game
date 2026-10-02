@@ -23,6 +23,8 @@ import { mongoLeaderboardStore, registerLeaderboardRoutes } from './server/leade
 import { createDemoLeaderboardStore } from './server/leaderboardDemo';
 import { beginLeaderboardGame, observeLeaderboardGame, hasUnsavedLeaderboardResult, persistLeaderboardResult } from './server/leaderboardRecording';
 import { verifiedRoomIdentity } from './server/socketIdentity';
+import { registerAnalyticsRoutes } from './server/analyticsRoutes';
+import { queryDatabaseStorage } from './server/databaseStorage';
 const DEMO_MODE = process.argv.includes('--demo');
 
 dotenv.config();
@@ -169,6 +171,43 @@ async function startServer() {
   });
 
   // API routes FIRST
+  let demoCapacity: number | null = null;
+  let storageCache: { time: number; value: Awaited<ReturnType<typeof queryDatabaseStorage>> } | null = null;
+  let pendingStorage: Promise<Awaited<ReturnType<typeof queryDatabaseStorage>>> | null = null;
+  registerAnalyticsRoutes(app, authMiddleware, adminMiddleware, {
+    readRecords: async () => {
+      if (demoLeaderboard) {
+        const records = await demoLeaderboard.store.readRecords();
+        return { ...records, users: [...records.users, { _id: 'demo-guest-1', username: '体验游客', isGuest: true, createdAt: new Date() }] };
+      }
+      if (!usersCollection || !gamesCollection) throw new Error('Database unavailable');
+      const [users, games] = await Promise.all([
+        usersCollection.find({}).project({ _id: 1, username: 1, isGuest: 1, role: 1, createdAt: 1 }).toArray(),
+        gamesCollection.find({}).project({ _id: 1, gameId: 1, completedAt: 1, phase: 1 }).toArray(),
+      ]);
+      return { users, games };
+    },
+    readCapacity: async () => {
+      if (DEMO_MODE) return demoCapacity;
+      if (!aboutCollection) throw new Error('Database unavailable');
+      const value = (await aboutCollection.findOne({ _id: 'database_capacity' }))?.bytes;
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+    },
+    writeCapacity: async bytes => {
+      if (DEMO_MODE) { demoCapacity = bytes; return; }
+      if (!aboutCollection) throw new Error('Database unavailable');
+      await aboutCollection.updateOne({ _id: 'database_capacity' }, { $set: { bytes } }, { upsert: true });
+    },
+    readStorage: async () => {
+      if (DEMO_MODE) return { usedBytes: 12 * 1024 * 1024, scope: 'cluster', dataBytes: 10 * 1024 * 1024, indexBytes: 2 * 1024 * 1024 };
+      if (!MONGODB_URI) throw new Error('Database unavailable');
+      if (storageCache && Date.now() - storageCache.time < 60000) return storageCache.value;
+      if (!pendingStorage) pendingStorage = queryDatabaseStorage(MONGODB_URI).then(value => {
+        storageCache = { time: Date.now(), value }; return value;
+      }).finally(() => { pendingStorage = null; });
+      return pendingStorage;
+    },
+  });
   registerGatewayRoutes(app, authMiddleware, adminMiddleware, { demo: DEMO_MODE,
     url: process.env.GATEWAY_URL, token: process.env.GATEWAY_ADMIN_TOKEN });
   registerLeaderboardRoutes(app, authMiddleware, adminMiddleware, demoLeaderboard?.store || mongoLeaderboardStore(() => ({
@@ -177,7 +216,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v23', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v24', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
