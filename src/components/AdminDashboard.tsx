@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy } from 'lucide-react';
+import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy, Dices } from 'lucide-react';
 import { UserProfileModal } from './UserProfileModal';
 import { GatewaySettings } from './GatewaySettings';
 import { safeFetchJson } from '../fetchUtils';
@@ -661,6 +661,16 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
   // Sub-View 2: 玩家名单
   const renderUsersContent = () => (
     <div className="space-y-3 font-sans">
+      <dl data-admin-player-totals className="grid grid-cols-2 gap-4 border-b border-slate-200 px-1 pb-3">
+        <div title="累计游客账号数量">
+          <dt className="flex items-center gap-1.5 text-xs text-slate-500"><User size={14} className="text-indigo-500" />游客数量</dt>
+          <dd data-admin-guest-count className="mt-1 text-xl font-bold text-slate-800 tabular-nums">{Number.isFinite(data?.stats?.guests) ? data.stats.guests.toLocaleString('zh-CN') : '未提供'}</dd>
+        </div>
+        <div title="数据库累计保存的对局数量">
+          <dt className="flex items-center gap-1.5 text-xs text-slate-500"><Dices size={14} className="text-emerald-600" />总盘数</dt>
+          <dd data-admin-game-count className="mt-1 text-xl font-bold text-slate-800 tabular-nums">{Number.isFinite(data?.stats?.games) ? data.stats.games.toLocaleString('zh-CN') : '未提供'}</dd>
+        </div>
+      </dl>
       <div className="flex flex-wrap items-center justify-between gap-3 px-1 pb-1">
         <span className="text-xs font-bold text-slate-500">共计 {(data?.allUsers || data?.latestUsers)?.length || 0} 位玩家</span>
         <div className="flex items-center gap-2">
