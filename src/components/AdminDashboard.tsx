@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy, Dices, ChartNoAxesCombined, ChevronRight } from 'lucide-react';
 import { AdminDataCenter, AdminGuestList, DatabaseStorageSettings } from './AdminDataCenter';
+import { AdminOnlinePlayers } from './OnlineFeatures';
 import { UserProfileModal } from './UserProfileModal';
 import { GatewaySettings } from './GatewaySettings';
 import { safeFetchJson } from '../fetchUtils';
@@ -28,7 +29,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   
   // Section state: 'menu' | 'system' | 'users' | 'feedbacks' | 'messages'
-  const [activeSection, setActiveSection] = useState<'menu' | 'system' | 'users' | 'feedbacks' | 'messages' | 'analytics' | 'guests'>(initialSection);
+  const [activeSection, setActiveSection] = useState<'menu' | 'system' | 'users' | 'feedbacks' | 'messages' | 'analytics' | 'guests' | 'online'>(initialSection);
   const [sectionParent, setSectionParent] = useState<'menu' | 'analytics'>('menu');
 
   const [inspectingUser, setInspectingUser] = useState<any | null>(null);
@@ -1023,6 +1024,9 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
       <button onClick={() => setActiveSection('analytics')} className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3.5 text-left shadow-sm hover:border-emerald-200">
         <ChartNoAxesCombined size={18} className="text-emerald-600" /><h3 className="text-sm font-bold text-slate-700">数据中心</h3><ChevronRight size={18} className="ml-auto text-slate-300" />
       </button>
+      <button onClick={() => setActiveSection('online')} className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3.5 text-left shadow-sm hover:border-emerald-200">
+        <Users size={18} className="text-emerald-600" /><h3 className="text-sm font-bold text-slate-700">在线玩家</h3><ChevronRight size={18} className="ml-auto text-slate-300" />
+      </button>
       <button onClick={() => setActiveSection('guests')} className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3.5 text-left shadow-sm hover:border-indigo-200">
         <User size={18} className="text-slate-400" /><h3 className="text-sm font-bold text-slate-700">游客名单</h3><ChevronRight size={18} className="ml-auto text-slate-300" />
       </button>
@@ -1171,6 +1175,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                           {activeSection === 'users' && <><Users size={18} className="text-indigo-500" /> 玩家名单</>}
                           {activeSection === 'analytics' && <><ChartNoAxesCombined size={18} className="text-emerald-600" /> 数据中心</>}
                           {activeSection === 'guests' && <><User size={18} className="text-indigo-500" /> 游客名单</>}
+                          {activeSection === 'online' && <><Users size={18} className="text-emerald-600" /> 在线玩家</>}
                           {activeSection === 'messages' && <><Mail size={18} className="text-sky-500" /> 玩家私信管理</>}
                           {activeSection === 'feedbacks' && <><MessageSquare size={18} className="text-indigo-500" /> 玩家反馈意见</>}
                         </h3>
@@ -1198,6 +1203,7 @@ export function AdminDashboard({ onLogout, onClose, inline = false, initialSecti
                     {activeSection === 'users' && renderUsersContent()}
                     {activeSection === 'analytics' && <AdminDataCenter onUsers={() => { setSectionParent('analytics'); setActiveSection('users'); }} onGuests={() => { setSectionParent('analytics'); setActiveSection('guests'); }} />}
                     {activeSection === 'guests' && <AdminGuestList />}
+                    {activeSection === 'online' && <AdminOnlinePlayers />}
                     {activeSection === 'messages' && renderMessagesContent()}
                     {activeSection === 'feedbacks' && renderFeedbacksContent()}
                   </motion.div>

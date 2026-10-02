@@ -783,11 +783,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
     setErrorText('');
     setSuccessText('');
 
-    if (currentUser?.isGuest) {
-      setErrorText('游客无法修改资料，请注册正式账号。');
-      return;
-    }
-
     if (!username.trim() && !password.trim()) {
       setErrorText('尚未修改任何内容。');
       return;
@@ -816,6 +811,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
 
       setSuccessText('修改成功！');
       localStorage.setItem('catan_auth_token', data.token);
+      if (data.user.isGuest) localStorage.setItem('catan_guest_proof', data.token);
       localStorage.setItem('catan_player_name', data.user.username);
       syncSessionToEntry(data.token, data.user.username);
       setOldPassword('');
@@ -1067,6 +1063,7 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
+                {currentUser.isGuest && <p className="break-all text-xs text-slate-400">游客 ID：{currentUser.id}</p>}
                 <div className="group">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-1 block group-focus-within:text-indigo-500 transition-colors">
                     游戏昵称
@@ -1078,13 +1075,13 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                       value={username}
                       onChange={e => setUsername(e.target.value)}
                       placeholder="修改昵称"
-                      disabled={currentUser.isGuest}
+                      maxLength={currentUser.isGuest ? 30 : undefined}
                       className="w-full bg-slate-50 border border-slate-100 pl-10 pr-3 py-3 rounded-xl outline-none font-medium transition-all focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 disabled:opacity-50 text-sm"
                     />
                   </div>
                 </div>
 
-                <div className="group">
+                {!currentUser.isGuest && <><div className="group">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2 mb-1 flex justify-between items-center group-focus-within:text-indigo-500 transition-colors">
                     <span>原密码 (修改必填)</span>
                     <button 
@@ -1127,10 +1124,11 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
                     />
                   </div>
                 </div>
+                </>}
 
                 <button 
                   type="submit" 
-                  disabled={loading || currentUser.isGuest}
+                  disabled={loading}
                   className="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 text-white font-bold py-3.5 rounded-xl shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] transition-all flex items-center justify-center gap-2 text-sm"
                 >
                   {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : '保存修改'}
@@ -1709,7 +1707,6 @@ export function UserProfileModal({ currentUser, onClose, onUpdateSuccess, onLogo
               
               <button 
                 onClick={() => setActiveView('edit')} 
-                disabled={currentUser.isGuest}
                 className="w-full bg-white py-3 px-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between group hover:border-indigo-100 transition-colors disabled:opacity-50 disabled:hover:border-slate-100"
               >
                 <div className="flex items-center gap-3">
