@@ -9,8 +9,31 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
+import { randomInt } from 'node:crypto';
+import { registerMessageDeletionRoutes } from './server/messageRoutes';
+import { registerAnnouncementEditingRoutes } from './server/announcementRoutes';
+import { registerGatewayRoutes } from './server/gatewayRoutes';
+import { LEADERBOARD_SCORING_VERSION } from './shared/leaderboard';
+import assetManifest from './src/assetManifest.json';
+import { applySettingsPatch, getRoomController, getSetupSlots } from './shared/roomSetup';
+import { normalizeBotDifficulty } from './shared/botDifficulty';
+import { canAcceptCriticalGameTransition } from './shared/criticalGameTransition';
+import { computeLeaderboardUserStats } from './server/leaderboard';
+import { mongoLeaderboardStore, registerLeaderboardRoutes } from './server/leaderboardRoutes';
+import { createDemoLeaderboardStore } from './server/leaderboardDemo';
+import { beginLeaderboardGame, observeLeaderboardGame, hasUnsavedLeaderboardResult, persistLeaderboardResult } from './server/leaderboardRecording';
+import { verifiedRoomIdentity } from './server/socketIdentity';
+import { registerAnalyticsRoutes } from './server/analyticsRoutes';
+import { createSocialService } from './server/social';
+import { SocialStore } from './server/socialStore';
+import { freeSeats } from './shared/social';
+import { queryDatabaseStorage } from './server/databaseStorage';
+import { loginDeviceGuest, renameGuest } from './server/guestIdentity';
+import { spectatorGameState } from './shared/spectatorView';
+const DEMO_MODE = process.argv.includes('--demo');
 
 dotenv.config();
+if (DEMO_MODE && process.env.NODE_ENV === 'production') throw new Error('Demo is disabled in production');
 
 // Remove empty string env vars so they don't block platform process.env variables
 for (const [key, value] of Object.entries(process.env)) {
@@ -45,7 +68,7 @@ const adminMiddleware = (req: any, res: any, next: any) => {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = DEMO_MODE ? Number(process.env.DEMO_PORT || 5174) : Number(process.env.PORT || 3000);
   
   app.use(express.json());
 
@@ -55,7 +78,7 @@ async function startServer() {
   const rooms = new Map<string, any>();
 
   // MongoDB Connection setup
-  const MONGODB_URI = process.env.MONGODB_URI?.trim();
+  const MONGODB_URI = DEMO_MODE ? undefined : process.env.MONGODB_URI?.trim();
   let dbClient: MongoClient | null = null;
   let usersCollection: any = null;
   let verificationCodesCollection: any = null;
@@ -65,7 +88,15 @@ async function startServer() {
   let messagesCollection: any = null;
   let feedbackCollection: any = null;
   let aboutCollection: any = null;
+  let presenceCollection: any = null;
+  let invitationsCollection: any = null;
+  const demoLeaderboard = DEMO_MODE ? createDemoLeaderboardStore() : null;
   
+  if (DEMO_MODE) {
+    const { attachDemoApi } = await import('./demo/server');
+    messagesCollection = attachDemoApi(app, JWT_SECRET, async () => { rooms.clear(); demoLeaderboard?.reset(); await social.resetDemoData(); });
+  }
+
   if (MONGODB_URI) {
     dbClient = new MongoClient(MONGODB_URI, {
       serverApi: {
@@ -86,8 +117,13 @@ async function startServer() {
       messagesCollection = db.collection('system_messages');
       feedbackCollection = db.collection('feedback');
       aboutCollection = db.collection('about_info');
+      presenceCollection = db.collection('online_sessions');
+      invitationsCollection = db.collection('room_invitations');
+      await presenceCollection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+      await invitationsCollection.createIndex({ deleteAt: 1 }, { expireAfterSeconds: 0 });
       
       await usersCollection.createIndex({ email: 1 }, { unique: true });
+      await usersCollection.createIndex({ guestDeviceHash: 1 }, { unique: true, sparse: true });
       await verificationCodesCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 }); // 10 minutes expiry
       console.log("[Server] Pinged your deployment. You successfully connected to MongoDB!");
 
@@ -128,8 +164,9 @@ async function startServer() {
       credentials: true
     },
     allowEIO3: true,
-    pingTimeout: 60000,
-    pingInterval: 25000,
+    // Detect silent mobile disconnects without leaving AI ownership stale for 85s.
+    pingTimeout: 12000,
+    pingInterval: 8000,
     connectTimeout: 45000,
     transports: ['polling', 'websocket']
   });
@@ -146,8 +183,70 @@ async function startServer() {
   });
 
   // API routes FIRST
+  const social = createSocialService(io, rooms, JWT_SECRET, new SocialStore(presenceCollection, invitationsCollection),
+    process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`);
+  app.get('/api/admin/online', authMiddleware, adminMiddleware, async (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { res.json({ users: await social.online() }); }
+    catch { res.status(503).json({ error: '在线名单暂不可用，请稍后重试' }); }
+  });
+  const sendRoomEvent = (target: any, room: any, event: string, payload: any, context?: any) => {
+    const player = room.players.some((member: any) => member.socketId === target.id && !member.disconnected) && !room.spectators?.some((member: any) => member.socketId === target.id);
+    const view = (state: any) => player ? state : spectatorGameState(state, room.settings?.spectatorHands === true);
+    target.emit(event, event === 'room_state' ? { ...payload, gameState: view(payload.gameState) } : view(payload), context);
+  };
+  const broadcastRoomEvent = (room: any, event: string, payload: any, context?: any, except?: string) => {
+    for (const id of io.sockets.adapter.rooms.get(room.roomId) || []) {
+      const target = io.sockets.sockets.get(id);
+      if (target && id !== except) sendRoomEvent(target, room, event, payload, context);
+    }
+  };
+  let demoCapacity: number | null = null;
+  let storageCache: { time: number; value: Awaited<ReturnType<typeof queryDatabaseStorage>> } | null = null;
+  let pendingStorage: Promise<Awaited<ReturnType<typeof queryDatabaseStorage>>> | null = null;
+  registerAnalyticsRoutes(app, authMiddleware, adminMiddleware, {
+    readRecords: async () => {
+      if (demoLeaderboard) {
+        const records = await demoLeaderboard.store.readRecords();
+        return { ...records, users: [...records.users, { _id: 'demo-guest-1', username: '体验游客', isGuest: true, createdAt: new Date() }] };
+      }
+      if (!usersCollection || !gamesCollection) throw new Error('Database unavailable');
+      const [users, games] = await Promise.all([
+        usersCollection.find({}).project({ _id: 1, username: 1, isGuest: 1, role: 1, createdAt: 1 }).toArray(),
+        gamesCollection.find({}).project({ _id: 1, gameId: 1, completedAt: 1, phase: 1 }).toArray(),
+      ]);
+      return { users, games };
+    },
+    readCapacity: async () => {
+      if (DEMO_MODE) return demoCapacity;
+      if (!aboutCollection) throw new Error('Database unavailable');
+      const value = (await aboutCollection.findOne({ _id: 'database_capacity' }))?.bytes;
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+    },
+    writeCapacity: async bytes => {
+      if (DEMO_MODE) { demoCapacity = bytes; return; }
+      if (!aboutCollection) throw new Error('Database unavailable');
+      await aboutCollection.updateOne({ _id: 'database_capacity' }, { $set: { bytes } }, { upsert: true });
+    },
+    readStorage: async () => {
+      if (DEMO_MODE) return { usedBytes: 12 * 1024 * 1024, scope: 'cluster', dataBytes: 10 * 1024 * 1024, indexBytes: 2 * 1024 * 1024 };
+      if (!MONGODB_URI) throw new Error('Database unavailable');
+      if (storageCache && Date.now() - storageCache.time < 60000) return storageCache.value;
+      if (!pendingStorage) pendingStorage = queryDatabaseStorage(MONGODB_URI).then(value => {
+        storageCache = { time: Date.now(), value }; return value;
+      }).finally(() => { pendingStorage = null; });
+      return pendingStorage;
+    },
+  });
+  registerGatewayRoutes(app, authMiddleware, adminMiddleware, { demo: DEMO_MODE,
+    url: process.env.GATEWAY_URL, token: process.env.GATEWAY_ADMIN_TOKEN });
+  registerLeaderboardRoutes(app, authMiddleware, adminMiddleware, demoLeaderboard?.store || mongoLeaderboardStore(() => ({
+    games: gamesCollection, users: usersCollection, settings: aboutCollection,
+  })));
+  if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ status: 'ok', version: 'v27', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -155,13 +254,13 @@ async function startServer() {
   });
 
   // ========== EMAIL TRANSPORTER (BREVO API) ==========
-  const brevoApiKey = process.env.BREVO_API_KEY || process.env.SMTP_PASS;
-  const fromEmail = process.env.SMTP_FROM || 'xiaskot1224@gmail.com';
+  const brevoApiKey = process.env.BREVO_API_KEY?.trim();
+  const fromEmail = process.env.SMTP_FROM?.trim() || 'xiaskot1224@gmail.com';
   
   if (brevoApiKey) {
     console.log('[Server] Initialized Brevo API Transporter');
   } else {
-    console.warn('[Server] Missing API credentials! Email sending will be disabled (fallback to 123456).');
+    console.warn('[Server] BREVO_API_KEY is missing; verification emails are unavailable.');
   }
 
   // ========== AUTH ROUTES ==========
@@ -185,7 +284,9 @@ async function startServer() {
         if (existing) return res.status(400).json({ error: '该邮箱已被注册' });
       }
 
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      if (!brevoApiKey) return res.status(503).json({ error: '验证码邮件暂时不可用，请联系管理员' });
+
+      const code = randomInt(100000, 1000000).toString();
 
       await verificationCodesCollection.updateOne(
         { email },
@@ -193,14 +294,10 @@ async function startServer() {
         { upsert: true }
       );
 
-      if (!brevoApiKey) {
-        console.log('[Server] No API configured, using fallback code 123456');
-        return res.json({ message: '测试环境：发件服务未完全配置，请暂时使用随意六位验证码' });
-      }
-
       console.log(`[Server] Making API req to Brevo for ${email}`);
       const brevoResponse = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
+        signal: AbortSignal.timeout(15000),
         headers: {
           'accept': 'application/json',
           'api-key': brevoApiKey,
@@ -219,7 +316,7 @@ async function startServer() {
 
       if (!brevoResponse.ok) {
         const errText = await brevoResponse.text();
-        console.error('[Server] Brevo API Error:', brevoResponse.status, errText);
+        console.error('[Server] Brevo API Error:', { status: brevoResponse.status, response: errText.slice(0, 1000), sender: fromEmail });
         throw new Error(`Brevo API Error: ${brevoResponse.status}`);
       }
 
@@ -329,46 +426,13 @@ async function startServer() {
 
   // Guest Login
   app.post('/api/guest', async (req, res) => {
-    const { username, guestId } = req.body;
-    let finalUsername = username;
-    let finalGuestId;
-
     try {
-      if (guestId && ObjectId.isValid(guestId)) {
-        finalGuestId = new ObjectId(guestId);
-        if (usersCollection) {
-          const existingGuest = await usersCollection.findOne({ _id: finalGuestId, isGuest: true });
-          if (existingGuest) {
-            // Found existing guest
-            if (!username) {
-              finalUsername = existingGuest.username;
-            } else {
-              // Update username if requested
-              await usersCollection.updateOne({ _id: finalGuestId }, { $set: { username: finalUsername } });
-            }
-          } else {
-            // Valid ID but not in DB, create new with this ID
-            if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-            const dummyEmail = `guest-${finalGuestId.toString()}@guest.local`;
-            await usersCollection.insertOne({ _id: finalGuestId, email: dummyEmail, username: finalUsername, role: 'guest', isGuest: true, createdAt: new Date() });
-          }
-        } else {
-          if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-        }
-      } else {
-        finalGuestId = new ObjectId();
-        if (!finalUsername) finalUsername = `游客-${Math.floor(Math.random()*10000)}`;
-        if (usersCollection) {
-           const dummyEmail = `guest-${finalGuestId.toString()}@guest.local`;
-           await usersCollection.insertOne({ _id: finalGuestId, email: dummyEmail, username: finalUsername, role: 'guest', isGuest: true, createdAt: new Date() });
-        }
-      }
-
-      const token = jwt.sign({ userId: finalGuestId.toString(), username: finalUsername, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
-      res.json({ token, user: { id: finalGuestId.toString(), username: finalUsername, role: 'guest', isGuest: true } });
-    } catch (err) {
-      console.error('Guest login error', err);
-      res.status(500).json({ error: '游客登录失败' });
+      const user = await loginDeviceGuest(usersCollection, JWT_SECRET, req.body.deviceKey, req.body.username, req.body.guestProof);
+      const token = jwt.sign({ userId: user.id, username: user.username, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
+      res.json({ token, user });
+    } catch (err: any) {
+      const invalid = ['INVALID_DEVICE', 'INVALID_NAME'].includes(err.message);
+      res.status(invalid ? 400 : 503).json({ error: invalid ? '请刷新页面后重试，昵称最多 30 个字' : '游客登录暂不可用，请稍后重试' });
     }
   });
 
@@ -483,6 +547,7 @@ async function startServer() {
 
         return {
           id: m._id.toString(),
+          revision: m.revision || 1,
           title: m.title,
           content: m.content,
           type: m.type || (m.targetUserId ? 'private' : 'system'),
@@ -622,60 +687,17 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/messages/:id', authMiddleware, async (req: any, res: any) => {
-    try {
-      const { id } = req.params;
-      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
-      await messagesCollection.deleteOne({ _id: new ObjectId(id) });
-      res.json({ success: true });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: '删除消息失败' });
-    }
-  });
-
-  app.delete('/api/messages/conversation', authMiddleware, async (req: any, res: any) => {
-    try {
-      const { partner } = req.body;
-      if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
-
-      const currentUserId = req.user?.userId ? req.user.userId.toString() : null;
-      const currentUsername = req.user?.username || null;
-      const isAdmin = req.user?.role === 'admin';
-
-      if (isAdmin && partner) {
-        await messagesCollection.deleteMany({
-          type: 'private',
-          $or: [
-            { senderName: partner },
-            { senderId: partner },
-            { targetUserName: partner },
-            { targetUserId: partner }
-          ]
-        });
-      } else if (currentUserId || currentUsername) {
-        await messagesCollection.deleteMany({
-          type: 'private',
-          $or: [
-            { senderId: currentUserId },
-            { senderName: currentUsername },
-            { targetUserId: currentUserId },
-            { targetUserName: currentUsername }
-          ]
-        });
-      }
-
-      res.json({ success: true });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: '删除对话框失败' });
-    }
-  });
+  registerMessageDeletionRoutes(app, authMiddleware, () => messagesCollection);
+  registerAnnouncementEditingRoutes(app, authMiddleware, adminMiddleware, () => messagesCollection);
 
   app.delete('/api/admin/messages/:id', authMiddleware, adminMiddleware, async (req, res) => {
     try {
       const { id } = req.params;
+      if (!/^[a-f\d]{24}$/i.test(id)) return res.status(400).json({ error: '无效的消息编号' });
       if (!messagesCollection) return res.status(500).json({ error: 'DB未连接' });
+      const message = await messagesCollection.findOne({ _id: new ObjectId(id) });
+      if (!message) return res.status(404).json({ error: '消息不存在' });
+      if (message.type === 'private' || message.targetUserId) return res.status(409).json({ error: '聊天记录不再删除，请使用清屏或隐藏会话' });
       await messagesCollection.deleteOne({ _id: new ObjectId(id) });
       res.json({ success: true });
     } catch (err) {
@@ -883,10 +905,12 @@ async function startServer() {
       
       let allUsers = usersCollection ? await usersCollection.find({ isGuest: false }).sort({ createdAt: -1 }).project({ password: 0 }).toArray() : [];
       const allGames = gamesCollection ? await gamesCollection.find().toArray() : [];
+      const identityUsers = usersCollection ? await usersCollection.find({}).project({ _id: 1, username: 1, isGuest: 1, role: 1, createdAt: 1 }).toArray() : [];
+      const rankedStats = computeLeaderboardUserStats(allGames, identityUsers);
       
       allUsers = allUsers.map(u => {
         const stats = computeUserGameStats(allGames, u.username);
-        return { ...u, ...stats };
+        return { ...u, ...stats, recent3DayGames: rankedStats.get(String(u._id))?.recent3DayGames || 0 };
       });
       
       const latestUsers = allUsers.slice(0, 10);
@@ -944,37 +968,24 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/user/:username/games', authMiddleware, adminMiddleware, async (req, res) => {
-    try {
-      if (!gamesCollection) return res.status(500).json({ error: '数据库未连接' });
-      const { username } = req.params;
-      
-      const games = await gamesCollection.find({ 
-        "players.name": { $regex: new RegExp(`^${username.trim()}$`, 'i') } 
-      })
-        .sort({ completedAt: -1 })
-        .limit(200)
-        .toArray();
-      
-      const stats = computeUserGameStats(games, username);
-      res.json({ games, stats });
-    } catch (err) {
-      console.error('Fetch admin user games error', err);
-      res.status(500).json({ error: '获取战绩失败' });
-    }
-  });
 
   app.get('/api/admin/user/:username/info', authMiddleware, adminMiddleware, async (req, res) => {
     try {
       if (!usersCollection) return res.status(500).json({ error: '数据库未连接' });
       const { username } = req.params;
       
-      const user = await usersCollection.findOne({ username }, { projection: { password: 0 } });
+      if (req.query.userId && (typeof req.query.userId !== 'string' || !ObjectId.isValid(req.query.userId))) {
+        return res.status(400).json({ error: '账号编号无效' });
+      }
+      const candidates = await usersCollection.find(req.query.userId
+        ? { _id: new ObjectId(String(req.query.userId)) } : { username }).project({ password: 0 }).limit(2).toArray();
+      if (candidates.length > 1) return res.status(409).json({ error: '存在同名账号，请通过账号编号查看资料' });
+      const user = candidates[0];
       if (!user) {
         return res.json({ user: { username, isGuest: true, email: '临时游客/AI玩家' } });
       }
       
-      res.json({ user: { id: user._id, username: user.username, email: user.email, role: user.role, isGuest: false } });
+      res.json({ user: { id: user._id, username: user.username, email: user.email, role: user.role, isGuest: user.isGuest === true } });
     } catch (err) {
       console.error('Fetch admin user info error', err);
       res.status(500).json({ error: '获取玩家信息失败' });
@@ -1008,7 +1019,14 @@ async function startServer() {
       const userId = (req as any).user.userId;
       
       if ((req as any).user.isGuest) {
-        return res.status(400).json({ error: '游客无法修改资料' });
+        if (req.body.password || req.body.oldPassword) return res.status(400).json({ error: '游客仅可修改昵称' });
+        try {
+          const user = await renameGuest(usersCollection, userId, req.body.username);
+          const token = jwt.sign({ userId: user.id, username: user.username, role: 'guest', isGuest: true }, JWT_SECRET, { expiresIn: '1d' });
+          return res.json({ token, user });
+        } catch (error: any) {
+          return res.status(400).json({ error: error.message === 'INVALID_NAME' ? '昵称须为 1 至 30 个字符' : '游客账号不可用，请重新登录' });
+        }
       }
 
       const { username, password, oldPassword } = req.body;
@@ -1045,146 +1063,23 @@ async function startServer() {
     }
   });
 
-  // In-memory image buffer cache for ultra-fast, zero-failure image delivery
-  const serverImageBufferCache = new Map<string, { buffer: Buffer; contentType: string }>();
-
-  // Preload all critical game assets on startup so proxy-image responds in 0ms
-  const PRELOAD_IMAGE_FILENAMES = [
-    '森林.jpg', '麦田.jpg', '牧场.jpg', '沙漠.jpg', '矿山.jpg', '丘陵.jpg', '金矿.jpg', '海洋.jpg',
-    '树.png', '砖块.png', '羊2.png', '小麦.png', '铁矿石.png', '强盗2.png', '脚印.png', '船锚.png',
-    '海盗船.png', '帆船.png', 'catan_logo.png', '发展卡.png', '资源卡.png', '道路.png', '地图册.png',
-    '骑士.png', '胜利点.png', '道路建设.png', '丰收.png', '垄断.png'
-  ];
-
-  async function preloadServerAssets() {
-    console.log('[AssetPreloader] Starting server-side prefetch of Catan assets...');
-    for (const filename of PRELOAD_IMAGE_FILENAMES) {
-      const encodedFilename = encodeURIComponent(filename);
-      const urlCandidates = [
-        `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
-        `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
-        `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/img/${encodedFilename}`,
-        `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/img/${encodedFilename}`
-      ];
-
-      for (const targetUrl of urlCandidates) {
-        try {
-          const resp = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Catan-Image-Proxy/1.0' },
-            signal: AbortSignal.timeout(6000)
-          });
-          if (resp.ok) {
-            const arrayBuffer = await resp.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
-            const contentType = resp.headers.get('content-type') || (filename.endsWith('.jpg') ? 'image/jpeg' : 'image/png');
-            
-            // Cache by all candidate URLs and direct URL
-            for (const c of urlCandidates) {
-              serverImageBufferCache.set(c, { buffer, contentType });
-            }
-            serverImageBufferCache.set(targetUrl, { buffer, contentType });
-            break;
-          }
-        } catch (err) {
-          // try next candidate
-        }
-      }
-    }
-    console.log(`[AssetPreloader] Server prefetch complete! Cached ${serverImageBufferCache.size} asset variants in memory.`);
-  }
-  // Run prefetch in background without blocking startup
-  preloadServerAssets().catch(err => console.warn('[AssetPreloader] Prefetch warning:', err));
-
-  app.get('/api/proxy-image', async (req, res) => {
+  // Legacy image URLs resolve to bundled assets, with no arbitrary outbound fetch.
+  app.get('/api/proxy-image', (req, res) => {
     try {
-      let imageUrl = req.query.url as string;
-      if (!imageUrl) {
-        res.status(400).send('Missing url parameter');
-        return;
-      }
-
-      // Check in-memory RAM cache first
-      const cached = serverImageBufferCache.get(imageUrl);
-      if (cached) {
-        res.setHeader('Content-Type', cached.contentType);
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        res.send(cached.buffer);
-        return;
-      }
-
-      // Build fallback fetch candidate list
-      const candidates: string[] = [imageUrl];
-      const match = imageUrl.match(/\/gh\/xia-skot\/Catan_Pics\/(img|audio)\/(.+)$/);
-      if (match) {
-        const folder = match[1];
-        const filename = match[2];
-        candidates.push(
-          `https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`,
-          `https://cdn.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`,
-          `https://raw.githubusercontent.com/xia-skot/Catan_Pics/main/${folder}/${filename}`,
-          `https://gcore.jsdelivr.net/gh/xia-skot/Catan_Pics/${folder}/${filename}`
-        );
-      }
-
-      let response: Response | null = null;
-      for (const targetUrl of Array.from(new Set(candidates))) {
-        try {
-          const resp = await fetch(new URL(targetUrl).toString(), {
-            headers: { 'User-Agent': 'Catan-Image-Proxy/1.0' },
-            signal: AbortSignal.timeout(5000)
-          });
-          if (resp.ok) {
-            response = resp;
-            break;
-          }
-        } catch (e) {
-          // continue to next candidate
-        }
-      }
-
-      if (!response || !response.ok) {
-        res.status(502).send('Failed to fetch image from any source');
-        return;
-      }
-
-      const contentType = response.headers.get('content-type') || 'image/png';
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      
-      // Store in RAM cache (max 200 items)
-      if (serverImageBufferCache.size < 200) {
-        serverImageBufferCache.set(imageUrl, { buffer, contentType });
-      }
-
-      res.send(buffer);
-    } catch (error) {
-      console.error('Proxy image error:', error);
-      res.status(500).send('Internal server error');
-    }
+      const url = new URL(String(req.query.url || ''));
+      const hosts = ['fastly.jsdelivr.net', 'cdn.jsdelivr.net', 'gcore.jsdelivr.net', 'testingcf.jsdelivr.net', 'jsd.cdn.zzko.cn', 'raw.githubusercontent.com'];
+      if (url.protocol !== 'https:' || !hosts.includes(url.hostname)) return res.status(400).send('Unsupported asset');
+      const match = url.pathname.match(/(?:\/gh\/xia-skot\/Catan_Pics|\/xia-skot\/Catan_Pics\/main)\/(img|audio)\/([^/]+)$/);
+      if (!match) return res.status(404).send('Asset not found');
+      const files = match[1] === 'img' ? assetManifest.images : assetManifest.audio;
+      const filename = encodeURIComponent(decodeURIComponent(match[2]));
+      const local = files[filename as keyof typeof files];
+      if (!local) return res.status(404).send('Asset not found');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      res.sendFile(path.join(__dirname, 'public', local));
+    } catch { res.status(400).send('Invalid asset URL'); }
   });
 
-  app.get('/api/user/games', authMiddleware, async (req, res) => {
-    try {
-      if (!gamesCollection) return res.status(500).json({ error: '数据库未连接' });
-      const username = (req as any).user.username;
-      
-      const games = await gamesCollection.find({ 
-        "players.name": { $regex: new RegExp(`^${username.trim()}$`, 'i') } 
-      })
-        .sort({ completedAt: -1 })
-        .limit(200)
-        .toArray();
-        
-      const stats = computeUserGameStats(games, username);
-      res.json({ games, stats });
-    } catch (err) {
-      console.error('Fetch user games error', err);
-      res.status(500).json({ error: '获取战绩失败' });
-    }
-  });
 
   // ========== MAPS ARCHIVE ROUTES ==========
   app.get('/api/maps', async (req, res) => {
@@ -1369,9 +1264,14 @@ async function startServer() {
 
   // =============================================================
 
+  for (const kind of ['images', 'audio']) {
+    app.use(`/assets/${kind}`, express.static(path.join(__dirname, 'public/assets', kind), { maxAge: '1y', immutable: true }));
+  }
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
+      mode: DEMO_MODE ? 'demo' : 'development',
       server: { middlewareMode: true },
       appType: 'spa',
     });
@@ -1438,6 +1338,7 @@ async function startServer() {
   }, 10 * 60 * 1000); // 10 minutes
 
   io.on('connection', (socket) => {
+    social.attach(socket);
     console.log('A user connected:', socket.id);
 
     socket.onAny((eventName, ...args) => {
@@ -1449,7 +1350,20 @@ async function startServer() {
       }
     });
 
-    socket.on('join_room', (roomId: string, playerId: string, playerName: string, asSpectator?: boolean) => {
+    socket.on('join_room', async (roomId: string, playerId: string, playerName: string, asSpectator?: boolean, authToken?: string, invitationId?: string) => {
+      const identity = verifiedRoomIdentity(authToken, playerId, JWT_SECRET);
+      if (!identity && !DEMO_MODE) {
+        socket.emit('join_error', '登录状态已失效或页面版本过旧，请刷新页面并重新登录后进入房间。');
+        return;
+      }
+      const verifiedUserId = identity?.userId;
+      if (invitationId) {
+        try {
+          if (!identity || !await social.validateInvitation(playerId, invitationId, roomId) || !freeSeats(rooms.get(roomId))) {
+            socket.emit('join_error', '邀请已失效、房间已开始或已满，请重新选择房间。'); return;
+          }
+        } catch { socket.emit('join_error', '邀请暂不可用，请稍后重试。'); return; }
+      }
       touchRoom(roomId);
       if (!playerId) playerId = socket.id;
       if (!playerName) playerName = '玩家';
@@ -1465,9 +1379,10 @@ async function startServer() {
           players: [],
           spectators: [],
           settings: {
+            spectatorHands: false,
             playerCount: 4,
             mapType: 'archipelago',
-            botConfig: [false, false, false, false]
+            botConfig: DEMO_MODE ? [false, true, true, true] : [false, false, false, false]
           }
         };
         rooms.set(roomId, room);
@@ -1476,6 +1391,7 @@ async function startServer() {
       touchRoom(roomId);
       
       const existingPlayer = room.players.find((p: any) => p.id === playerId);
+      const returningParticipant = !!existingPlayer || !!room.spectators?.some((s: any) => s.id === playerId);
       if (!existingPlayer) {
         // If they explicitly want to spectate, are already a spectator, game has started, or room is full
         const botCount = room.settings?.botConfig?.filter((b: boolean) => b).length || 0;
@@ -1502,6 +1418,11 @@ async function startServer() {
         }
       }
       
+      const joinedPlayer = room.players.find((p: any) => p.id === playerId);
+      if (joinedPlayer) {
+        joinedPlayer.userId = verifiedUserId;
+      }
+
       // Fallback: if server thinks current host is a bot or missing
       const currentHost = room.players.find((p: any) => p.id === room.hostId);
       if (!currentHost || currentHost.isBot) {
@@ -1511,11 +1432,11 @@ async function startServer() {
         }
       }
       
-      socket.emit('room_state', room);
-      io.to(roomId).emit('room_state', room);
+      sendRoomEvent(socket, room, 'room_state', room);
+      broadcastRoomEvent(room, 'room_state', room);
       
       if (room.gameState) {
-        socket.emit('game_init', room.gameState);
+        sendRoomEvent(socket, room, 'game_init', room.gameState, { entry: returningParticipant ? 'resume' : 'start', roomId });
       }
     });
 
@@ -1530,7 +1451,7 @@ async function startServer() {
         const spectatorIndex = room.spectators?.findIndex((s: any) => s.id === playerId);
         if (spectatorIndex !== undefined && spectatorIndex !== -1) {
           room.spectators.splice(spectatorIndex, 1);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           return;
         }
 
@@ -1545,8 +1466,7 @@ async function startServer() {
             player.disconnected = true;
             console.log('Player marked disconnected:', playerId);
             if (room.hostId === playerId) {
-              const nextHost = room.players.find((p: any) => !p.disconnected && p.id !== playerId);
-              if (nextHost) room.hostId = nextHost.id;
+              room.hostId = getRoomController(room, false) || room.hostId;
             }
           }
         }
@@ -1555,7 +1475,7 @@ async function startServer() {
           rooms.delete(roomId);
           console.log(`[Server] Room ${roomId} deleted as it became empty.`);
         } else {
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1582,7 +1502,7 @@ async function startServer() {
         }
 
         if (updateUI) {
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           io.to(roomId).emit('player_kicked', playerToKickId);
         }
       }
@@ -1596,7 +1516,7 @@ async function startServer() {
           const p = room.players.splice(playerIndex, 1)[0];
           if (!room.spectators) room.spectators = [];
           room.spectators.push(p);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1613,7 +1533,7 @@ async function startServer() {
           s.isReady = false;
           s.disconnected = false;
           room.players.push(s);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
@@ -1624,34 +1544,45 @@ async function startServer() {
         const player = room.players.find((p: any) => p.id === playerId);
         if (player) {
           player.isReady = !player.isReady;
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
         }
       }
     });
 
-    socket.on('update_settings', (roomId: string, playerId: string, settings: any) => {
+    socket.on('update_settings', (roomId: string, playerId: string, settings: any, mutation?: { clientId: string; sequence: number }) => {
       const room = rooms.get(roomId);
-      if (room && room.hostId === playerId) {
-        room.settings = settings;
+      if (room && !room.gameState && room.hostId === playerId && room.players.some((p: any) => p.id === playerId && p.socketId === socket.id) && settings && typeof settings === 'object') {
+        Object.assign(room, applySettingsPatch(room, settings));
+        if (typeof mutation?.clientId === 'string' && mutation.clientId.length < 80 && Number.isSafeInteger(mutation.sequence)) {
+          room.settingsMutation = mutation;
+        }
         touchRoom(roomId);
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
       }
     });
 
     socket.on('update_game_state', async (roomId: string, gameState: any) => {
       const room = rooms.get(roomId);
+      if (!room || !socket.rooms.has(roomId) || !room.players.some((p: any) => p.socketId === socket.id && !p.disconnected) ||
+          !gameState || !Array.isArray(gameState.players)) return;
+      const isSpectatorSocket = room.spectators?.some((s: any) => s.socketId === socket.id || s.id === socket.id);
+      if (isSpectatorSocket) return;
+      const previousState = room.gameState;
+      const actor = room.players.find((player: any) => player.socketId === socket.id);
+      if (!canAcceptCriticalGameTransition(previousState, gameState, actor.id, getRoomController(room))) {
+        sendRoomEvent(socket, room, 'game_state_updated', previousState, { roomId });
+        return;
+      }
+      observeLeaderboardGame(room, gameState);
+      // Commit the in-memory transition before awaiting persistence, so two winner updates cannot insert twice.
+      room.gameState = gameState;
+      broadcastRoomEvent(room, 'game_state_updated', gameState, { roomId }, socket.id);
       if (room) {
         touchRoom(roomId);
 
-        // Ignore update_game_state from spectators
-        const isSpectatorSocket = room.spectators?.some((s: any) => s.socketId === socket.id || s.id === socket.id);
-        if (isSpectatorSocket) {
-          console.log(`[Server] Ignored update_game_state from spectator socket ${socket.id}`);
-          return;
-        }
         // If a winner is just declared, save game using gamesCollection
         if (gameState && gameState.winnerId !== undefined && gameState.winnerId !== null && 
-            (!room.gameState || room.gameState.winnerId === undefined || room.gameState.winnerId === null)) {
+            (!previousState || previousState.winnerId === undefined || previousState.winnerId === null || hasUnsavedLeaderboardResult(room))) {
             
             if (gamesCollection) {
               const gameRecord = {
@@ -1674,6 +1605,7 @@ async function startServer() {
                    return {
                      id: p.id,
                      name: p.name,
+                     sessionId: p.sessionId,
                      isBot: p.isBot,
                      score: totalScore,
                      breakdown: {
@@ -1692,25 +1624,29 @@ async function startServer() {
                  completedAt: new Date()
               };
               try {
-                await gamesCollection.insertOne(gameRecord);
+                await persistLeaderboardResult(room, gameRecord, gamesCollection);
                 console.log(`[Server] Game ${roomId} result saved.`);
               } catch(e) {
                 console.error('Failed to save game result:', e);
               }
             }
         }
-        room.gameState = gameState;
       }
-      socket.broadcast.to(roomId).emit('game_state_updated', gameState);
     });
 
     socket.on('react_to_trade', (roomId: string, tradeId: string, playerId: number, reaction: 'accept' | 'reject') => {
       const room = rooms.get(roomId);
+      const actor = [...(room?.players || []), ...(room?.spectators || [])].find((p: any) => p.socketId === socket.id && !p.disconnected);
+      const reactingPlayer = room?.gameState?.players?.find((p: any) => p.id === playerId);
+      if (!actor || !reactingPlayer || (reactingPlayer.isBot ? actor.id !== getRoomController(room) : actor.id !== reactingPlayer.sessionId) ||
+          !['accept', 'reject'].includes(reaction)) return;
       if (room && room.gameState && room.gameState.tradeOffers) {
         const offers = room.gameState.tradeOffers;
         const index = offers.findIndex((o: any) => o.id === tradeId);
         if (index !== -1) {
           const offer = offers[index];
+          if (offer.status !== 'pending' || offer.initiatorId !== room.gameState.currentPlayerIndex || playerId === offer.initiatorId ||
+              (offer.targetPlayerId !== null && offer.targetPlayerId !== playerId)) return;
           if (reaction === 'accept') {
             if (!offer.acceptedBy.includes(playerId)) offer.acceptedBy.push(playerId);
             offer.rejectedBy = offer.rejectedBy.filter((id: number) => id !== playerId);
@@ -1718,7 +1654,7 @@ async function startServer() {
             if (!offer.rejectedBy.includes(playerId)) offer.rejectedBy.push(playerId);
             offer.acceptedBy = offer.acceptedBy.filter((id: number) => id !== playerId);
           }
-          io.to(roomId).emit('game_state_updated', room.gameState);
+          broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
         }
       }
     });
@@ -1728,10 +1664,18 @@ async function startServer() {
       if (room && room.gameState) {
         const prev = room.gameState;
         const offer = (prev.tradeOffers || []).find((o: any) => o.id === tradeId);
-        if (!offer) return;
+        if (!offer || offer.status !== 'pending' || !offer.acceptedBy.includes(partnerId) || offer.initiatorId !== prev.currentPlayerIndex ||
+            prev.phase !== 'main' || !prev.hasRolled || partnerId === offer.initiatorId) return;
         const initiator = prev.players.find((p: any) => p.id === offer.initiatorId);
         const partner = prev.players.find((p: any) => p.id === partnerId);
         if (!initiator || !partner) return;
+        const actor = [...room.players, ...(room.spectators || [])].find((p: any) => p.socketId === socket.id && !p.disconnected);
+        if (!actor || (initiator.isBot ? actor.id !== getRoomController(room) : actor.id !== initiator.sessionId)) return;
+        const resourceKeys = ['lumber', 'brick', 'wool', 'grain', 'ore'];
+        const validPayment = (amounts: any, player: any) => amounts && Object.keys(amounts).every(key => resourceKeys.includes(key)) &&
+          resourceKeys.every(key => Number.isSafeInteger(amounts[key] || 0) && (amounts[key] || 0) >= 0 && player.resources[key] >= (amounts[key] || 0)) &&
+          resourceKeys.some(key => amounts[key] > 0);
+        if (!validPayment(offer.offer, initiator) || !validPayment(offer.request, partner)) return;
 
         // Perform trade
         for (const [res, amount] of Object.entries(offer.request)) {
@@ -1745,20 +1689,21 @@ async function startServer() {
 
         offer.status = 'completed';
         offer.completedWith = partnerId;
-        io.to(roomId).emit('game_state_updated', room.gameState);
+        broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
       }
     });
 
     socket.on('request_sync', (roomId: string) => {
       const room = rooms.get(roomId);
-      if (room && room.gameState) {
+      if (room && room.gameState && socket.rooms.has(roomId) && [...room.players, ...(room.spectators || [])].some((p: any) => p.socketId === socket.id)) {
         // Send the cached game state only to the player who requested it
-        socket.emit('game_state_updated', room.gameState);
-        socket.emit('room_state', room);
+        sendRoomEvent(socket, room, 'game_state_updated', room.gameState, { roomId });
+        sendRoomEvent(socket, room, 'room_state', room);
       }
     });
 
     socket.on('reclaim_slot', (roomId: string, newPlayerId: string, oldPlayerId: string) => {
+      if (socket.data.socialAccount?.userId !== newPlayerId || newPlayerId !== oldPlayerId || !socket.rooms.has(roomId)) return;
       const room = rooms.get(roomId);
       if (room && room.gameState) {
         // Find the old player in the room list
@@ -1786,18 +1731,23 @@ async function startServer() {
             room.hostId = newPlayerId;
           }
           
-          io.to(roomId).emit('room_state', room);
-          io.to(roomId).emit('game_state_updated', room.gameState);
+          broadcastRoomEvent(room, 'room_state', room);
+          broadcastRoomEvent(room, 'game_state_updated', room.gameState, { roomId });
         }
       }
     });
 
     socket.on('start_game', (roomId: string, initialGameState: any) => {
       const room = rooms.get(roomId);
-      if (room) {
-        room.gameState = initialGameState;
-      }
-      io.to(roomId).emit('game_init', initialGameState);
+      if (!room || room.gameState || !room.players.some((p: any) => p.id === room.hostId && p.socketId === socket.id) ||
+          !beginLeaderboardGame(room, initialGameState)) return;
+      room.gameState = initialGameState;
+      const configured = getSetupSlots(room).filter(slot => slot.isBot || slot.player);
+      room.gameState.players = initialGameState.players.map((player: any, index: number) => ({
+        ...player,
+        botDifficulty: configured[index]?.isBot ? normalizeBotDifficulty(room.settings.botDifficulties?.[configured[index].index]) : 'expert',
+      }));
+      broadcastRoomEvent(room, 'game_init', room.gameState, { entry: 'start', roomId });
     });
 
     socket.on('return_to_lobby', (roomId: string, playerId: string) => {
@@ -1807,7 +1757,7 @@ async function startServer() {
         room.players.forEach((p: any) => {
           p.isReady = false;
         });
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
         io.to(roomId).emit('returned_to_lobby');
       }
     });
@@ -1834,7 +1784,7 @@ async function startServer() {
           room.reservedUntil = Date.now() + durationMs;
         }
         touchRoom(roomId);
-        io.to(roomId).emit('room_state', room);
+        broadcastRoomEvent(room, 'room_state', room);
       }
     });
 
@@ -1842,6 +1792,7 @@ async function startServer() {
       let activeRooms = Array.from(rooms.values())
         .map(r => ({
           ...r,
+          gameState: undefined,
           status: r.gameState ? 'playing' : 'waiting'
         }))
         .filter(r => {
@@ -1861,9 +1812,9 @@ async function startServer() {
     socket.on('get_my_active_room', (playerId: string, playerName: string, callback: (room: any) => void) => {
       if (typeof callback !== 'function') return;
       const userRoom = Array.from(rooms.values()).find(r => 
-        r.players?.some((p: any) => (playerId && p.id === playerId) || (playerName && p.name === playerName))
+        r.players?.some((p: any) => p.id === playerId && (p.socketId === socket.id || socket.data.socialAccount?.userId === playerId))
       );
-      callback(userRoom || null);
+      callback(userRoom ? { ...userRoom, gameState: userRoom.gameState } : null);
     });
 
     socket.on('admin_delete_room', (roomId: string) => {
@@ -1890,7 +1841,7 @@ async function startServer() {
         if (spectatorIndex !== undefined && spectatorIndex !== -1) {
           room.spectators.splice(spectatorIndex, 1);
           touchRoom(roomId);
-          io.to(roomId).emit('room_state', room);
+          broadcastRoomEvent(room, 'room_state', room);
           break;
         }
 
@@ -1908,8 +1859,7 @@ async function startServer() {
             disconnectedPlayer.disconnected = true;
             console.log('Player marked disconnected:', disconnectedPlayer.id);
             if (room.hostId === disconnectedPlayer.id) {
-              const nextHost = room.players.find((p: any) => !p.disconnected);
-              if (nextHost) room.hostId = nextHost.id;
+              room.hostId = getRoomController(room, false) || room.hostId;
             }
           }
           touchRoom(roomId);
@@ -1918,7 +1868,7 @@ async function startServer() {
             rooms.delete(roomId);
             console.log(`[Server] Room ${roomId} deleted as it became empty on disconnect.`);
           } else {
-            io.to(roomId).emit('room_state', room);
+            broadcastRoomEvent(room, 'room_state', room);
           }
           break;
         }
