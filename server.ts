@@ -1,4 +1,5 @@
 import express from 'express';
+import { snapshotState, diffState } from './shared/stateSync';
 import { createServer as createViteServer } from 'vite';
 import { createServer as createHttpServer } from 'http';
 import { Server } from 'socket.io';
@@ -11,6 +12,7 @@ import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import { randomInt } from 'node:crypto';
 import { registerMessageDeletionRoutes } from './server/messageRoutes';
+import { canReadMessage } from './server/messageVisibility';
 import { registerAnnouncementEditingRoutes } from './server/announcementRoutes';
 import { registerGatewayRoutes } from './server/gatewayRoutes';
 import { LEADERBOARD_SCORING_VERSION } from './shared/leaderboard';
@@ -24,6 +26,7 @@ import { createDemoLeaderboardStore } from './server/leaderboardDemo';
 import { beginLeaderboardGame, observeLeaderboardGame, hasUnsavedLeaderboardResult, persistLeaderboardResult } from './server/leaderboardRecording';
 import { verifiedRoomIdentity } from './server/socketIdentity';
 import { registerAnalyticsRoutes } from './server/analyticsRoutes';
+import { buildAnalytics, completedGames } from './server/analytics';
 import { createSocialService } from './server/social';
 import { SocialStore } from './server/socialStore';
 import { freeSeats } from './shared/social';
@@ -190,10 +193,24 @@ async function startServer() {
     try { res.json({ users: await social.online() }); }
     catch { res.status(503).json({ error: '在线名单暂不可用，请稍后重试' }); }
   });
+  const stateSnapshots = new WeakMap<object, { roomId: string; snapshot: import('./shared/stateSync').StateSnapshot }>();
   const sendRoomEvent = (target: any, room: any, event: string, payload: any, context?: any) => {
     const player = room.players.some((member: any) => member.socketId === target.id && !member.disconnected) && !room.spectators?.some((member: any) => member.socketId === target.id);
     const view = (state: any) => player ? state : spectatorGameState(state, room.settings?.spectatorHands === true);
-    target.emit(event, event === 'room_state' ? { ...payload, gameState: view(payload.gameState) } : view(payload), context);
+    const outgoing = event === 'room_state' ? { ...payload, gameState: view(payload.gameState) } : view(payload);
+    if (event === 'game_state_updated' && outgoing && target.handshake.auth?.statePatches === 1) {
+      const last = stateSnapshots.get(target);
+      const previous = last?.roomId === room.roomId ? last.snapshot : undefined;
+      const next = snapshotState(outgoing, (previous?.revision || 0) + 1);
+      const patch = previous ? diffState(previous, next) : null;
+      stateSnapshots.set(target, { roomId: room.roomId, snapshot: next });
+      if (patch && JSON.stringify(patch).length < JSON.stringify(outgoing).length) {
+        target.emit('game_state_patch', patch, { roomId: room.roomId });
+      } else target.emit(event, outgoing, { ...context, syncRevision: next.revision });
+      return;
+    }
+    stateSnapshots.delete(target);
+    target.emit(event, outgoing, context);
   };
   const broadcastRoomEvent = (room: any, event: string, payload: any, context?: any, except?: string) => {
     for (const id of io.sockets.adapter.rooms.get(room.roomId) || []) {
@@ -208,7 +225,7 @@ async function startServer() {
     readRecords: async () => {
       if (demoLeaderboard) {
         const records = await demoLeaderboard.store.readRecords();
-        return { ...records, users: [...records.users, { _id: 'demo-guest-1', username: '体验游客', isGuest: true, createdAt: new Date() }] };
+        return { ...records, users: [...records.users, ...demoLeaderboard.stats().allGuests] };
       }
       if (!usersCollection || !gamesCollection) throw new Error('Database unavailable');
       const [users, games] = await Promise.all([
@@ -246,7 +263,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v27', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v28', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -479,6 +496,7 @@ async function startServer() {
       let currentUserId: string | null = null;
       let currentUsername: string | null = null;
       let isAdmin = false;
+      let isGuest = false;
 
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -489,29 +507,23 @@ async function startServer() {
             currentUserId = decoded.userId ? decoded.userId.toString() : null;
             currentUsername = decoded.username || null;
             if (decoded.role === 'admin') isAdmin = true;
+            isGuest = decoded.isGuest === true || decoded.role === 'guest';
           }
         } catch (e) {}
       }
 
       const messages = await messagesCollection.find().sort({ createdAt: -1 }).toArray();
 
-      const filtered = messages.filter((m: any) => {
-        const isPrivate = m.type === 'private' || Boolean(m.targetUserId);
-        if (!isPrivate) {
-          return true; // System messages visible to everyone
-        }
-        if (isAdmin) {
-          return true; // Admin can see all messages
-        }
-        if (currentUserId && (m.targetUserId === currentUserId || m.senderId === currentUserId)) {
-          return true;
-        }
-        if (currentUsername && (m.targetUserId === currentUsername || m.targetUserName === currentUsername || m.senderName === currentUsername)) {
-          return true;
-        }
-        return false;
-      });
+      const filtered = messages.filter((m: any) => canReadMessage(m, {
+        id: currentUserId, name: currentUsername, admin: isAdmin, guest: isGuest,
+      }));
 
+      if (req.query.summary === '1') {
+        res.setHeader('Cache-Control', 'private, no-cache');
+        return res.json({ messages: filtered.map((m: any) => ({ id: m._id.toString(), revision: m.revision || 1,
+          type: m.type || (m.targetUserId ? 'private' : 'system'), targetUserId: m.targetUserId || null,
+          targetUserName: m.targetUserName || null, senderId: m.senderId || null, senderName: m.senderName || null })) });
+      }
       let adminUsername = '肖隐弦';
       if (usersCollection) {
         try {
@@ -523,9 +535,14 @@ async function startServer() {
       }
 
       let allPlayerNames: string[] = [];
+      let recipients: { id: string; username: string; isGuest: boolean }[] = [];
+      if (isAdmin && demoLeaderboard) recipients = [...demoLeaderboard.users, ...demoLeaderboard.stats().allGuests]
+        .filter(u => u.role !== 'admin').map(u => ({ id: String(u._id), username: u.username, isGuest: u.isGuest }));
       if (isAdmin && usersCollection) {
         try {
-          const players = await usersCollection.find({ isGuest: false }).project({ username: 1, role: 1 }).toArray();
+          const players = await usersCollection.find({}).project({ username: 1, role: 1, isGuest: 1 }).toArray();
+          recipients = players.filter((p: any) => p.username && p.role !== 'admin' && String(p._id) !== currentUserId)
+            .map((p: any) => ({ id: String(p._id), username: p.username, isGuest: p.isGuest === true || p.role === 'guest' }));
           allPlayerNames = players
             .filter((p: any) => p.username && p.role !== 'admin' && p.username !== currentUsername)
             .map((p: any) => p.username);
@@ -535,6 +552,7 @@ async function startServer() {
       res.json({ 
         adminUsername,
         allPlayers: allPlayerNames,
+        recipients,
         messages: filtered.map((m: any) => {
         const d = m.createdAt ? new Date(m.createdAt) : new Date();
         const year = d.getFullYear();
@@ -899,28 +917,33 @@ async function startServer() {
 
   app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-      const userCount = usersCollection ? await usersCollection.countDocuments({ isGuest: false }) : 0;
-      const guestCount = usersCollection ? await usersCollection.countDocuments({ isGuest: true }) : 0;
-      const gameCount = gamesCollection ? await gamesCollection.countDocuments() : 0;
-      
       let allUsers = usersCollection ? await usersCollection.find({ isGuest: false }).sort({ createdAt: -1 }).project({ password: 0 }).toArray() : [];
       const allGames = gamesCollection ? await gamesCollection.find().toArray() : [];
       const identityUsers = usersCollection ? await usersCollection.find({}).project({ _id: 1, username: 1, isGuest: 1, role: 1, createdAt: 1 }).toArray() : [];
       const rankedStats = computeLeaderboardUserStats(allGames, identityUsers);
+      const totals = buildAnalytics(identityUsers, allGames, 'day', Date.now()).totals;
+      const finishedGames = completedGames(allGames);
       
       allUsers = allUsers.map(u => {
         const stats = computeUserGameStats(allGames, u.username);
         return { ...u, ...stats, recent3DayGames: rankedStats.get(String(u._id))?.recent3DayGames || 0 };
+      });
+      const allGuests = identityUsers.filter((u: any) => u.isGuest === true || u.role === 'guest').map((u: any) => {
+        const matches = finishedGames.filter(g => g.players?.some((p: any) => String(p.userId || p.sessionId || '') === String(u._id)));
+        const wins = matches.filter(g => g.players?.some((p: any) => String(p.userId || p.sessionId || '') === String(u._id) && String(p.id) === String(g.winnerId))).length;
+        return { ...u, isGuest: true, totalGames: matches.length, wins, winRate: matches.length ? Math.round(wins * 100 / matches.length) : 0,
+          recent3DayGames: matches.filter(g => new Date(g.completedAt).getTime() >= Date.now() - 72 * 3600000).length };
       });
       
       const latestUsers = allUsers.slice(0, 10);
       const latestGames = gamesCollection ? await gamesCollection.find().sort({ completedAt: -1 }).limit(10).toArray() : [];
 
       res.json({
-        stats: { users: userCount, guests: guestCount, games: gameCount },
+        stats: { users: totals.registered, guests: totals.guests, games: totals.games },
         settings: globalSettings,
         latestUsers,
         allUsers,
+        allGuests,
         latestGames
       });
     } catch (error) {
@@ -1697,6 +1720,7 @@ async function startServer() {
       const room = rooms.get(roomId);
       if (room && room.gameState && socket.rooms.has(roomId) && [...room.players, ...(room.spectators || [])].some((p: any) => p.socketId === socket.id)) {
         // Send the cached game state only to the player who requested it
+        stateSnapshots.delete(socket);
         sendRoomEvent(socket, room, 'game_state_updated', room.gameState, { roomId });
         sendRoomEvent(socket, room, 'room_state', room);
       }
