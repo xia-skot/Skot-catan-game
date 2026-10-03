@@ -29,7 +29,20 @@ test('online admin list, real ten-second invitation and joining the matching roo
     await host.getByRole('button', { name: '进入海域', exact: true }).click();
     await settings(host, { playerCount: 2, botConfig: [false, false] });
     await expect(host.getByRole('button', { name: '邀请在线玩家', exact: true })).toBeEnabled();
+    await host.evaluate(async () => {
+      const service = (await import('/src/' + 'socketService.ts')).socketService;
+      const original = service.socialRequest.bind(service);
+      service.socialRequest = async (...args: any[]) => {
+        if (args[0] === 'invite_online') await new Promise(resolve => setTimeout(resolve, 800));
+        return original(...args);
+      };
+    });
     await host.getByRole('button', { name: '邀请在线玩家', exact: true }).click();
+    const sending = host.getByRole('button', { name: '正在邀请中…', exact: true });
+    await expect(sending).toBeDisabled();
+    await expect(sending).toHaveAttribute('aria-busy', 'true');
+    await expect(sending.locator('.animate-spin')).toBeVisible();
+    await host.screenshot({ path: info.outputPath('inviting.png') });
     const banner = page.getByRole('dialog', { name: '房间邀请', exact: true });
     await expect(banner).toBeVisible();
     await expect(banner).toContainText('演示管理员');
@@ -98,6 +111,7 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
     await page.screenshot({ path: info.outputPath('emote-menu.png') });
     await menu.getByRole('button', { name: '捂嘴笑', exact: true }).click();
     await expect(page.locator('[data-reaction-kind="giggle"]')).toBeVisible();
+    expect(await page.locator('[data-reaction-kind="giggle"]').evaluate(el => getComputedStyle(el).width)).toBe('48px');
     await page.setViewportSize({ width: 844, height: 390 });
     await expect(page.locator('[data-social-rotated]')).toHaveAttribute('data-social-rotated', 'false');
     await expect(menu).toHaveCount(0);

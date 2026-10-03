@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy, Dices, ChartNoAxesCombined, ChevronRight } from 'lucide-react';
+import { Users, X, RotateCw, Trash2, Edit2, Save, Settings, Loader2, MessageSquare, Info, Check, User, Sliders, Send, ArrowLeft, Mail, ArrowUp, ArrowDown, Trophy, Dices, ChartNoAxesCombined, ChevronRight, Database } from 'lucide-react';
 import { AdminDataCenter, DatabaseStorageSettings } from './AdminDataCenter';
 import { AdminOnlinePlayers } from './OnlineFeatures';
 import { UserProfileModal } from './UserProfileModal';
@@ -29,7 +29,7 @@ export function AdminDashboard({ onLogout, onClose, onPrivateMessage, inline = f
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   
   // Section state: 'menu' | 'system' | 'users' | 'feedbacks' | 'messages'
-  const [activeSection, setActiveSection] = useState<'menu' | 'system' | 'users' | 'feedbacks' | 'messages' | 'analytics' | 'guests' | 'online'>(initialSection);
+  const [activeSection, setActiveSection] = useState<'menu' | 'system' | 'users' | 'feedbacks' | 'messages' | 'analytics' | 'guests' | 'online' | 'gateway' | 'storage'>(initialSection);
   const [sectionParent, setSectionParent] = useState<'menu' | 'analytics'>('menu');
   const listUsers = activeSection === 'guests' ? (data?.allGuests || []) : (data?.allUsers || data?.latestUsers || []);
   const sortedPlayers = React.useMemo(() => sortAdminPlayers<any>(listUsers.filter((u: any) => `${u.username} ${u._id}`.toLowerCase().includes(playerSearch.trim().toLowerCase())), playerSort, sortDirection), [listUsers, playerSearch, playerSort, sortDirection]);
@@ -346,8 +346,6 @@ export function AdminDashboard({ onLogout, onClose, onPrivateMessage, inline = f
   // Sub-View 1: 系统设置
   const renderSystemContent = () => (
     <div className="space-y-4 font-sans">
-      <GatewaySettings />
-      <DatabaseStorageSettings />
       <form onSubmit={saveLeaderboardSettings} className="space-y-3 border-b border-slate-200 pb-4">
         <h4 className="flex items-center gap-2 text-xs font-bold text-slate-700"><Trophy size={14} className="text-amber-600" />月度排行榜</h4>
         <div className="flex flex-wrap items-center gap-3">
@@ -786,6 +784,8 @@ export function AdminDashboard({ onLogout, onClose, onPrivateMessage, inline = f
                           {activeSection === 'system' && <><Sliders size={18} className="text-indigo-500" /> 系统设置</>}
                           {activeSection === 'users' && <><Users size={18} className="text-indigo-500" /> 玩家名单</>}
                           {activeSection === 'analytics' && <><ChartNoAxesCombined size={18} className="text-emerald-600" /> 数据中心</>}
+                          {activeSection === 'gateway' && <><Sliders size={18} className="text-indigo-500" /> 网址与流量</>}
+                          {activeSection === 'storage' && <><Database size={18} className="text-emerald-600" /> 数据库空间</>}
                           {activeSection === 'guests' && <><User size={18} className="text-indigo-500" /> 游客名单</>}
                           {activeSection === 'online' && <><Users size={18} className="text-emerald-600" /> 在线玩家</>}
                           {activeSection === 'feedbacks' && <><MessageSquare size={18} className="text-indigo-500" /> 玩家反馈意见</>}
@@ -807,7 +807,9 @@ export function AdminDashboard({ onLogout, onClose, onPrivateMessage, inline = f
 
                     {activeSection === 'system' && renderSystemContent()}
                     {(activeSection === 'users' || activeSection === 'guests') && renderUsersContent()}
-                    {activeSection === 'analytics' && <AdminDataCenter onUsers={() => { setSectionParent('analytics'); setActiveSection('users'); }} onGuests={() => { setSectionParent('analytics'); setActiveSection('guests'); }} />}
+                    {activeSection === 'analytics' && <AdminDataCenter onUsers={() => { setSectionParent('analytics'); setActiveSection('users'); }} onGuests={() => { setSectionParent('analytics'); setActiveSection('guests'); }} onGateway={() => { setSectionParent('analytics'); setActiveSection('gateway'); }} onStorage={() => { setSectionParent('analytics'); setActiveSection('storage'); }} />}
+                    {activeSection === 'gateway' && <GatewaySettings />}
+                    {activeSection === 'storage' && <DatabaseStorageSettings />}
                     {activeSection === 'online' && <AdminOnlinePlayers />}
                     {activeSection === 'feedbacks' && renderFeedbacksContent()}
                   </motion.div>

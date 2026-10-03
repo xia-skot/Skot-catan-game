@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Send, Users, X, RefreshCw, Search, LogOut } from 'lucide-react';
+import { Check, Send, Users, X, RefreshCw, Search, LogOut, Loader2 } from 'lucide-react';
 import { socketService } from '../socketService';
 import { navigateInvitation } from '../entrySessionBridge';
 import type { RoomInvitation } from '../../shared/social';
@@ -62,11 +62,14 @@ export function InviteOnlineButton({ roomId, disabled }: { roomId: string; disab
   useEffect(() => { if (!until) return; const t = setTimeout(() => setUntil(0), Math.max(0, until - Date.now())); return () => clearTimeout(t); }, [until]);
   return <div className="mt-2"><button disabled={disabled || busy || !!until} onClick={async () => {
     setBusy(true); setMessage('');
-    const result = await socketService.socialRequest('invite_online', roomId);
-    setBusy(false);
-    if (result?.error) setMessage(result.error);
-    else { setSent(result.sent || 0); setUntil(Date.now() + 60000); }
-  }} className="flex w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50"><Send size={14} />{busy ? '正在邀请' : until ? `本轮已邀请 ${sent} 人` : '邀请在线玩家'}</button>{message && <p role="status" className="mt-1 text-xs text-amber-700">{message}</p>}</div>;
+    try {
+      const result = await socketService.socialRequest('invite_online', roomId);
+      if (result?.error) setMessage(result.error);
+      else { setSent(result.sent || 0); setUntil(Date.now() + 60000); }
+    } catch {
+      setMessage('邀请发送失败，请重试');
+    } finally { setBusy(false); }
+  }} aria-busy={busy} className="flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Send size={14} aria-hidden="true" />}<span aria-live="polite">{busy ? '正在邀请中…' : until ? `本轮已邀请 ${sent} 人` : '邀请在线玩家'}</span></button>{message && <p role="status" className="mt-1 text-xs text-amber-700">{message}</p>}</div>;
 }
 
 export function SpectatorExit({ onExit }: { onExit: () => void }) {

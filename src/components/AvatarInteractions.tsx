@@ -49,7 +49,8 @@ function AnimatedReaction({ event, done, rotated }: { event: RoomReaction; done:
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const width = rotated ? innerHeight : innerWidth, height = rotated ? innerWidth : innerHeight;
     const tx = Math.max(32, Math.min(width - 32, target.x)), ty = Math.max(32, Math.min(height - 42, target.y + (own ? 38 : 0)));
-    el.style.left = `${tx - 28}px`; el.style.top = `${ty - 28}px`;
+    const halfSize = own ? 24 : 28;
+    el.style.left = `${tx - halfSize}px`; el.style.top = `${ty - halfSize}px`;
     const dx = source.x - tx, dy = source.y - ty;
     const flight = el.animate(own || reduced ? [{ opacity: 0, transform: 'scale(.7)' }, { opacity: 1, transform: 'scale(1)' }] : [
       { transform: `translate(${dx}px, ${dy}px) scale(.5) rotate(-25deg)`, opacity: 0 },
@@ -66,7 +67,7 @@ function AnimatedReaction({ event, done, rotated }: { event: RoomReaction; done:
     };
     return () => { flight.onfinish = null; flight.cancel(); shake?.cancel(); if (linger) { linger.onfinish = null; linger.cancel(); } };
   }, [event, rotated]);
-  return <div ref={element} className={`catan-reaction-flight ${impact ? 'has-landed' : ''}`} data-reaction-kind={event.kind}><ReactionArt kind={event.kind} impact={impact} />{own && !anchor(event.targetId) && <span className="reaction-sender-name">{event.actorName}</span>}{impact && ['flower', 'coffee'].includes(event.kind) && <span className="reaction-sparkles" />}</div>;
+  return <div ref={element} className={`catan-reaction-flight ${own ? 'is-emote' : ''} ${impact ? 'has-landed' : ''}`} data-reaction-kind={event.kind}><ReactionArt kind={event.kind} impact={impact} />{own && !anchor(event.targetId) && <span className="reaction-sender-name">{event.actorName}</span>}{impact && ['flower', 'coffee'].includes(event.kind) && <span className="reaction-sparkles" />}</div>;
 }
 
 export function AvatarInteractions({ roomId, selfId, spectator, rotated = false }: { roomId: string; selfId: string; spectator: boolean; rotated?: boolean }) {

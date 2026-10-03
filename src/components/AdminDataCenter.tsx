@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { RotateCw, Loader2, Users, User, ChevronRight, Database, Save, Search } from 'lucide-react';
+import { RotateCw, Loader2, Users, User, ChevronRight, Database, Save, Search, ExternalLink } from 'lucide-react';
 import { safeFetchJson } from '../fetchUtils';
 
 const headers = () => ({ Authorization: `Bearer ${localStorage.getItem('catan_auth_token')}` });
@@ -35,7 +35,7 @@ function Refresh({ loading, reload }: { loading: boolean; reload: () => void }) 
   </button>;
 }
 
-export function AdminDataCenter({ onUsers, onGuests }: { onUsers: () => void; onGuests: () => void }) {
+export function AdminDataCenter({ onUsers, onGuests, onGateway, onStorage }: { onUsers: () => void; onGuests: () => void; onGateway: () => void; onStorage: () => void }) {
   const [period, setPeriod] = useState('day'), [date, setDate] = useState(today);
   const { data, error, loading, reload } = useAdminQuery(`/api/admin/analytics?period=${period}&date=${date}`);
   return <div className="space-y-5" data-admin-analytics>
@@ -58,7 +58,7 @@ export function AdminDataCenter({ onUsers, onGuests }: { onUsers: () => void; on
     </tr>)}</tbody></table>
     {loading && <p role="status" className="text-center text-sm text-slate-500">正在读取统计数据…</p>}
     <div className="divide-y divide-slate-200 border-y border-slate-200">
-      {[[Users, '玩家名单', onUsers], [User, '游客名单', onGuests]].map(([Icon, label, action]: any) => <button key={label} type="button" onClick={action} className="flex w-full items-center gap-3 py-4 text-sm text-slate-700"><Icon size={18} /><span>{label}</span><ChevronRight size={18} className="ml-auto" /></button>)}
+      {[[Users, '玩家名单', onUsers], [User, '游客名单', onGuests], [ExternalLink, '网址与流量', onGateway], [Database, '数据库空间', onStorage]].map(([Icon, label, action]: any) => <button key={label} type="button" onClick={action} className="flex w-full items-center gap-3 py-4 text-sm text-slate-700"><Icon size={18} /><span>{label}</span><ChevronRight size={18} className="ml-auto" /></button>)}
     </div>
   </div>;
 }
