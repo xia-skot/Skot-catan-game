@@ -387,6 +387,7 @@ export function useCatanGame() {
         // Retry loop for island placement
         while (islandsPlacedCount < numIslands && retryCount < MAX_RETRIES) {
             // Reset for this attempt
+            shape.forEach(hex => { if (hex.category === 'Island') hex.category = 'InnerSea'; });
             landHexes.clear();
             islandsPlacedCount = 0;
             let islandIdCounter = 1;
@@ -440,7 +441,11 @@ export function useCatanGame() {
                                 const nKey = `${n.q},${n.r}`;
                                 const nHex = shape.find(s => s.q === n.q && s.r === n.r);
                                 // Can grow into InnerSea that is not already occupied
-                                if (nHex && nHex.category === 'InnerSea' && !landHexes.has(nKey) && !tempIslandHexes.has(nKey) && visitedInIsland.size < targetSize) {
+                                const touchesOtherIsland = [...landHexes.keys()].some(key => {
+                                    const [q, r] = key.split(',').map(Number);
+                                    return Math.max(Math.abs(n.q - q), Math.abs(n.r - r), Math.abs(n.q + n.r - q - r)) <= 1;
+                                });
+                                if (nHex && nHex.category === 'InnerSea' && !landHexes.has(nKey) && !tempIslandHexes.has(nKey) && !touchesOtherIsland && visitedInIsland.size < targetSize) {
                                     tempIslandHexes.set(nKey, {id: islandIdCounter, category: 'Island'});
                                     visitedInIsland.add(nKey);
                                     islandQueue.push(nHex);
@@ -448,9 +453,8 @@ export function useCatanGame() {
                             }
                         }
 
-                        // Only commit if we reached target size (or close to it, e.g. >= targetSize - 1)
-                        // For strictness, let's require full size or at least min size
-                        if (visitedInIsland.size >= minIslandSize) {
+                        // Keep the configured island tile count across retries.
+                        if (visitedInIsland.size === targetSize) {
                             tempIslandHexes.forEach((val, key) => {
                                 landHexes.set(key, val);
                                 const [q, r] = key.split(',').map(Number);
@@ -682,7 +686,9 @@ export function useCatanGame() {
 
     // Find all connected components of land hexes (excluding deserts)
     const isLand = (h) => (h.isMainland || h.isIsland) && h._category !== 'Desert' && h.type !== 'desert';
-    const unvisitedLand = new Set(hexes.filter(isLand).map(h => h.id));
+    // Connectivity must survive the flag reset used to assign new components.
+    const landIds = new Set(hexes.filter(isLand).map(h => h.id));
+    const unvisitedLand = new Set(landIds);
     
     let currentIslandId = 1;
     
@@ -714,7 +720,7 @@ export function useCatanGame() {
                 component.push(curr);
                 if (curr.isStartingLand) hasStartingLand = true;
                 
-                const neighbors = hexes.filter(n => isLand(n) && Math.max(Math.abs(n.q - curr.q), Math.abs(n.r - curr.r), Math.abs((n.q + n.r) - (curr.q + curr.r))) === 1);
+                const neighbors = hexes.filter(n => landIds.has(n.id) && Math.max(Math.abs(n.q - curr.q), Math.abs(n.r - curr.r), Math.abs((n.q + n.r) - (curr.q + curr.r))) === 1);
                 for (const n of neighbors) {
                     if (unvisitedLand.has(n.id)) {
                         unvisitedLand.delete(n.id);
@@ -794,8 +800,8 @@ export function useCatanGame() {
           }
       }
 
-      // Fill remaining gold if needed (or for standard map)
-      const remainingForGold = availableLandSlots.filter(h => h.type === HexType.Sea);
+      // Never put a second gold mine on an island when the topology has too few islands.
+      const remainingForGold = availableLandSlots.filter(h => h.type === HexType.Sea && (mapType !== 'archipelago' || h.isMainland));
       const shuffledRemainingForGold = [...remainingForGold].sort(() => Math.random() - 0.5);
       for (const hex of shuffledRemainingForGold) {
           if (goldPlaced >= goldCount) break;
@@ -1027,7 +1033,10 @@ export function useCatanGame() {
           const preferredGoldNums = [2, 3, 4, 10, 11, 12];
           goldHexes.forEach(gHex => {
               if (gHex.number && !preferredGoldNums.includes(gHex.number)) {
-                  const candidate = newHexes.find(h => h.type !== HexType.Gold && h.type !== HexType.Desert && h.type !== HexType.Sea && h.number !== null && preferredGoldNums.includes(h.number));
+                  const candidate = newHexes.find(h => h.type !== HexType.Gold && h.type !== HexType.Desert && h.type !== HexType.Sea &&
+                      h.isMainland === gHex.isMainland && h.isIsland === gHex.isIsland &&
+                      h.number !== null && preferredGoldNums.includes(h.number) &&
+                      (!isRed(gHex.number!) || !newHexes.some(n => n.id !== gHex.id && n.number !== null && isRed(n.number) && areAdjacent(h, n))));
                   if (candidate && candidate.number) {
                       const temp = gHex.number;
                       gHex.number = candidate.number;
@@ -1035,6 +1044,22 @@ export function useCatanGame() {
                   }
               }
           });
+      }
+      // The randomized fallback must not silently return adjacent red tokens.
+      const hasRedConflict = () => allHexesNeedingNumbers.some(h => h.number !== null && isRed(h.number) &&
+          allHexesNeedingNumbers.some(n => n.id !== h.id && n.number !== null && isRed(n.number) && areAdjacent(h, n)));
+      if (hasRedConflict()) {
+          for (const group of [mainlandHexes, islandHexes]) {
+              const reds = group.map(h => h.number!).filter(isRed);
+              const normals = group.map(h => h.number!).filter(n => !isRed(n));
+              // Axial hexes have a three-coloring; each color is an independent set.
+              const colors = [0, 1, 2].map(color => group.filter(h => ((h.q - h.r) % 3 + 3) % 3 === color));
+              const slots = colors.sort((a, b) => b.length - a.length)[0];
+              if (slots.length < reds.length) throw new Error('地图红色数字配额无法满足间距要求，请重新生成');
+              const selected = new Set(slots.slice(0, reds.length).map(h => h.id));
+              group.forEach(h => { h.number = selected.has(h.id) ? reds.pop()! : normals.pop()!; });
+          }
+          if (hasRedConflict()) throw new Error('地图红色数字间距校验失败，请重新生成');
       }
       if (window.location.search.includes('debug')) {
         const counts = (hexList: Hex[]) => {
@@ -1106,7 +1131,7 @@ export function useCatanGame() {
 
 
 
-  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[], seatNumbers?: number[]) => {
+  const initGame = useCallback((playerCount: number, mapType: MapType = 'standard', customBoard?: Hex[], botConfig?: boolean[], connectedPlayers?: string[], playerNames?: string[], seatNumbers?: number[], botDifficulties?: import('../shared/botDifficulty').BotDifficulty[]) => {
     let cpIndex = 0;
     const players: Player[] = Array.from({ length: playerCount }, (_, i) => {
       const isConfiguredBot = botConfig ? botConfig[i] : false;
@@ -1128,6 +1153,7 @@ export function useCatanGame() {
         name: pName,
         color: PLAYER_COLORS[i],
         isBot: isConfiguredBot,
+        botDifficulty: isConfiguredBot ? (botDifficulties?.[i] || 'standard') : 'expert',
         sessionId: pSessionId,
         resources: {
           [ResourceType.Lumber]: 0,
@@ -1393,20 +1419,18 @@ export function useCatanGame() {
   }, []);
 
   const rollDice = useCallback(() => {
+    const d1 = Math.floor(Math.random() * 6) + 1;
+    const d2 = Math.floor(Math.random() * 6) + 1;
     setGameState(prev => {
       if (!prev || prev.phase === 'finished') return prev;
 
       if (prev.phase === 'initial_dice_roll') {
         if (prev.hasRolled) return prev;
-        const d1 = Math.floor(Math.random() * 6) + 1;
-        const d2 = Math.floor(Math.random() * 6) + 1;
         return { ...prev, dice: [d1, d2], hasRolled: true };
       }
 
       if (prev.phase === 'setup' || prev.hasRolled) return prev;
       
-      const d1 = Math.floor(Math.random() * 6) + 1;
-      const d2 = Math.floor(Math.random() * 6) + 1;
       return { ...prev, dice: [d1, d2] as [number, number], hasRolled: true, diceRollPending: true };
     });
   }, []);
@@ -1550,6 +1574,8 @@ export function useCatanGame() {
         ...prev,
         players: updatedPlayers,
         tradeOffers: pendingTradesClosed,
+        botTradesThisTurn: 0,
+        botTradeSignatures: [],
         currentPlayerIndex: (prev.currentPlayerIndex + 1) % prev.players.length,
         phase: 'main',
         hasRolled: false,
@@ -1851,11 +1877,15 @@ export function useCatanGame() {
   const buildSettlement = useCallback((vertexId: string, hexIds: string[]) => {
     setGameState(prev => {
       if (!prev) return null; if (prev.phase === 'finished') return prev;
+      if (prev.phase !== 'setup' && (prev.phase !== 'main' || !prev.hasRolled)) return prev;
+      const actualHexes = getHexesForVertex(prev.board, vertexId);
+      if (!actualHexes.length || actualHexes.some(h => h.id === prev.pirateHexId)) return prev;
+      hexIds = actualHexes.map(h => h.id);
       const player = prev.players[prev.currentPlayerIndex];
       
       const isSetup = prev.phase === 'setup';
       const setupSettlementsThisTurn = prev.settlements.filter(s => s.playerId === prev.currentPlayerIndex).length;
-      const setupRoadsThisTurn = prev.roads.filter(r => r.playerId === prev.currentPlayerIndex).length;
+      const setupRoadsThisTurn = [...prev.roads, ...prev.ships].filter(r => r.playerId === prev.currentPlayerIndex).length;
 
       // Cannot build on pure Sea vertices
       const isAllSea = hexIds.every(id => {
@@ -1888,8 +1918,8 @@ export function useCatanGame() {
 
         // Check connectivity for main phase
         const hasRoadConnection = 
-          prev.roads.some(r => r.playerId === player.id && r.edgeId.includes(vertexId)) ||
-          prev.ships.some(s => s.playerId === player.id && s.edgeId.includes(vertexId));
+          prev.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(vertexId)) ||
+          prev.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(vertexId));
         if (!hasRoadConnection) return prev;
       }
 
@@ -2382,6 +2412,7 @@ export function useCatanGame() {
   }, []);
 
   const stealResource = useCallback((fromPlayerId: number) => {
+    const randomDraw = Math.random();
     setGameState(prev => {
       if (!prev || prev.phase !== 'stealing') return prev;
       const fromPlayer = prev.players[fromPlayerId];
@@ -2406,7 +2437,7 @@ export function useCatanGame() {
         };
       }
 
-      const stolenRes = availableResources[Math.floor(Math.random() * availableResources.length)];
+      const stolenRes = availableResources[Math.floor(randomDraw * availableResources.length)];
       
       const updatedPlayers = [...prev.players];
       updatedPlayers[fromPlayerId] = {
@@ -2654,6 +2685,7 @@ export function useCatanGame() {
     setGameState(prev => {
       if (!prev || prev.phase === 'finished') return prev;
       const newOffer: TradeOffer = {
+        createdAt: Date.now(),
         id: Math.random().toString(36).substring(2, 9),
         initiatorId: prev.currentPlayerIndex,
         targetPlayerId,
@@ -2663,7 +2695,11 @@ export function useCatanGame() {
         acceptedBy: [],
         rejectedBy: [],
       };
-      return { ...prev, tradeOffers: [...(prev.tradeOffers || []), newOffer] };
+      const isBot = prev.players[prev.currentPlayerIndex].isBot;
+      const signature = `${Object.keys(offer).find(r => offer[r as ResourceType] > 0)}:${Object.keys(request).find(r => request[r as ResourceType] > 0)}`;
+      return { ...prev, tradeOffers: [...(prev.tradeOffers || []), newOffer],
+        botTradesThisTurn: (prev.botTradesThisTurn || 0) + (isBot ? 1 : 0),
+        botTradeSignatures: isBot ? [...(prev.botTradeSignatures || []), signature] : prev.botTradeSignatures };
     });
   }, []);
 
