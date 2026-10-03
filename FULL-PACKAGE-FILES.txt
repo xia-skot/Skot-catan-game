@@ -181,6 +181,7 @@ tests/gateway.test.ts
 tests/history-ledger-v19.spec.ts
 tests/leaderboard-ui.spec.ts
 tests/leaderboard.test.ts
+tests/map-generation.test.ts
 tests/message-visibility.test.ts
 tests/messages.spec.ts
 tests/mobile-v3.spec.ts
