@@ -57,7 +57,11 @@ test('online admin list, real ten-second invitation and joining the matching roo
 
 test('spectator privacy, illustrated gifts/emotes and exit above a rules modal', async ({ browser, page, baseURL }, info) => {
   const context = await browser.newContext({ baseURL }), host = await context.newPage();
-  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  const errors: string[] = []; page.on('pageerror', e => {
+    // Concurrent local Vite servers can lose HMR; keep game errors actionable.
+    if (e.message === 'WebSocket closed without opened.' && e.stack?.includes('/@vite/client')) return;
+    errors.push(e.message);
+  });
   try {
     await open(host, true); await host.getByRole('button', { name: '进入海域', exact: true }).click();
     const checkbox = host.getByLabel('允许观众看到所有玩家手牌');
@@ -67,7 +71,20 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
     await open(page); await page.locator('.lobby-tab-bar').getByRole('button', { name: '大厅', exact: true }).click();
     await page.getByRole('button', { name: '观战', exact: true }).click();
     await expect(page.locator('[data-game-sailing]')).toHaveCount(0, { timeout: 20000 });
-    await expect(page.getByRole('button', { name: '立即退出观战', exact: true })).toBeVisible();
+    const exit = page.getByRole('button', { name: '离开观战房间', exact: true });
+    await expect(exit).toBeVisible();
+    await expect(exit).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '立即退出观战', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '我的观战表情', exact: true })).toHaveCount(0);
+    const assertExitOnTop = async () => {
+      await expect.poll(async () => exit.evaluate(el => {
+        const a = document.querySelector('[data-spectator-exit-anchor]')!.getBoundingClientRect();
+        const b = el.getBoundingClientRect();
+        return Math.abs(a.left - b.left) < 1 && Math.abs(a.top - b.top) < 1 &&
+          el.contains(document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2));
+      })).toBe(true);
+    };
+    await assertExitOnTop();
     const state = await page.evaluate(async () => {
       const service = (await import('/src/' + 'socketService.ts')).socketService;
       return service.authoritativeRoom.gameState;
@@ -76,6 +93,7 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
     await page.locator('[data-social-avatar="555555555555555555555555"]').click();
     const menu = page.getByRole('dialog', { name: '头像互动' });
     await expect(menu.getByRole('button', { name: '鲜花', exact: true })).toBeVisible();
+    await assertExitOnTop();
     const viewport = page.viewportSize()!;
     await expect(page.locator('[data-social-rotated]')).toHaveAttribute('data-social-rotated', String(viewport.height > viewport.width));
     const bounds = await menu.boundingBox();
@@ -105,28 +123,25 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
       await page.screenshot({ path: info.outputPath(`${kind}-arrival.png`) });
       await page.waitForTimeout(950);
     }
-    await page.getByRole('button', { name: '我的观战表情', exact: true }).click();
-    await expect(menu.locator('img.captain-emote')).toHaveCount(8);
-    await expect.poll(() => menu.locator('img.captain-emote').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
-    await page.screenshot({ path: info.outputPath('emote-menu.png') });
-    await menu.getByRole('button', { name: '捂嘴笑', exact: true }).click();
+    await host.locator('[data-social-avatar="555555555555555555555555"]').click();
+    const hostMenu = host.getByRole('dialog', { name: '头像互动' });
+    await expect(hostMenu.locator('img.captain-emote')).toHaveCount(8);
+    await expect.poll(() => hostMenu.locator('img.captain-emote').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+    await hostMenu.getByRole('button', { name: '捂嘴笑', exact: true }).click();
     await expect(page.locator('[data-reaction-kind="giggle"]')).toBeVisible();
     expect(await page.locator('[data-reaction-kind="giggle"]').evaluate(el => getComputedStyle(el).width)).toBe('48px');
+    await page.getByTitle('游戏规则', { exact: true }).click();
+    await assertExitOnTop();
+    await page.screenshot({ path: info.outputPath('spectator-original-orientation-exit.png') });
     await page.setViewportSize({ width: 844, height: 390 });
     await expect(page.locator('[data-social-rotated]')).toHaveAttribute('data-social-rotated', 'false');
     await expect(menu).toHaveCount(0);
-    await page.getByRole('button', { name: '我的观战表情', exact: true }).click();
-    const landscapeBounds = await menu.boundingBox();
-    expect(landscapeBounds!.width).toBeGreaterThan(landscapeBounds!.height);
-    expect(landscapeBounds!.y + landscapeBounds!.height).toBeLessThanOrEqual(390);
-    await expect(menu.getByRole('button', { name: '拜托', exact: true })).toBeEnabled({ timeout: 3000 });
-    await page.screenshot({ path: info.outputPath('landscape-emotes.png') });
-    await menu.getByRole('button', { name: '拜托', exact: true }).click();
-    await expect(host.locator('[data-reaction-kind="please"] img')).toBeVisible();
-    await expect.poll(() => host.locator('[data-reaction-kind="please"] img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
-    await page.getByTitle('游戏规则', { exact: true }).click();
+    await assertExitOnTop();
+    await page.evaluate(async () => { (await import('/src/' + 'navigation.ts')).requestAppBack(); });
+    await page.getByTitle('声音设置', { exact: true }).click();
+    await assertExitOnTop();
     await page.screenshot({ path: info.outputPath('spectator-modal-exit.png') });
-    await page.getByRole('button', { name: '立即退出观战', exact: true }).click();
+    await exit.click();
     await expect(page.locator('[data-lobby-tabs]')).toBeVisible();
     await expect(page.locator('[data-game-sailing]')).toHaveCount(0);
     await expect(page.locator('[data-social-menu]')).toHaveCount(0);

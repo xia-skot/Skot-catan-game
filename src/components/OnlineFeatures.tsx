@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Send, Users, X, RefreshCw, Search, LogOut, Loader2 } from 'lucide-react';
 import { socketService } from '../socketService';
@@ -72,8 +72,24 @@ export function InviteOnlineButton({ roomId, disabled }: { roomId: string; disab
   }} aria-busy={busy} className="flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Send size={14} aria-hidden="true" />}<span aria-live="polite">{busy ? '正在邀请中…' : until ? `本轮已邀请 ${sent} 人` : '邀请在线玩家'}</span></button>{message && <p role="status" className="mt-1 text-xs text-amber-700">{message}</p>}</div>;
 }
 
-export function SpectatorExit({ onExit }: { onExit: () => void }) {
-  return createPortal(<button onClick={onExit} aria-label="立即退出观战" title="退出观战" style={{ position: 'fixed', top: 'max(8px, env(safe-area-inset-top))', right: 'max(8px, env(safe-area-inset-right))', zIndex: 2147483647, pointerEvents: 'auto' }} className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-lg"><LogOut size={16} />退出观战</button>, document.body);
+export function SpectatorExit({ onExit, anchor, rotated }: { onExit: () => void; anchor: HTMLElement | null; rotated: boolean }) {
+  const [rect, setRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!anchor) { setRect(null); return; }
+    const update = () => {
+      const { left, top, width, height } = anchor.getBoundingClientRect();
+      setRect(previous => previous && previous.left === left && previous.top === top && previous.width === width && previous.height === height ? previous : { left, top, width, height });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(anchor);
+    if (anchor.parentElement) observer.observe(anchor.parentElement);
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => { observer.disconnect(); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+  }, [anchor, rotated]);
+  // Keep the original toolbar position, outside every game/modal stacking context.
+  return createPortal(<button onClick={onExit} aria-label="离开观战房间" title="离开观战房间" style={{ position: 'fixed', ...(rect || { top: 'max(8px, env(safe-area-inset-top))', left: 'max(8px, env(safe-area-inset-left))', width: 28, height: 28 }), zIndex: 2147483647, pointerEvents: 'auto' }} className="text-red-500 hover:text-red-600 flex items-center justify-center p-0.5"><LogOut size={13} strokeWidth={2.2} style={{ transform: `${rotated ? 'rotate(90deg) ' : ''}scaleX(-1)` }} /></button>, document.body);
 }
 
 const STATUS: Record<string, string> = { idle: '大厅空闲', waiting: '等待开局', playing: '游戏中', spectating: '观战中' };

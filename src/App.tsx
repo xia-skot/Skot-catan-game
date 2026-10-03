@@ -912,6 +912,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
   const playerBarRef = useRef<HTMLDivElement>(null);
   const mainMapRef = useRef<HTMLDivElement>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
+  const [spectatorExitAnchor, setSpectatorExitAnchor] = useState<HTMLSpanElement | null>(null);
   const devCardOverlayRef = useRef<HTMLDivElement>(null);
   
   const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
@@ -4317,7 +4318,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
             })()}
 
             {/* Bottom-Right: Exit button (Red line icon) */}
-            <button 
+            {isSpectator ? <span ref={setSpectatorExitAnchor} data-spectator-exit-anchor className="block h-[17px] w-[17px]" /> : <button
               onClick={(e) => { 
                 e.stopPropagation(); 
                 if (isHost && gameStarted) {
@@ -4327,10 +4328,10 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
                 }
               }}
               className="text-red-500 hover:text-red-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
-              title={isSpectator ? "离开观战房间" : "离开房间"}
+              title="离开房间"
             >
               <LogOut size={13} strokeWidth={2.2} className="scale-x-[-1]" />
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -6776,11 +6777,11 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
           setInputRoomId(invitation.roomId); setIsJoinedLobby(true);
           socketService.joinRoom(invitation.roomId, playerName, false, invitation.id);
         }} />
-        {isSpectator && roomState && <SpectatorExit onExit={() => {
+        {isSpectator && roomState && <SpectatorExit anchor={spectatorExitAnchor} rotated={shouldApplyPortraitRotation} onExit={() => {
           setShowRulesModal(false); setShowSoundModal(false); setConfirmAction(null); setShowPwaGuide(false);
           handleReturnToLobby();
         }} />}
-        {gameStarted && roomState && <AvatarInteractions roomId={roomState.roomId} selfId={socketService.playerId} spectator={isSpectator} rotated={shouldApplyPortraitRotation} />}
+        {gameStarted && roomState && <AvatarInteractions roomId={roomState.roomId} selfId={socketService.playerId} rotated={shouldApplyPortraitRotation} />}
         {gameStarted && roomState ? <AssetGate onCancel={handleReturnToLobby}>{mainContent}</AssetGate> : mainContent}
         {!roomState && !isJoinedLobby && exitToast}
         {showSailingScreen && (

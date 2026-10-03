@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { socketService } from '../socketService';
 import { CAPTAIN_EMOTES, EMOTES, GIFTS, type ReactionKind, type RoomReaction } from '../../shared/social';
 import { REACTION_IMAGES } from '../reactionImages';
@@ -70,7 +70,7 @@ function AnimatedReaction({ event, done, rotated }: { event: RoomReaction; done:
   return <div ref={element} className={`catan-reaction-flight ${own ? 'is-emote' : ''} ${impact ? 'has-landed' : ''}`} data-reaction-kind={event.kind}><ReactionArt kind={event.kind} impact={impact} />{own && !anchor(event.targetId) && <span className="reaction-sender-name">{event.actorName}</span>}{impact && ['flower', 'coffee'].includes(event.kind) && <span className="reaction-sparkles" />}</div>;
 }
 
-export function AvatarInteractions({ roomId, selfId, spectator, rotated = false }: { roomId: string; selfId: string; spectator: boolean; rotated?: boolean }) {
+export function AvatarInteractions({ roomId, selfId, rotated = false }: { roomId: string; selfId: string; rotated?: boolean }) {
   const [menu, setMenu] = useState<{ id: string; name: string; x: number; y: number } | null>(null);
   const [events, setEvents] = useState<RoomReaction[]>([]);
   const lastSent = useRef(0);
@@ -96,7 +96,6 @@ export function AvatarInteractions({ roomId, selfId, spectator, rotated = false 
   }, [roomId, rotated, selfId]);
   useEffect(() => { if (!cooldown) return; const t = setTimeout(() => setCooldown(false), 1800); return () => clearTimeout(t); }, [cooldown]);
   return createPortal(<div className="catan-social-surface" data-social-rotated={rotated} style={rotated ? { width: '100dvh', height: '100vw', transform: 'translateX(100vw) rotate(90deg)' } : { width: '100vw', height: '100dvh' }}>
-    {spectator && <button data-social-avatar={selfId} data-social-name="我" aria-label="我的观战表情" title="我的观战表情" className="catan-spectator-avatar"><Eye size={19} /></button>}
     {menu && <div data-social-menu role="dialog" aria-label="头像互动" className="catan-reaction-menu" style={{ left: menu.x, top: menu.y }}><div className="reaction-menu-heading"><span>{menu.id === selfId ? '我的表情' : menu.name}</span><button onClick={() => setMenu(null)} aria-label="关闭互动" title="关闭互动"><X size={15} /></button></div><div className={`reaction-menu-options ${menu.id === selfId ? 'captain-emote-grid' : ''}`}>{(menu.id === selfId ? CAPTAIN_EMOTES : GIFTS).map(kind => <button key={kind} title={LABELS[kind]} aria-label={LABELS[kind]} disabled={cooldown} onClick={() => {
       if (Date.now() - lastSent.current < 1800) return;
       lastSent.current = Date.now(); setCooldown(true); socketService.sendReaction(roomId, menu.id, kind); setMenu(null);
