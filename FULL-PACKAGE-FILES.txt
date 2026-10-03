@@ -101,6 +101,7 @@ server/leaderboardDemo.ts
 server/leaderboardRecording.ts
 server/leaderboardRoutes.ts
 server/messageRoutes.ts
+server/messageVisibility.ts
 server/social.ts
 server/socialStore.ts
 server/socketIdentity.ts
@@ -112,6 +113,7 @@ shared/leaderboard.ts
 shared/roomSetup.ts
 shared/social.ts
 shared/spectatorView.ts
+shared/stateSync.ts
 src/App.tsx
 src/assetCache.ts
 src/assetManifest.json
@@ -179,6 +181,7 @@ tests/gateway.test.ts
 tests/history-ledger-v19.spec.ts
 tests/leaderboard-ui.spec.ts
 tests/leaderboard.test.ts
+tests/message-visibility.test.ts
 tests/messages.spec.ts
 tests/mobile-v3.spec.ts
 tests/mobile-v4.spec.ts
@@ -196,6 +199,8 @@ tests/spectator-exit-v21.spec.ts
 tests/startup-navigation.spec.ts
 tests/startup-v10.spec.ts
 tests/startup-v9.spec.ts
+tests/state-sync.test.ts
+tests/update-v28.spec.ts
 tsconfig.json
 vite.config.ts
 FULL-PACKAGE-FILES.txt
