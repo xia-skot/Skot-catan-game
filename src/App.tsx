@@ -996,9 +996,10 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
       setHasUnreadPrivateMsgs(latestMessages.some(m => (m.type === 'private' || m.targetUserId) && !read.has(m.id) && m.senderName !== currentUser.username && m.senderId !== currentUser.id));
     };
     const checkUnread = async () => {
+      if (document.hidden) return;
       try {
         const token = localStorage.getItem('catan_auth_token');
-        const res = await fetch('/api/messages', {
+        const res = await fetch('/api/messages?summary=1', {
           headers: token ? { Authorization: `Bearer ${token}` } : {}
         });
         if (res.ok) {
@@ -1014,7 +1015,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
     };
 
     checkUnread();
-    const interval = setInterval(checkUnread, 4000);
+    const interval = setInterval(checkUnread, 15000);
     window.addEventListener(MESSAGE_READ_EVENT, updateUnread);
     window.addEventListener('storage', updateUnread);
     return () => {
@@ -2042,6 +2043,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
   }, [gameState?.board]);
 
   const hasManuallyInteractedRef = useRef(false);
+  const viewInitializedRef = useRef(false);
 
   const setHasManuallyInteracted = useCallback((val: boolean) => {
     hasManuallyInteractedRef.current = val;
@@ -2117,17 +2119,15 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
       setShowLeftPanel(true);
       setShowRightPanel(true);
       
-      // Center map on screen resize
-      if (gameStarted) {
-        hasManuallyInteractedRef.current = false;
-        centerMap(true);
-      }
+      // A resize (including mobile browser chrome) must not discard the player's view.
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
 
     // Initial enter game center
-    if (gameStarted) {
+    if (!gameStarted) viewInitializedRef.current = false;
+    if (gameStarted && !viewInitializedRef.current && stageRef.current && hexCoords.length) {
+      viewInitializedRef.current = true;
       hasManuallyInteractedRef.current = false;
       centerMap(true);
     }
@@ -2136,7 +2136,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
     };
-  }, [centerMap, gameStarted]);
+  }, [centerMap, gameStarted, hexCoords.length]);
 
   const zoomEndTimeoutRef = useRef<any>(null);
 
@@ -4754,16 +4754,6 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
               if (e.target === e.target.getStage()) {
                 setPendingBuild(null);
                 setPendingRobberHex(null);
-              }
-            }}
-            onDblClick={() => {
-              if (Date.now() - lastGestureTime.current > 300) {
-                centerMap(true);
-              }
-            }}
-            onDblTap={() => {
-              if (Date.now() - lastGestureTime.current > 300) {
-                centerMap(true);
               }
             }}
           >

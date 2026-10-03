@@ -73,6 +73,13 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
     await page.screenshot({ path: info.outputPath('gift-menu.png') });
     await menu.getByRole('button', { name: '鲜花', exact: true }).click();
     await expect(page.locator('[data-reaction-kind="flower"]')).toBeVisible();
+    const arc = await page.locator('[data-reaction-kind="flower"]').evaluate(el => {
+      const frames = (el.getAnimations()[0].effect as KeyframeEffect).getKeyframes();
+      const start = new DOMMatrix(String(frames[0].transform));
+      const middle = new DOMMatrix(String(frames[1].transform));
+      return middle.m42 - start.m42 / 2;
+    });
+    expect(arc).toBeCloseTo(55);
     await expect(host.locator('[data-reaction-kind="flower"]')).toBeVisible();
     await page.waitForTimeout(950); await page.screenshot({ path: info.outputPath('flower-arrival.png') });
     await page.waitForTimeout(950);

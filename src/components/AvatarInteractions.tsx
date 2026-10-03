@@ -53,7 +53,7 @@ function AnimatedReaction({ event, done, rotated }: { event: RoomReaction; done:
     const dx = source.x - tx, dy = source.y - ty;
     const flight = el.animate(own || reduced ? [{ opacity: 0, transform: 'scale(.7)' }, { opacity: 1, transform: 'scale(1)' }] : [
       { transform: `translate(${dx}px, ${dy}px) scale(.5) rotate(-25deg)`, opacity: 0 },
-      { transform: `translate(${dx * .5}px, ${dy * .5 - 55}px) scale(1.1) rotate(${event.kind === 'egg' ? 160 : event.kind === 'pan' ? -65 : 12}deg)`, opacity: 1, offset: .55 },
+      { transform: `translate(${dx * .5}px, ${dy * .5 + 55}px) scale(1.1) rotate(${event.kind === 'egg' ? 160 : event.kind === 'pan' ? -65 : 12}deg)`, opacity: 1, offset: .55 },
       { transform: 'translate(0,0) scale(1) rotate(0)', opacity: 1 },
     ], { duration: own || reduced ? 180 : 850, easing: 'cubic-bezier(.2,.65,.3,1)', fill: 'forwards' });
     let linger: Animation | undefined;

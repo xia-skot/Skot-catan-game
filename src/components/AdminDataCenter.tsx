@@ -41,7 +41,7 @@ export function AdminDataCenter({ onUsers, onGuests }: { onUsers: () => void; on
   return <div className="space-y-5" data-admin-analytics>
     <div className="flex items-center justify-between gap-3"><span className="text-xs text-slate-500">北京时间 · 每周一开始 · 已完成对局</span><Refresh loading={loading} reload={reload} /></div>
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-5 border-b border-slate-200 pb-5 sm:grid-cols-3">
+    <dl className="grid grid-cols-3 gap-x-3 gap-y-5 border-b border-slate-200 pb-5">
       {([['registered', '注册玩家'], ['guests', '游客账号'], ['games', '累计盘数'], ['today', '今日盘数'], ['week', '本周盘数'], ['month', '本月盘数']] as const).map(([key, label]) =>
         <div key={key}><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 text-2xl font-semibold tabular-nums text-slate-800" data-metric={key}>{data ? data.totals[key].toLocaleString('zh-CN') : '—'}</dd></div>)}
     </dl>

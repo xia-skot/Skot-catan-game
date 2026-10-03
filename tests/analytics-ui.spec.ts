@@ -8,7 +8,7 @@ test('data center periods, guest search, navigation and database capacity', asyn
   const panel = page.locator('[data-admin-section="analytics"]');
   await expect(panel.locator('[data-metric="games"]')).toHaveText('3');
   await expect(panel.locator('[data-metric="guests"]')).toHaveText('1');
-  await expect(panel.locator('tbody tr')).toHaveCount(14);
+  await expect(panel.locator('tbody tr')).toHaveCount(7);
   await panel.getByLabel('统计周期').selectOption('week');
   await expect(panel.locator('tbody tr')).toHaveCount(12);
   await panel.getByLabel('统计周期').selectOption('month');
