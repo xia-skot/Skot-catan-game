@@ -6790,7 +6790,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
           setShowRulesModal(false); setShowSoundModal(false); setConfirmAction(null); setShowPwaGuide(false);
           handleReturnToLobby();
         }} />}
-        {gameStarted && roomState && <AvatarInteractions roomId={roomState.roomId} selfId={socketService.playerId} spectator={isSpectator} />}
+        {gameStarted && roomState && <AvatarInteractions roomId={roomState.roomId} selfId={socketService.playerId} spectator={isSpectator} rotated={shouldApplyPortraitRotation} />}
         {gameStarted && roomState ? <AssetGate onCancel={handleReturnToLobby}>{mainContent}</AssetGate> : mainContent}
         {!roomState && !isJoinedLobby && exitToast}
         {showSailingScreen && (

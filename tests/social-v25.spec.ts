@@ -63,6 +63,13 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
     await page.locator('[data-social-avatar="555555555555555555555555"]').click();
     const menu = page.getByRole('dialog', { name: '头像互动' });
     await expect(menu.getByRole('button', { name: '鲜花', exact: true })).toBeVisible();
+    const viewport = page.viewportSize()!;
+    await expect(page.locator('[data-social-rotated]')).toHaveAttribute('data-social-rotated', String(viewport.height > viewport.width));
+    const bounds = await menu.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+    if (viewport.height > viewport.width) expect(bounds!.height).toBeGreaterThan(bounds!.width);
     await page.screenshot({ path: info.outputPath('gift-menu.png') });
     await menu.getByRole('button', { name: '鲜花', exact: true }).click();
     await expect(page.locator('[data-reaction-kind="flower"]')).toBeVisible();
@@ -79,9 +86,23 @@ test('spectator privacy, illustrated gifts/emotes and exit above a rules modal',
       await page.waitForTimeout(950);
     }
     await page.getByRole('button', { name: '我的观战表情', exact: true }).click();
+    await expect(menu.locator('img.captain-emote')).toHaveCount(8);
+    await expect.poll(() => menu.locator('img.captain-emote').evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
     await page.screenshot({ path: info.outputPath('emote-menu.png') });
-    await menu.getByRole('button', { name: '偷笑', exact: true }).click();
+    await menu.getByRole('button', { name: '捂嘴笑', exact: true }).click();
     await expect(page.locator('[data-reaction-kind="giggle"]')).toBeVisible();
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.locator('[data-social-rotated]')).toHaveAttribute('data-social-rotated', 'false');
+    await expect(menu).toHaveCount(0);
+    await page.getByRole('button', { name: '我的观战表情', exact: true }).click();
+    const landscapeBounds = await menu.boundingBox();
+    expect(landscapeBounds!.width).toBeGreaterThan(landscapeBounds!.height);
+    expect(landscapeBounds!.y + landscapeBounds!.height).toBeLessThanOrEqual(390);
+    await expect(menu.getByRole('button', { name: '拜托', exact: true })).toBeEnabled({ timeout: 3000 });
+    await page.screenshot({ path: info.outputPath('landscape-emotes.png') });
+    await menu.getByRole('button', { name: '拜托', exact: true }).click();
+    await expect(host.locator('[data-reaction-kind="please"] img')).toBeVisible();
+    await expect.poll(() => host.locator('[data-reaction-kind="please"] img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
     await page.getByTitle('游戏规则', { exact: true }).click();
     await page.screenshot({ path: info.outputPath('spectator-modal-exit.png') });
     await page.getByRole('button', { name: '立即退出观战', exact: true }).click();

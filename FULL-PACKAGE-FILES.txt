@@ -54,6 +54,14 @@ public/assets/images/828ffdaeee241e80.png
 public/assets/images/8cc875eaa9aa1903.jpg
 public/assets/images/9b8294313da37c33.jpg
 public/assets/images/9c10e69dede3f223.png
+public/assets/images/拜托.png
+public/assets/images/大笑.png
+public/assets/images/得意.png
+public/assets/images/哭泣.png
+public/assets/images/生气.png
+public/assets/images/吐舌头.png
+public/assets/images/无语.png
+public/assets/images/捂嘴笑.png
 public/assets/images/a544de723c948b71.png
 public/assets/images/ab0f163050be6460.jpg
 public/assets/images/ba5cd74d428aff17.png
@@ -149,6 +157,7 @@ src/localMessageDisplay.ui.test.ts
 src/main.tsx
 src/messageReadState.ts
 src/navigation.ts
+src/reactionImages.ts
 src/socket.ts
 src/socketService.ts
 src/types.ts
