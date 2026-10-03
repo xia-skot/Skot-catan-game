@@ -1,5 +1,7 @@
 export const GIFTS = ['flower', 'coffee', 'egg', 'pan'] as const;
-export const EMOTES = ['giggle', 'handshake', 'cry', 'angry', 'bored'] as const;
+export const CAPTAIN_EMOTES = ['please', 'laugh', 'smug', 'cry', 'angry', 'tongue', 'bored', 'giggle'] as const;
+// Accept an in-flight reaction from older clients during a rolling deployment.
+export const EMOTES = [...CAPTAIN_EMOTES, 'handshake'] as const;
 export type ReactionKind = typeof GIFTS[number] | typeof EMOTES[number];
 export interface RoomInvitation { id: string; roomId: string; origin: string; hostName: string; recipientId: string; expiresAt: number }
 export interface RoomReaction { id: string; roomId: string; actorId: string; actorName: string; targetId: string; kind: ReactionKind; createdAt: number }
