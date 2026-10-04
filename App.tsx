@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, startTransition } from 'react';
+import { InvitationBanner, InviteOnlineButton, SpectatorExit } from './components/OnlineFeatures';
+import { AvatarInteractions } from './components/AvatarInteractions';
 import { Stage, Layer, RegularPolygon, Text, Group, Circle, Line, Path, Image, Rect } from 'react-konva';
 import { Html } from 'react-konva-utils';
 import Konva from 'konva';
@@ -130,9 +132,8 @@ if (typeof window !== 'undefined') {
       if (maxScrollTop > 0) {
         let newScrollTop = 0;
         if (isRotated) {
-          // On Apple devices, the physical scroll direction during 90-degree clockwise rotation 
-          // is opposite to Android/Huawei systems. We invert dx to align perfectly with user expectations.
-          newScrollTop = isAppleDevice ? (scrollTopStart - dx) : (scrollTopStart + dx);
+          // Both Apple and Android share the same direction
+          newScrollTop = scrollTopStart + dx;
         } else {
           newScrollTop = scrollTopStart - dy;
         }
@@ -146,7 +147,7 @@ if (typeof window !== 'undefined') {
       if (maxScrollLeft > 0) {
         let newScrollLeft = 0;
         if (isRotated) {
-          // Similarly, invert dy for horizontal scrolling on Apple devices in rotated mode.
+          // Horizontal scrolling direction is different on Apple devices
           newScrollLeft = isAppleDevice ? (scrollLeftStart + dy) : (scrollLeftStart - dy);
         } else {
           newScrollLeft = scrollLeftStart - dx;
@@ -175,7 +176,18 @@ import { HEX_RESOURCES, RESOURCE_NAMES, HEX_NAMES, RESOURCE_COLORS, PLAYER_COLOR
 import { GameOverModal } from './components/GameOverModal';
 import { motion, AnimatePresence, useDragControls, MotionConfig } from 'motion/react';
 import { audioService } from './audioService';
-import { preloadAllAssets, checkIsAssetsCached } from './assetPreloader';
+import { preloadAllAssets } from './assetPreloader';
+import { SailingTransition, SailingScene, LoadingDots } from './components/SailingScene';
+import { getSetupSlots, getRoomController } from '../shared/roomSetup';
+import { BOT_LEVELS, BOT_TURN_LIMIT_MS, normalizeBotDifficulty } from '../shared/botDifficulty';
+import { decideBotTrade } from './botStrategy';
+import { acceptBotTrade, botLevel, canPay, chooseBotBankTrade, chooseBotBlockade, chooseBotDevCard, chooseBotDiscard, chooseBotGoal, chooseBotMonopoly, chooseBotResources, chooseSetupVillage, planBotBuilds, proposeBotTrade, publicScore, resources as botResources } from './botStrategy';
+import { AssetGate } from './components/AssetGate';
+import { SmartImage } from './components/SmartImage';
+import { useLobbySwipe } from './useLobbySwipe';
+import { MESSAGE_READ_EVENT, readMessageIds } from './messageReadState';
+import { clearEntrySession, syncSessionToEntry, waitForEntrySession } from './entrySessionBridge';
+import { hasBackHandler, isInstalledDisplay, requestAppBack, runTopBackHandler, shouldSuppressGestureClick, suppressGestureClick, useBackHandler } from './navigation';
 import { 
   Dices, 
   User, 
@@ -202,8 +214,6 @@ import {
   Copy,
   LogOut,
   Trash2,
-  Maximize,
-  Minimize,
   RotateCw,
   RotateCcw,
   RefreshCw,
@@ -214,8 +224,10 @@ import {
   LogOut as LogOutIcon,
   Bug,
   Smartphone,
-  MapPin
+  MapPin,
+  Volume2
 } from 'lucide-react';
+import { RotatedScroll } from './components/RotatedScroll';
 import { ResourceSelector } from './components/ResourceSelector';
 import { GoldSelectionPanel } from './components/GoldSelectionPanel';
 import { MapAlbumModal } from './components/MapAlbumModal';
@@ -229,6 +241,7 @@ import { SoundSettingsModal } from './components/SoundSettingsModal';
 import { GameRoomsTab } from './components/GameRoomsTab';
 import { PwaGuideModal } from './components/PwaGuideModal';
 import { socketService, RoomState } from './socketService';
+import { safeFetchJson } from './fetchUtils';
 import { 
   FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG, 
   HILLS_IMG, GOLD_IMG, SEA_HEX_IMG, ROBBER_IMG, FOOTPRINT_IMG, ANCHOR_IMG, PIRATE_SHIP_IMG,
@@ -236,35 +249,9 @@ import {
   RESOURCE_ICONS, SAILING_BOAT_IMG, CATAN_LOGO_IMG, ALL_GAME_IMAGES,
   getImageUrl, getImageCandidates, getDevCardImg
 } from './images';
+import { getCachedImageElement, loadGameImage, useGameImage } from './imageManager';
 
-export const SmartImg = ({ src, alt, className, onClick, ...props }: any) => {
-  const [currentSrc, setCurrentSrc] = useState(() => getImageUrl(src));
-  const candidateIdxRef = useRef(0);
-
-  useEffect(() => {
-    setCurrentSrc(getImageUrl(src));
-  }, [src]);
-
-  const handleError = () => {
-    const candidates = getImageCandidates(src);
-    candidateIdxRef.current += 1;
-    if (candidateIdxRef.current < candidates.length) {
-      setCurrentSrc(candidates[candidateIdxRef.current]);
-    }
-  };
-
-  return (
-    <img
-      src={currentSrc}
-      alt={alt || ''}
-      className={className}
-      onClick={onClick}
-      onError={handleError}
-      referrerPolicy="no-referrer"
-      {...props}
-    />
-  );
-};
+export const SmartImg = SmartImage;
 
 const ResourceIcon = ({ type, className = "w-4 h-4" }: { type: ResourceType, className?: string }) => (
   <SmartImg 
@@ -280,17 +267,9 @@ const HEX_HEIGHT = 2 * HEX_RADIUS;
 
 
 const PortIcon = ({ type, x, y, flip }: { type: string, x: number, y: number, flip: boolean }) => {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    if (type === '3:1') return;
-    const resourceType = type as ResourceType;
-    const img = new window.Image();
-    img.src = RESOURCE_ICONS[resourceType];
-    img.referrerPolicy = 'no-referrer';
-    img.crossOrigin = 'Anonymous';
-    img.onload = () => setImage(img);
-  }, [type]);
+  const resourceType = type as ResourceType;
+  const iconSrc = type !== '3:1' ? (RESOURCE_ICONS[resourceType] || '') : '';
+  const { image } = useGameImage(iconSrc);
 
   if (type === '3:1') {
     return (
@@ -422,41 +401,27 @@ const Port = ({ port, cx, cy, nx, ny }: { port: any, cx: number, cy: number, nx:
 
 
 
-const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [pulse, setPulse] = useState(0);
-
+const TokenPulse = () => {
+  const circle = useRef<Konva.Circle>(null);
   useEffect(() => {
-    const image = new window.Image();
-    image.src = ROBBER_IMG;
-    image.referrerPolicy = 'no-referrer';
-    image.crossOrigin = 'Anonymous';
-    image.onload = () => setImg(image);
+    const node = circle.current;
+    if (!node) return;
+    const animation = new Konva.Animation(frame => {
+      const pulse = (frame!.time % 1200) / 1200;
+      node.setAttrs({ radius: 18 + pulse * 12, strokeWidth: 4 * (1 - pulse), opacity: 1 - pulse });
+    }, node.getLayer());
+    animation.start();
+    return () => { animation.stop(); };
   }, []);
+  return <Circle ref={circle} radius={18} stroke="#EF4444" strokeWidth={4} listening={false} perfectDrawEnabled={false} />;
+};
 
-  useEffect(() => {
-    if (!isPhaseRobber) return;
-    let animationFrame: number;
-    const animate = () => {
-      setPulse((Date.now() % 1200) / 1200);
-      animationFrame = requestAnimationFrame(animate);
-    };
-    animate();
-    return () => cancelAnimationFrame(animationFrame);
-  }, [isPhaseRobber]);
+const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
+  const { image: img } = useGameImage(ROBBER_IMG);
 
   return (
-    <Group x={x} y={y}>
-      {isPhaseRobber && (
-        <Circle 
-          radius={18 + pulse * 12} 
-          stroke="#EF4444" 
-          strokeWidth={4 * (1 - pulse)} 
-          opacity={1 - pulse} 
-          listening={false} 
-          perfectDrawEnabled={false}
-        />
-      )}
+    <Group x={x} y={y} listening={false}>
+      {isPhaseRobber && <TokenPulse />}
       {img ? (
         <Image 
           image={img} 
@@ -479,28 +444,7 @@ const RobberToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRob
 };
 
 const FootprintToken = () => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const resolvedUrl = getImageUrl(FOOTPRINT_IMG);
-    const candidates = getImageCandidates(FOOTPRINT_IMG);
-    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
-    let idx = 0;
-
-    const tryLoad = () => {
-      if (idx >= attempts.length) return;
-      const image = new window.Image();
-      image.src = attempts[idx];
-      image.referrerPolicy = 'no-referrer';
-      image.crossOrigin = 'Anonymous';
-      image.onload = () => setImg(image);
-      image.onerror = () => {
-        idx++;
-        tryLoad();
-      };
-    };
-    tryLoad();
-  }, []);
+  const { image: img } = useGameImage(FOOTPRINT_IMG);
 
   if (img) {
     return (
@@ -529,28 +473,7 @@ const FootprintToken = () => {
 };
 
 const AnchorToken = () => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    const resolvedUrl = getImageUrl(ANCHOR_IMG);
-    const candidates = getImageCandidates(ANCHOR_IMG);
-    const attempts = Array.from(new Set([resolvedUrl, ...candidates]));
-    let idx = 0;
-
-    const tryLoad = () => {
-      if (idx >= attempts.length) return;
-      const image = new window.Image();
-      image.src = attempts[idx];
-      image.referrerPolicy = 'no-referrer';
-      image.crossOrigin = 'Anonymous';
-      image.onload = () => setImg(image);
-      image.onerror = () => {
-        idx++;
-        tryLoad();
-      };
-    };
-    tryLoad();
-  }, []);
+  const { image: img } = useGameImage(ANCHOR_IMG);
 
   if (img) {
     return (
@@ -577,40 +500,11 @@ const AnchorToken = () => {
 };
 
 const PirateToken = ({ x, y, isPhaseRobber }: { x: number, y: number, isPhaseRobber: boolean }) => {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
-  const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    const image = new window.Image();
-    image.src = PIRATE_SHIP_IMG;
-    image.referrerPolicy = 'no-referrer';
-    image.crossOrigin = 'Anonymous';
-    image.onload = () => setImg(image);
-  }, []);
-
-  useEffect(() => {
-    if (!isPhaseRobber) return;
-    let animationFrame: number;
-    const animate = () => {
-      setPulse((Date.now() % 1200) / 1200);
-      animationFrame = requestAnimationFrame(animate);
-    };
-    animate();
-    return () => cancelAnimationFrame(animationFrame);
-  }, [isPhaseRobber]);
+  const { image: img } = useGameImage(PIRATE_SHIP_IMG);
 
   return (
-    <Group x={x} y={y}>
-      {isPhaseRobber && (
-        <Circle 
-          radius={18 + pulse * 12} 
-          stroke="#EF4444" 
-          strokeWidth={4 * (1 - pulse)} 
-          opacity={1 - pulse} 
-          listening={false} 
-          perfectDrawEnabled={false}
-        />
-      )}
+    <Group x={x} y={y} listening={false}>
+      {isPhaseRobber && <TokenPulse />}
       {img ? (
         <Image 
           image={img} 
@@ -641,251 +535,12 @@ const seededRandom = (seed: number) => {
   };
 };
 
-function SailingLoadingScreen({ onComplete, text = "正在驶入海域......", loop = false, onCancel }: { onComplete: () => void, text?: string, loop?: boolean, onCancel?: () => void }) {
-  const isCached = useRef(checkIsAssetsCached());
-  const [preloadProgress, setPreloadProgress] = useState(isCached.current ? 100 : 0);
-  const [preloadStatusText, setPreloadStatusText] = useState('资源加载中...');
-  const [preloadFinished, setPreloadFinished] = useState(isCached.current);
-  const [boatLoaded, setBoatLoaded] = useState(false);
-  const [showCancelBtn, setShowCancelBtn] = useState(false);
-  const [boatAnimKey, setBoatAnimKey] = useState(0);
-
-  const finishTriggeredRef = useRef(isCached.current);
-  const completedRef = useRef(false);
-
-  const triggerComplete = useCallback(() => {
-    if (!completedRef.current) {
-      completedRef.current = true;
-      onComplete();
-    }
-  }, [onComplete]);
-
-  useEffect(() => {
-    let isMounted = true;
-    if (checkIsAssetsCached()) {
-      setPreloadFinished(true);
-      setPreloadProgress(100);
-      finishTriggeredRef.current = true;
-      return;
-    }
-
-    preloadAllAssets((percent, label) => {
-      if (!isMounted) return;
-      setPreloadProgress(percent);
-      if (label) setPreloadStatusText(label);
-
-      if (percent >= 100 && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setTimeout(() => {
-          if (isMounted) {
-            setPreloadFinished(true);
-            setBoatAnimKey(k => k + 1);
-          }
-        }, 150);
-      }
-    }).then(() => {
-      if (isMounted && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setPreloadProgress(100);
-        setPreloadFinished(true);
-        setBoatAnimKey(k => k + 1);
-      }
-    }).catch(() => {
-      if (isMounted && !finishTriggeredRef.current) {
-        finishTriggeredRef.current = true;
-        setPreloadProgress(100);
-        setPreloadFinished(true);
-        setBoatAnimKey(k => k + 1);
-      }
-    });
-
-    const cancelTimer = setTimeout(() => {
-      if (isMounted) setShowCancelBtn(true);
-    }, 6000);
-
-    return () => { 
-      isMounted = false; 
-      clearTimeout(cancelTimer);
-    };
-  }, []);
-
-  // When boat animation starts (preloadFinished is true), guarantee transition complete after 2.6s even if onAnimationEnd doesn't fire
-  useEffect(() => {
-    if (preloadFinished) {
-      const timer = setTimeout(() => {
-        triggerComplete();
-      }, 2600);
-      return () => clearTimeout(timer);
-    }
-  }, [preloadFinished, triggerComplete]);
-
-  const calculatePaths = (w: number, h: number) => {
-    const isPortrait = w < h;
-    const baseY = h / 2 - h * 0.05;
-    const wavelength = isPortrait ? w / 2.0 : w / 3.5;
-    const amplitude = isPortrait ? wavelength * 0.05 : wavelength * 0.03;
-    const finalAmplitude = Math.min(amplitude, isPortrait ? h * 0.02 : h * 0.03);
-    const currentBoatSize = isPortrait ? w / 8 : h / 6;
-
-    let pts = [];
-    const startX = -300;
-    const endX = w + currentBoatSize * 0.6;
-
-    for(let x = startX; x <= w + currentBoatSize + 100; x += 10) {
-       const y = Math.sin((x / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-       pts.push(x + "," + y);
-    }
-
-    let framesArr = [];
-    const steps = 100;
-    for (let i = 0; i <= steps; i++) {
-        const progress = i / steps;
-        const currentX = startX + (endX - startX) * progress;
-        const currentY = Math.sin((currentX / wavelength) * Math.PI * 2) * finalAmplitude + baseY;
-        const dy = Math.cos((currentX / wavelength) * Math.PI * 2) * finalAmplitude * (Math.PI * 2 / wavelength);
-        
-        let angleRad = Math.atan(dy) * (isPortrait ? 0.2 : 0.12); 
-        let angleDeg = angleRad * (180 / Math.PI); 
-        framesArr.push(`${i}% { transform: translate3d(${currentX}px, ${currentY}px, 0) rotate(${angleDeg}deg); }`);
-    }
-    const framesCss = `@keyframes sailBoatAnim {\n${framesArr.join('\n')}\n}`;
-
-    return {
-        line: "M " + pts.join(" L "),
-        fill: "M " + pts.join(" L ") + " L " + (w + currentBoatSize + 100) + "," + (h + 500) + " L " + startX + "," + (h + 500) + " Z",
-        framesCss,
-        boatSize: currentBoatSize
-    };
-  };
-
-  const [paths, setPaths] = useState(() => calculatePaths(window.innerWidth, window.innerHeight));
-  
-  const loopRef = useRef(loop);
-  useEffect(() => {
-    loopRef.current = loop;
-  }, [loop]);
-
-  useEffect(() => {
-     let isMounted = true;
-     const upds = () => {
-         const w = window.innerWidth;
-         const h = window.innerHeight;
-         const newPaths = calculatePaths(w, h);
-         if (isMounted) setPaths(newPaths);
-     };
-
-     const handleOrientation = () => {
-         upds();
-         setTimeout(upds, 150);
-         setTimeout(upds, 350);
-     };
-
-     window.addEventListener('resize', upds);
-     window.addEventListener('orientationchange', handleOrientation);
-
-     return () => {
-         isMounted = false;
-         window.removeEventListener('resize', upds);
-         window.removeEventListener('orientationchange', handleOrientation);
-     };
-  }, []);
-
-  const handleAnimCycleComplete = () => {
-    if (preloadFinished) {
-      triggerComplete();
-    }
-  };
-
-  return (
-    <div className="absolute inset-0 z-[9999] bg-sky-100 overflow-hidden pointer-events-auto select-none">
-        <div className="w-full h-full relative">
-            <style>{`
-              ${paths.framesCss}
-            `}</style>
-            
-            {/* 资源加载完毕后再显示帆船并执行1次完整的驶过海域动画 */}
-            {preloadFinished && (
-              <div 
-                  key={boatAnimKey}
-                  onAnimationEnd={handleAnimCycleComplete}
-                  style={{
-                    animation: 'sailBoatAnim 2.5s linear 1 forwards',
-                    position: 'absolute', left: 0, top: 0, zIndex: 10
-                  }} className="will-change-transform pointer-events-none">
-                  <div style={{ transform: 'translate(-50%, -95%)', width: paths.boatSize, height: paths.boatSize }} className="relative drop-shadow-[0_10px_20px_rgba(0,0,0,0.5)]">
-                      <SmartImg 
-                        src={SAILING_BOAT_IMG} 
-                        alt="Sailing Boat" 
-                        className={`w-full h-full object-contain relative z-10 transition-opacity duration-300 ${boatLoaded ? 'opacity-100' : 'opacity-0'}`}
-                        onLoad={() => setBoatLoaded(true)}
-                      />
-                      {/* SVG Fallback boat so it is instantly visible before/if image loads */}
-                      {!boatLoaded && (
-                        <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" fill="none">
-                          <path d="M15 65 L85 65 L70 85 L30 85 Z" fill="#7c2d12" stroke="#451a03" strokeWidth="2" />
-                          <path d="M48 15 L48 65" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
-                          <path d="M50 18 L80 40 L50 48 Z" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="2" />
-                          <path d="M46 22 L22 42 L46 48 Z" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2" />
-                        </svg>
-                      )}
-                  </div>
-              </div>
-            )}
-
-            <svg className="absolute inset-0 w-full h-full left-0 top-0 z-20 pointer-events-none">
-                <path d={paths.fill} fill="#27a6e6" />
-                <path d={paths.line} stroke="#85caec" strokeWidth="4" fill="none" />
-                <path d={paths.line} stroke="#1e6b9c" strokeWidth="12" fill="none" className="opacity-40 blur-sm" />
-            </svg>
-
-            {/* When preload is finished: show main text ("正在驶入海域......") */}
-            {preloadFinished ? (
-              <div className="absolute top-[78%] sm:top-[80%] w-full flex flex-col items-center justify-center gap-2 z-[10000] px-4 pointer-events-none">
-                  <span className="text-xl sm:text-2xl font-black italic uppercase tracking-widest text-[#0c4a6e] animate-pulse drop-shadow-[0_2px_4px_rgba(255,255,255,0.8)]">
-                      {text}
-                  </span>
-              </div>
-            ) : (
-              /* When preload is loading: show small text and simplified progress bar */
-              <div className="absolute bottom-8 sm:bottom-12 left-0 right-0 w-full flex flex-col items-center justify-center gap-2.5 z-[10000] px-6 sm:px-12 pointer-events-auto">
-                  <span className="text-xs sm:text-sm font-bold tracking-wider text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] animate-pulse">
-                    资源加载中...
-                  </span>
-                  
-                  {/* Minimalist ocean-style progress bar */}
-                  <div className="w-[85vw] max-w-3xl h-3.5 sm:h-4 bg-sky-950/50 rounded-full border border-sky-300/30 p-0.5 shadow-inner backdrop-blur-sm relative overflow-hidden">
-                      <div 
-                        className="h-full bg-sky-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_10px_rgba(56,189,248,0.5)]"
-                        style={{ width: `${preloadProgress}%` }}
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center text-[10px] sm:text-xs font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] tracking-wider">
-                        {preloadProgress}%
-                      </div>
-                  </div>
-
-                  {showCancelBtn && onCancel && (
-                    <button 
-                      onClick={onCancel}
-                      className="mt-1 px-3 py-1 bg-white/95 text-slate-700 hover:bg-white text-xs font-bold rounded-lg border border-slate-200 shadow-sm transition-all"
-                    >
-                      超时？点击返回大厅
-                    </button>
-                  )}
-              </div>
-            )}
-            
-            {/* Hidden pre-decoded DOM images to keep GPU textures warm */}
-            <div className="hidden" aria-hidden="true" style={{ display: 'none' }}>
-              {ALL_GAME_IMAGES.map((src) => (
-                <img key={src} src={src} decoding="sync" alt="" />
-              ))}
-            </div>
-        </div>
-    </div>
-  );
+function SailingLoadingScreen({ onComplete, text = '正在驶入海域', loop = false, onCancel, loadAssets = true }: { onComplete: () => void; text?: string; loop?: boolean; onCancel?: () => void; loadAssets?: boolean }) {
+  const screen = <SailingTransition onComplete={onComplete} loop={loop} text={text} />;
+  return loadAssets ? <AssetGate onCancel={onCancel || onComplete}>{screen}</AssetGate> : screen;
 }
 
-export default function App() {
+export default function App({ onAccountReady }: { onAccountReady?: () => void }) {
   const [showSoundModal, setShowSoundModal] = useState(false);
   const robberDragControls = useDragControls();
   const playerTradeDragControls = useDragControls();
@@ -897,12 +552,9 @@ export default function App() {
   const dissolveRoomDragControls = useDragControls();
 
   useEffect(() => {
-    let audioUnlocked = false;
+    const unlockAudio = () => { void audioService.unlockAll(); };
     const handleGlobalClick = (e: MouseEvent) => {
-      if (!audioUnlocked) {
-        audioService.unlockAll();
-        audioUnlocked = true;
-      }
+      unlockAudio();
       const target = e.target as HTMLElement;
       if (target.closest('.no-click-sound')) return;
       // Check if it's a button or inside a button
@@ -911,8 +563,12 @@ export default function App() {
       }
     };
     document.addEventListener('click', handleGlobalClick);
+    document.addEventListener('touchstart', unlockAudio, { passive: true });
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
     return () => {
       document.removeEventListener('click', handleGlobalClick);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
     };
   }, []);
 
@@ -946,15 +602,6 @@ export default function App() {
   const [devCardOverlay, setDevCardOverlay] = useState<{ playerName: string, actionStr: string } | null>(null);
   const [confirmDevCard, setConfirmDevCard] = useState<DevCardType | null>(null);
   
-  useEffect(() => {
-    // Preload all game textures and audio into browser cache
-    preloadAllAssets().catch(err => console.warn('[App] Preload error:', err));
-
-    const timer = setTimeout(() => {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
   
   const { 
     gameState, 
@@ -1054,6 +701,7 @@ export default function App() {
   }, [gameState]);
 
   const [diceSum, setDiceSum] = useState<string>("?");
+  const controllerRef = useRef<string | null>(null);
   useEffect(() => {
     // If we are currently rolling, always show "?"
     if (isDiceRolling) {
@@ -1134,9 +782,9 @@ export default function App() {
           // Fix: only the active player (or the host if the active player is a bot) should resolve the dice.
           const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerIndex;
           const isActivePlayerBot = gameState.players[gameState.currentPlayerIndex]?.isBot;
-          const isTrueHost = roomState?.hostId === socketService.playerId;
+          const isTrueHost = controllerRef.current === socketService.playerId;
           
-          if (isMyTurn || (isActivePlayerBot && isTrueHost)) {
+          if (socketService.isConnected && ((!isActivePlayerBot && isMyTurn) || (isActivePlayerBot && isTrueHost))) {
             resolveDiceRoll();
           }
         }
@@ -1153,6 +801,9 @@ export default function App() {
   const handleReturnToLobby = (e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
+    isAutoReconnectingRef.current = false;
+    gameStartedRef.current = false;
+    isJoinedLobbyRef.current = false;
     
     // Instantly interrupt and stop all audio/SFX
     audioService.stopAllSfx();
@@ -1164,7 +815,7 @@ export default function App() {
     let keepGameActive = false;
     
     // Determine the state based on the current context
-    if (gameState?.winnerId !== null && gameState?.winnerId !== undefined) {
+    if (!isSpectator && !isJoinSpectator && gameState?.winnerId !== null && gameState?.winnerId !== undefined) {
       // Game ended: Refresh room code
       clearRoom = true;
       socketService.resetGame(roomId);
@@ -1207,7 +858,7 @@ export default function App() {
       try {
         const newUrl = new URL(window.location.href);
         newUrl.searchParams.delete('room');
-        window.history.replaceState({}, '', newUrl.pathname);
+        window.history.replaceState(window.history.state, '', newUrl.pathname);
       } catch (err) {}
     } else {
       // Keep existing room code
@@ -1229,7 +880,7 @@ export default function App() {
         } else {
           newUrl.searchParams.delete('room');
         }
-        window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+        window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
       } catch (err) {}
     }
     
@@ -1261,13 +912,15 @@ export default function App() {
   const playerBarRef = useRef<HTMLDivElement>(null);
   const mainMapRef = useRef<HTMLDivElement>(null);
   const gameContainerRef = useRef<HTMLDivElement>(null);
+  const [spectatorExitAnchor, setSpectatorExitAnchor] = useState<HTMLSpanElement | null>(null);
   const devCardOverlayRef = useRef<HTMLDivElement>(null);
   
   const [activeLobbyTab, setActiveLobbyTab] = useState<'lobby' | 'rooms' | 'profile' | 'rules'>('lobby');
   
   const [currentUser, setCurrentUser] = useState<any>(null);
+  useEffect(() => { if (currentUser) socketService.authenticateSocial(); }, [currentUser]);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isAuthAnimFinished, setIsAuthAnimFinished] = useState(false);
+  useEffect(() => { if (!isAuthLoading) onAccountReady?.(); }, [isAuthLoading, onAccountReady]);
   const [gameStarted, setGameStarted] = useState(() => {
     return localStorage.getItem('catan_game_active') === 'true';
   });
@@ -1278,8 +931,10 @@ export default function App() {
 
   useEffect(() => {
     const checkAuth = async () => {
+      await waitForEntrySession();
       const token = localStorage.getItem('catan_auth_token');
       if (token) {
+        if (!localStorage.getItem('catan_guest_proof')) localStorage.setItem('catan_guest_proof', token);
         try {
           const res = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` }});
           if (res.ok) {
@@ -1288,18 +943,23 @@ export default function App() {
               const data = await res.json();
               if (data && data.user) {
                 setCurrentUser(data.user);
+                if (data.user.isGuest) localStorage.setItem('catan_guest_proof', token);
                 socketService.playerId = data.user.id;
                 localStorage.setItem('catan_player_name', data.user.username);
+                syncSessionToEntry(token, data.user.username);
               } else {
                 localStorage.removeItem('catan_auth_token');
+                clearEntrySession();
               }
             } else {
               localStorage.removeItem('catan_auth_token');
+              clearEntrySession();
             }
           } else {
             console.warn('[App] Auth check status:', res.status);
             if (res.status === 401 || res.status === 403) {
               localStorage.removeItem('catan_auth_token');
+              clearEntrySession();
             }
           }
         } catch (err) {
@@ -1316,6 +976,55 @@ export default function App() {
   const playerName = currentUser?.username || localStorage.getItem('catan_player_name') || `玩家-${Math.floor(Math.random()*1000)}`;
   
   const [showCopyToast, setShowCopyToast] = useState(false);
+  const [hasUnreadPrivateMsgs, setHasUnreadPrivateMsgs] = useState(false);
+  const [gameActionToast, setGameActionToast] = useState<string | null>(null);
+
+  const showGameToast = useCallback((msg: string) => {
+    setGameActionToast(msg);
+    setTimeout(() => {
+      setGameActionToast(prev => (prev === msg ? null : prev));
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setHasUnreadPrivateMsgs(false);
+      return;
+    }
+    let latestMessages: any[] = [];
+    const updateUnread = () => {
+      const read = readMessageIds(currentUser.username || 'user');
+      setHasUnreadPrivateMsgs(latestMessages.some(m => (m.type === 'private' || m.targetUserId) && !read.has(m.id) && m.senderName !== currentUser.username && m.senderId !== currentUser.id));
+    };
+    const checkUnread = async () => {
+      if (document.hidden) return;
+      try {
+        const token = localStorage.getItem('catan_auth_token');
+        const res = await fetch('/api/messages?summary=1', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+          const data = await safeFetchJson(res);
+          if (data?.messages) {
+            latestMessages = data.messages;
+            updateUnread();
+          }
+        }
+      } catch (e) {
+        // ignore background poll errors
+      }
+    };
+
+    checkUnread();
+    const interval = setInterval(checkUnread, 15000);
+    window.addEventListener(MESSAGE_READ_EVENT, updateUnread);
+    window.addEventListener('storage', updateUnread);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(MESSAGE_READ_EVENT, updateUnread);
+      window.removeEventListener('storage', updateUnread);
+    };
+  }, [currentUser]);
   const [mapPreviewSeed, setMapPreviewSeed] = useState(() => Number(localStorage.getItem('catan_map_preview_seed')) || 40);
   const [inputRoomId, setInputRoomId] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1368,8 +1077,9 @@ export default function App() {
 
   const visiblePlayer = useMemo(() => {
     if (!gameState) return null;
+    if (isSpectator && roomState?.settings?.spectatorHands !== true) return null;
     return gameState.players[visiblePlayerIndex];
-  }, [gameState, visiblePlayerIndex]);
+  }, [gameState, visiblePlayerIndex, isSpectator, roomState?.settings?.spectatorHands]);
 
   useEffect(() => {
     socketService.connect();
@@ -1381,6 +1091,12 @@ export default function App() {
       setInputRoomId(roomParam);
     }
     
+    socketService.onJoinError((message: string) => {
+      isAutoReconnectingRef.current = false;
+      setIsJoinedLobby(false);
+      setShowSailingScreen(false);
+      alert(message);
+    });
     socketService.onRoomState((state: any) => {
       if (!state) {
         // If we are currently in an auto-reconnect attempt, don't clear the UI immediately
@@ -1421,13 +1137,24 @@ export default function App() {
         } else {
           setGameStarted(true);
         }
+        gameStartedRef.current = true;
       } else {
         localStorage.removeItem('catan_game_active');
+        gameStartedRef.current = false;
         setGameStarted(false);
+        setShowSailingScreen(false);
       }
     });
 
-    socketService.onGameInit((newState) => {
+    socketService.onGameInit((newState, context) => {
+      // Entry metadata stays correct even if a room update arrives later.
+      if (context || !gameStartedRef.current) {
+        setSailingText(context?.entry === 'resume' ? '重新驶入海域' : '正在驶入海域');
+      }
+      if (context?.entry === 'start' || !gameStartedRef.current) {
+        setShowSailingScreen(true);
+      }
+      gameStartedRef.current = true;
       isRemoteUpdateRef.current = true;
       syncGameState(newState);
       setGameStarted(true);
@@ -1437,6 +1164,11 @@ export default function App() {
     });
 
     socketService.onGameUpdate((newState) => {
+      if (!gameStartedRef.current) {
+        setSailingText('重新驶入海域');
+        setShowSailingScreen(true);
+      }
+      gameStartedRef.current = true;
       isRemoteUpdateRef.current = true;
       syncGameState(newState);
       setGameStarted(true); // Always ensure UI switches to game
@@ -1474,7 +1206,7 @@ export default function App() {
       setShowSailingScreen(false);
       
       // 4. Remove room param from URL
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState(window.history.state, '', window.location.pathname);
     });
 
     socketService.onReturnedToLobby(() => {
@@ -1596,8 +1328,13 @@ export default function App() {
       }
       // Wait a tiny bit for UI state to settle before joining, so socket uses correct ID
       setTimeout(() => {
+        if (!isAutoReconnectingRef.current) return;
         const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
-        socketService.joinRoom(roomIdToJoin, playerName, asSpec);
+        socketService.joinRoom(roomIdToJoin, playerName, params.has('invite') ? false : asSpec, params.get('invite') || undefined);
+        if (params.has('invite')) {
+          const cleanUrl = new URL(window.location.href); cleanUrl.searchParams.delete('invite');
+          window.history.replaceState(window.history.state, '', cleanUrl.pathname + cleanUrl.search);
+        }
         isAutoReconnectingRef.current = false;
       }, 50);
     } else {
@@ -1621,20 +1358,22 @@ export default function App() {
     setIsJoinSpectator(false);
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', finalRoomId);
-    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
 
     socketService.joinRoom(finalRoomId, playerName);
     setIsJoinedLobby(true);
   };
 
   const handleRestoreGame = (restoredRoomId: string) => {
+    setSailingText('重新驶入海域');
+    setShowSailingScreen(true);
     setInputRoomId(restoredRoomId);
     setIsRoomLocked(true);
     localStorage.setItem('catan_active_room', restoredRoomId);
     localStorage.setItem('catan_game_active', 'true');
     const newUrl = new URL(window.location.href);
     newUrl.searchParams.set('room', restoredRoomId);
-    window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
     
     socketService.connect();
     socketService.joinRoom(restoredRoomId, playerName, false);
@@ -1650,11 +1389,12 @@ export default function App() {
 
     localStorage.removeItem('catan_auth_token');
     localStorage.removeItem('catan_player_name');
-    localStorage.removeItem('catan_guest_id');
     localStorage.removeItem('catan_active_room');
     localStorage.removeItem('catan_has_created_room');
     localStorage.removeItem('catan_game_active');
     localStorage.removeItem('catan_is_spectator');
+    clearEntrySession();
+    socketService.disconnect();
 
     const freshGuestId = Math.random().toString(36).substring(2, 10);
     localStorage.setItem('catan_player_id', freshGuestId);
@@ -1673,7 +1413,7 @@ export default function App() {
     setInputRoomId(newRoomId);
     setActiveLobbyTab('lobby');
 
-    window.history.replaceState({}, '', window.location.pathname);
+    window.history.replaceState(window.history.state, '', window.location.pathname);
   }, [roomState?.roomId]);
 
   const handleCopyRoomCode = () => {
@@ -1733,7 +1473,7 @@ export default function App() {
 
   const syncSettings = (newSettings: Partial<RoomState['settings']>) => {
     if (!roomState?.roomId) return;
-    socketService.updateSettings(roomState.roomId, { ...roomState.settings, ...newSettings });
+    socketService.updateSettings(roomState.roomId, newSettings);
   };
 
   const activePlayerId = (gameState?.phase === 'discard' && (gameState?.pendingDiscards?.length || 0) > 0)
@@ -1742,22 +1482,16 @@ export default function App() {
     ? gameState!.pendingGoldRewards[0].playerId
     : gameState?.currentPlayerIndex ?? 0;
 
-  const botProcessorId = useMemo(() => {
-    if (!roomState) return socketService.playerId;
-    // 1. Host (if not disconnected)
-    const hostPlayer = roomState.players.find(p => p.id === roomState.hostId);
-    if (hostPlayer && !hostPlayer.disconnected) return hostPlayer.id;
-    
-    // 2. Any other non-bot non-disconnected player
-    const fallbackPlayer = roomState.players.find(p => !p.disconnected && !p.isBot);
-    if (fallbackPlayer) return fallbackPlayer.id;
-    
-    // 3. Any non-disconnected spectator (important for bot-only games)
-    const fallbackSpectator = roomState.spectators?.find(s => !s.disconnected);
-    if (fallbackSpectator) return fallbackSpectator.id;
-    
-    return roomState.players[0]?.id || 0;
-  }, [roomState]);
+  const botProcessorId = roomState && socketService.isConnected ? getRoomController(roomState) : null;
+  controllerRef.current = botProcessorId;
+
+  useEffect(() => {
+    if (!gameState?.diceRollPending || isDiceRolling || botProcessorId !== socketService.playerId ||
+      !gameState.players[gameState.currentPlayerIndex]?.isBot) return;
+    // A new controller can finish the previous controller's in-flight dice roll.
+    const timer = setTimeout(resolveDiceRoll, 150);
+    return () => clearTimeout(timer);
+  }, [gameState?.diceRollPending, gameState?.currentPlayerIndex, gameState?.players, isDiceRolling, botProcessorId, resolveDiceRoll]);
 
   const amIActivePlayer = useMemo(() => {
     if (!gameState || isSpectator) return false;
@@ -1813,7 +1547,8 @@ export default function App() {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      setWindowSize({ width: w, height: h });
+      if (document.activeElement?.matches('input, textarea, [contenteditable="true"]')) return;
+      setWindowSize(previous => previous.width === w && previous.height === h ? previous : { width: w, height: h });
       if (w > h) {
         setDeviceOrientation('landscape');
       } else {
@@ -1850,8 +1585,6 @@ export default function App() {
 
   const isPortrait = windowSize.width < windowSize.height;
   const shouldApplyPortraitRotation = isPortrait;
-  const isMobileDevice = typeof navigator !== 'undefined' ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || '') : false;
-  const shouldForcePortraitNonGame = isMobileDevice && !isPortrait;
 
   const logicalWindowSize = {
     width: shouldApplyPortraitRotation ? windowSize.height : windowSize.width,
@@ -2039,28 +1772,18 @@ export default function App() {
 
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showPwaGuide, setShowPwaGuide] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
-  });
-
+  const [isStandalone, setIsStandalone] = useState(isInstalledDisplay);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    
-    const mediaQuery = window.matchMedia('(display-mode: standalone)');
-    const handleMediaChange = (e: MediaQueryListEvent) => {
-      setIsStandalone(e.matches);
-    };
-    mediaQuery.addEventListener('change', handleMediaChange);
-
+    const handleInstall = (event: Event) => { event.preventDefault(); setDeferredPrompt(event); };
+    const update = () => setIsStandalone(isInstalledDisplay());
+    const queries = ['standalone', 'fullscreen', 'minimal-ui'].map(mode => matchMedia(`(display-mode: ${mode})`));
+    window.addEventListener('beforeinstallprompt', handleInstall);
+    window.addEventListener('appinstalled', update);
+    queries.forEach(query => query.addEventListener('change', update));
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      mediaQuery.removeEventListener('change', handleMediaChange);
+      window.removeEventListener('beforeinstallprompt', handleInstall);
+      window.removeEventListener('appinstalled', update);
+      queries.forEach(query => query.removeEventListener('change', update));
     };
   }, []);
 
@@ -2088,131 +1811,11 @@ export default function App() {
      }
    };
  
-   const lobbyTouchStartRef = useRef<{ x: number; y: number } | null>(null);
-   const [lobbyDragOffset, setLobbyDragOffset] = useState(0);
-   const [isLobbyDragging, setIsLobbyDragging] = useState(false);
-   const lobbySwipeLockedRef = useRef<'none' | 'horizontal' | 'vertical'>('none');
-
-   const handleLobbyTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-     const target = e.target as HTMLElement;
-     if (
-       target.tagName === 'INPUT' || 
-       target.tagName === 'TEXTAREA' || 
-       target.closest('input') || 
-       target.closest('textarea') ||
-       target.closest('[role="slider"]') ||
-       target.closest('.no-swipe')
-     ) {
-       return;
-     }
-
-     const touch = e.touches[0];
-     if (touch) {
-       lobbyTouchStartRef.current = { x: touch.clientX, y: touch.clientY };
-       lobbySwipeLockedRef.current = 'none';
-       setIsLobbyDragging(false);
-       setLobbyDragOffset(0);
-     }
-   };
-
-   const handleLobbyTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-     if (!lobbyTouchStartRef.current) return;
-     const touch = e.touches[0];
-     if (!touch) return;
-
-     const deltaX = touch.clientX - lobbyTouchStartRef.current.x;
-     const deltaY = touch.clientY - lobbyTouchStartRef.current.y;
-
-     if (lobbySwipeLockedRef.current === 'none') {
-       const xDist = Math.abs(deltaX);
-       const yDist = Math.abs(deltaY);
-       if (xDist > 8 || yDist > 8) {
-         if (xDist > yDist * 1.2) {
-           lobbySwipeLockedRef.current = 'horizontal';
-           setIsLobbyDragging(true);
-         } else {
-           lobbySwipeLockedRef.current = 'vertical';
-         }
-       }
-     }
-
-     if (lobbySwipeLockedRef.current === 'vertical') {
-       return;
-     }
-
-     if (lobbySwipeLockedRef.current === 'horizontal') {
-       if (e.cancelable) {
-         e.preventDefault();
-       }
-       const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
-       const currentIndex = tabs.indexOf(activeLobbyTab);
-
-       let currentDrag = deltaX;
-       if (currentIndex === 0 && deltaX > 0) {
-         currentDrag = deltaX * 0.25; // rubber band
-       } else if (currentIndex === tabs.length - 1 && deltaX < 0) {
-         currentDrag = deltaX * 0.25; // rubber band
-       }
-       setLobbyDragOffset(currentDrag);
-     }
-   };
-
-   const handleLobbyTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
-     if (!lobbyTouchStartRef.current) return;
-     
-     const finalDrag = lobbyDragOffset;
-     const wasHorizontal = lobbySwipeLockedRef.current === 'horizontal';
-
-     lobbyTouchStartRef.current = null;
-     lobbySwipeLockedRef.current = 'none';
-     setIsLobbyDragging(false);
-     setLobbyDragOffset(0);
-
-     if (!wasHorizontal) return;
-
-     const tabs: ('lobby' | 'rooms' | 'profile' | 'rules')[] = ['lobby', 'rooms', 'profile', 'rules'];
-     const currentIndex = tabs.indexOf(activeLobbyTab);
-     if (currentIndex === -1) return;
-
-     const threshold = window.innerWidth * 0.15; // 15% of screen width
-
-     if (finalDrag < -threshold) {
-       const nextIndex = Math.min(tabs.length - 1, currentIndex + 1);
-       if (nextIndex !== currentIndex) {
-         setActiveLobbyTab(tabs[nextIndex]);
-       }
-     } else if (finalDrag > threshold) {
-       const prevIndex = Math.max(0, currentIndex - 1);
-       if (prevIndex !== currentIndex) {
-         setActiveLobbyTab(tabs[prevIndex]);
-       }
-     }
-   };
-
-  // Auto-restore fullscreen on any user click/touch during active gameplay if exited by system gestures
-  useEffect(() => {
-    if (!gameStarted || isStandalone) return;
-
-    const handleAutoFullscreenRestore = (e: MouseEvent | TouchEvent) => {
-      // Don't auto-restore if the user explicitly clicked an action that handles its own fullscreen or modals
-      if (!document.fullscreenElement) {
-        console.log("Auto-restoring fullscreen on gameplay interaction...");
-        const elem = document.documentElement as any;
-        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-        if (request) {
-          request.call(elem).catch(() => {});
-        }
-      }
-    };
-
-    window.addEventListener('click', handleAutoFullscreenRestore, { capture: true, passive: true });
-    window.addEventListener('touchstart', handleAutoFullscreenRestore, { capture: true, passive: true });
-
-    return () => {
-      window.removeEventListener('click', handleAutoFullscreenRestore, { capture: true });
-      window.removeEventListener('touchstart', handleAutoFullscreenRestore, { capture: true });
-    };
-  }, [gameStarted, isStandalone]);
+   const lobbySwipe = useLobbySwipe(activeLobbyTab, setActiveLobbyTab, () =>
+     !hasBackHandler() && !showSailingScreen && !showMapAlbum && !showMapGenerator &&
+     (activeLobbyTab !== 'profile' || profileActiveView === 'menu') &&
+     (activeLobbyTab !== 'rules' || rulesActiveView === 'menu')
+   );
 
   const [showDiscardModal, setShowDiscardModal] = useState(false);
   const [isStartingGame, setIsStartingGame] = useState(false);
@@ -2246,7 +1849,7 @@ export default function App() {
 
     const checkAndPlayBgm = () => {
       if (!isFullyInGame) return;
-      if (!audioService.enabled) return;
+      if (!audioService.enabled || showSoundModal || document.hidden) return;
 
       if (!audioService.isBgmPlaying) {
         audioService.playBgm();
@@ -2276,9 +1879,8 @@ export default function App() {
       window.removeEventListener('focus', checkAndPlayBgm);
       document.removeEventListener('visibilitychange', checkAndPlayBgm);
     };
-  }, [isAuthLoading, gameStarted, showSailingScreen, isJoinedLobby]);
+  }, [isAuthLoading, gameStarted, showSailingScreen, isJoinedLobby, showSoundModal]);
 
-  const sailingStartTimeRef = useRef(0);
   const [showDebugConsole, setShowDebugConsole] = useState(false);
   const [debugSaveName, setDebugSaveName] = useState('');
   const [debugSaveStatus, setDebugSaveStatus] = useState<{type: 'success' | 'error', text: string} | null>(null);
@@ -2287,25 +1889,7 @@ export default function App() {
   const logoClickCountRef = useRef(0);
   const logoStartTimeRef = useRef<number>(0);
 
-  const prevGameStarted = useRef(gameStarted);
-  
-  useEffect(() => {
-    if (gameStarted && !prevGameStarted.current && isJoinedLobby) {
-        if (!showSailingScreen && !isAutoReconnectingRef.current) {
-           sailingStartTimeRef.current = performance.now();
-           setSailingText("正在驶入海域......");
-           setShowSailingScreen(true);
-        }
-        // After game starts once, we no longer consider it an "auto-reconnect" trigger
-        if (isAutoReconnectingRef.current) {
-          isAutoReconnectingRef.current = false;
-        }
-    }
-    prevGameStarted.current = gameStarted;
-  }, [gameStarted, isJoinedLobby, showSailingScreen]);
-
   const [showGameOver, setShowGameOver] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showDissolveRoomConfirm, setShowDissolveRoomConfirm] = useState(false);
   const [showExitOptions, setShowExitOptions] = useState(false);
   const [showReserveRoomModal, setShowReserveRoomModal] = useState(false);
@@ -2313,6 +1897,11 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(true);
 
   const handleLogoClick = useCallback(() => {
+    if (currentUser?.role !== 'admin') {
+      logoClickCountRef.current = 0;
+      logoStartTimeRef.current = 0;
+      return;
+    }
     const now = Date.now();
     if (now - logoStartTimeRef.current > 3000) {
       logoClickCountRef.current = 1;
@@ -2351,7 +1940,7 @@ export default function App() {
         logoStartTimeRef.current = 0;
       }
     }
-  }, [mapPreviewSeed, isJoinedLobby, gameStarted]);
+  }, [mapPreviewSeed, isJoinedLobby, gameStarted, currentUser?.role]);
 
   useEffect(() => {
     if (!gameStarted) {
@@ -2371,11 +1960,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let wasConnected = socketService.isConnected;
     return socketService.onConnectionChange((connected) => {
+      const reconnected = connected && !wasConnected;
+      wasConnected = connected;
       setIsConnected(connected);
-      if (connected && isJoinedLobby && !isAuthLoading && currentUser) {
+      if (reconnected && isJoinedLobby && !isAuthLoading && currentUser) {
         const roomId = roomState?.roomId || inputRoomId;
-        if (roomId) {
+        if (roomId && socketService.hasRoomIntent(roomId)) {
           console.log('[App] Reconnected, rejoining room:', roomId);
           const asSpec = localStorage.getItem('catan_is_spectator') === 'true';
           socketService.joinRoom(roomId, playerName, asSpec);
@@ -2384,81 +1976,7 @@ export default function App() {
     });
   }, [isJoinedLobby, roomState?.roomId, inputRoomId, playerName, isAuthLoading, currentUser]);
 
-  // Auto-request fullscreen on first interaction and handle orientation
-  useEffect(() => {
-    const handleOrientation = () => {
-      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener('resize', handleOrientation);
-    window.addEventListener('orientationchange', handleOrientation);
-    return () => {
-      window.removeEventListener('resize', handleOrientation);
-      window.removeEventListener('orientationchange', handleOrientation);
-    };
-  }, []);
-
-  // Set meta tags for "Desktop" scaling feel on mobile
-  useEffect(() => {
-    if (isMobile) {
-      let meta = document.querySelector('meta[name="viewport"]');
-      if (!meta) {
-        meta = document.createElement('meta');
-        meta.setAttribute('name', 'viewport');
-        document.head.appendChild(meta);
-      }
-      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover');
-    }
-  }, [isMobile]);
-
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      const elem = document.documentElement as any;
-      const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
-      if (request) {
-        request.call(elem).catch(() => {});
-      }
-      setIsFullscreen(true);
-    } else {
-      const exit = document.exitFullscreen || (document as any).webkitExitFullscreen || (document as any).mozCancelFullScreen || (document as any).msExitFullscreen;
-      if (exit) {
-        exit.call(document);
-      }
-      setIsFullscreen(false);
-    }
-  }, []);
-
-  // Force fullscreen on immediate load (might be blocked by browser) and listener as fallback
-  useEffect(() => {
-    const triggerFullscreen = () => {
-      if (!document.fullscreenElement) {
-        toggleFullscreen();
-      }
-    };
-    
-    // Attempt immediate
-    triggerFullscreen();
-
-    // Fallback listeners
-    window.addEventListener('click', triggerFullscreen);
-    window.addEventListener('touchstart', triggerFullscreen);
-    return () => {
-      window.removeEventListener('click', triggerFullscreen);
-      window.removeEventListener('touchstart', triggerFullscreen);
-    };
-  }, [toggleFullscreen]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-    };
-  }, []);
-
   const [isInitializingGame, setIsInitializingGame] = useState(false);
-  const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [playerCount, setPlayerCount] = useState(4);
   const [botConfig, setBotConfig] = useState<boolean[]>(Array(6).fill(false));
   const [mapType, setMapType] = useState<MapType>('archipelago');
@@ -2526,6 +2044,7 @@ export default function App() {
   }, [gameState?.board]);
 
   const hasManuallyInteractedRef = useRef(false);
+  const viewInitializedRef = useRef(false);
 
   const setHasManuallyInteracted = useCallback((val: boolean) => {
     hasManuallyInteractedRef.current = val;
@@ -2590,36 +2109,26 @@ export default function App() {
     }
   }, [gameState, gameStarted]);
 
-  const prevShowSailingScreen = useRef(showSailingScreen);
-  useEffect(() => {
-    if (prevShowSailingScreen.current && !showSailingScreen && gameStarted) {
-      hasManuallyInteractedRef.current = false;
-      centerMap(true);
-    }
-    prevShowSailingScreen.current = showSailingScreen;
-  }, [showSailingScreen, gameStarted, centerMap]);
-
   useEffect(() => {
     const handleResize = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
-      setWindowSize({ width, height });
+      if (document.activeElement?.matches('input, textarea, [contenteditable="true"]')) return;
+      setWindowSize(previous => previous.width === width && previous.height === height ? previous : { width, height });
       
       // Force panels to always show
       setShowLeftPanel(true);
       setShowRightPanel(true);
       
-      // Center map on screen resize
-      if (gameStarted) {
-        hasManuallyInteractedRef.current = false;
-        centerMap(true);
-      }
+      // A resize (including mobile browser chrome) must not discard the player's view.
     };
     window.addEventListener('resize', handleResize);
     window.addEventListener('orientationchange', handleResize);
 
     // Initial enter game center
-    if (gameStarted) {
+    if (!gameStarted) viewInitializedRef.current = false;
+    if (gameStarted && !viewInitializedRef.current && stageRef.current && hexCoords.length) {
+      viewInitializedRef.current = true;
       hasManuallyInteractedRef.current = false;
       centerMap(true);
     }
@@ -2628,7 +2137,7 @@ export default function App() {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('orientationchange', handleResize);
     };
-  }, [centerMap, gameStarted]);
+  }, [centerMap, gameStarted, hexCoords.length]);
 
   const zoomEndTimeoutRef = useRef<any>(null);
 
@@ -2757,38 +2266,53 @@ export default function App() {
   }, [rulesActiveView]);
 
   const [profileActiveView, setProfileActiveView] = useState<'menu' | string>('menu');
+  useBackHandler(showPwaGuide, () => { setShowPwaGuide(false); return true; }, 120);
+  useBackHandler(showSoundModal, () => { setShowSoundModal(false); return true; }, 110);
+  useBackHandler(!!confirmAction, () => { setConfirmAction(null); return true; }, 150);
+  useBackHandler(showDissolveRoomConfirm, () => { setShowDissolveRoomConfirm(false); return true; }, 140);
+  useBackHandler(showReserveRoomModal, () => { setShowReserveRoomModal(false); return true; }, 130);
+  useBackHandler(showExitOptions, () => { setShowExitOptions(false); return true; }, 100);
+  useBackHandler(showMapGenerator, () => { setShowMapGenerator(false); return true; }, 100);
+  useBackHandler(showMapAlbum, () => { setShowMapAlbum(false); return true; }, 90);
+  useBackHandler(showPlayerTradeModal, () => { setShowPlayerTradeModal(false); return true; }, 100);
+  useBackHandler(showTradeModal, () => { setShowTradeModal(false); return true; }, 100);
   const profileActiveViewRef = useRef(profileActiveView);
   useEffect(() => {
     profileActiveViewRef.current = profileActiveView;
   }, [profileActiveView]);
 
   useEffect(() => {
+    window.dispatchEvent(new Event('catan:navigation'));
+  }, [activeLobbyTab]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Push state to protect the stack
-    window.history.pushState({ preventBack: true }, "");
+    if (window.history.state?.catanHistoryVersion !== 5) {
+      window.history.replaceState({ catanBase: true, catanHistoryVersion: 5 }, '');
+      window.history.pushState({ catanBuffer: true, catanHistoryVersion: 5 }, '');
+      window.history.pushState({ catanApp: true, catanHistoryVersion: 5 }, '');
+    }
 
-    const handlePopState = () => {
-      // Re-push state immediately to block navigation
-      window.history.pushState({ preventBack: true }, "");
-
+    const performAppBackAction = () => {
+      if (runTopBackHandler()) return true;
       // 1. In game
       if (gameStartedRef.current) {
         if (showSoundModalRef.current) {
           setShowSoundModal(false);
-          return;
+          return true;
         }
         if (showRulesModalRef.current) {
           if (rulesActiveViewRef.current !== 'menu') {
             setRulesActiveView('menu');
-            return;
+            return true;
           }
           setShowRulesModal(false);
           setRulesActiveView('menu');
-          return;
+          return true;
         }
         // In game and no modals open -> do nothing (suppress exit / fullscreen interception prompt)
-        return;
+        return true;
       }
 
       // 2. Matching screen
@@ -2797,82 +2321,188 @@ export default function App() {
         if (handleReturnToLobbyRef.current) {
           handleReturnToLobbyRef.current();
         }
-        return;
+        return true;
       }
 
       // 3. Modals open in lobby
       if (showSoundModalRef.current) {
         setShowSoundModal(false);
-        return;
+        return true;
       }
       if (showRulesModalRef.current) {
         if (rulesActiveViewRef.current !== 'menu') {
           setRulesActiveView('menu');
-          return;
+          return true;
         }
         setShowRulesModal(false);
         setRulesActiveView('menu');
-        return;
+        return true;
       }
 
-      // 4. Lobby tabs (profile sub-views, rules sub-views, or non-main tabs -> return to profile/rules main view or lobby 'lobby')
+      // Primary tabs are peers. Only a nested view consumes an in-app back.
       const inLobby = !roomStateRef.current && !isJoinedLobbyRef.current;
       if (inLobby) {
         if (activeLobbyTabRef.current === 'profile') {
           if (profileActiveViewRef.current !== 'menu') {
             setProfileActiveView('menu');
-            return;
+            return true;
           }
-          setActiveLobbyTab('lobby');
-          return;
         }
         if (activeLobbyTabRef.current === 'rules') {
           if (rulesActiveViewRef.current !== 'menu') {
             setRulesActiveView('menu');
-            return;
+            return true;
           }
-          setActiveLobbyTab('lobby');
-          return;
-        }
-        if (activeLobbyTabRef.current !== 'lobby') {
-          setActiveLobbyTab('lobby');
-          setRulesActiveView('menu');
-          setProfileActiveView('menu');
-          return;
         }
       }
+
+      return false;
     };
 
-    window.addEventListener("popstate", handlePopState);
-
-    // Active touch interceptor near screen edges to block swipe-to-back/forward gesture on iOS and Android
-    let startX = 0;
-    let isEdgeTouch = false;
-
-    const handleTouchStart = (e) => {
-      const touch = e.touches[0];
-      if (!touch) return;
-      startX = touch.clientX;
-      const edgeThreshold = 40; // Pixels from left/right edges
-      isEdgeTouch = startX < edgeThreshold || startX > (window.innerWidth - edgeThreshold);
-    };
-
-    const handleTouchMove = (e) => {
-      if (isEdgeTouch) {
-        // Prevent default swipe-back or pull-to-navigate gestures
-        if (e.cancelable) {
-          e.preventDefault();
-        }
+    let lastEdgeBack = -Infinity;
+    let exitArmedAt = -Infinity;
+    let leaving = false;
+    let releasingGuard = false;
+    let restoringGuard = false;
+    const historyPosition = () => window.history.state?.catanApp ? 2 : window.history.state?.catanBuffer ? 1 : 0;
+    let lastHistoryPosition = historyPosition();
+    let exitRecoveryTimer: ReturnType<typeof setTimeout>;
+    const restoreGuard = () => {
+      if (!window.history.state?.catanApp && !restoringGuard) {
+        // Reuse the existing entry. pushState after Back makes Chromium mark
+        // every same-document entry skippable until the next real interaction.
+        restoringGuard = true;
+        window.history.go(2 - historyPosition());
       }
     };
-
-    window.addEventListener("touchstart", handleTouchStart, { passive: false });
-    window.addEventListener("touchmove", handleTouchMove, { passive: false });
-
+    const handleBack = (fromPop = false) => {
+      if (leaving) return;
+      if (performAppBackAction()) {
+        restoreGuard();
+        exitArmedAt = -Infinity;
+        setShowBackInterceptToast(false);
+      } else if (performance.now() - exitArmedAt < 1000) {
+        leaving = true;
+        setShowBackInterceptToast(false);
+        if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+        window.history.go(-historyPosition() - 1);
+        // An installed app may have no previous document to return to.
+        // Do not leave its in-app navigation permanently disabled in that case.
+        exitRecoveryTimer = setTimeout(() => {
+          leaving = false;
+          exitArmedAt = -Infinity;
+          restoreGuard();
+        }, 700);
+        return;
+      } else {
+        exitArmedAt = performance.now();
+        setShowBackInterceptToast(true);
+        // Leave the base entry exposed for one second so a native Back can exit
+        // an installed app even when it has no previous web document.
+        if (historyPosition() > 0) {
+          releasingGuard = true;
+          window.history.go(-historyPosition());
+        }
+        if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+        backToastTimeoutRef.current = setTimeout(() => {
+          exitArmedAt = -Infinity;
+          setShowBackInterceptToast(false);
+          if (!leaving) restoreGuard();
+        }, 1000);
+      }
+    };
+    const handlePopState = () => {
+      const position = historyPosition();
+      const movingForward = position > lastHistoryPosition;
+      lastHistoryPosition = position;
+      if (movingForward) {
+        restoringGuard = false;
+        if (position < 2 && exitArmedAt === -Infinity) restoreGuard();
+        return;
+      }
+      if (releasingGuard) { releasingGuard = false; return; }
+      if (leaving) return;
+      if (performance.now() - lastEdgeBack > 400) handleBack(true);
+      else {
+        lastEdgeBack = -Infinity;
+        restoreGuard();
+      }
+    };
+    const appBack = () => { handleBack(); };
+    const resetExit = () => {
+      leaving = false;
+      clearTimeout(exitRecoveryTimer);
+      exitArmedAt = -Infinity;
+      setShowBackInterceptToast(false);
+      if (backToastTimeoutRef.current) clearTimeout(backToastTimeoutRef.current);
+      restoreGuard();
+    };
+    const restoreOnVisible = () => { if (!document.hidden) resetExit(); };
+    const suppressClick = (event: MouseEvent) => {
+      if (shouldSuppressGestureClick()) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    let edge: { x: number; y: number; id: number; horizontal: boolean; cancelled: boolean } | null = null;
+    const cancelEdge = () => { edge = null; };
+    const handleTouchStart = (event: TouchEvent) => {
+      edge = null;
+      if (event.touches.length !== 1) return;
+      const target = event.target as HTMLElement;
+      if (target.closest('input,textarea,select,button,[role="slider"],[data-no-back],canvas')) return;
+      const canGoBack = hasBackHandler() || !gameStartedRef.current;
+      const touch = event.touches[0];
+      if (!canGoBack || touch.clientX > 32) return;
+      edge = { x: touch.clientX, y: touch.clientY, id: touch.identifier, horizontal: false, cancelled: false };
+      if (event.cancelable) event.preventDefault();
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!edge || edge.cancelled) return;
+      if (event.touches.length !== 1) { cancelEdge(); return; }
+      const touch = event.touches[0];
+      const dx = touch.clientX - edge.x;
+      const dy = touch.clientY - edge.y;
+      if (!edge.horizontal && Math.max(Math.abs(dx), Math.abs(dy)) > 8) {
+        edge.horizontal = dx > Math.abs(dy) * 1.2;
+        edge.cancelled = !edge.horizontal;
+      }
+      if (edge.horizontal && event.cancelable) event.preventDefault();
+    };
+    const handleTouchEnd = (event: TouchEvent) => {
+      const gesture = edge;
+      edge = null;
+      if (!gesture || gesture.cancelled) return;
+      const touch = [...event.changedTouches].find(item => item.identifier === gesture.id);
+      if (touch && touch.clientX - gesture.x >= 48 && Math.abs(touch.clientY - gesture.y) < 60) {
+        lastEdgeBack = performance.now();
+        suppressGestureClick();
+        handleBack();
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('catan:back', appBack);
+    window.addEventListener('catan:navigation', resetExit);
+    window.addEventListener('pageshow', resetExit);
+    window.addEventListener('focus', resetExit);
+    document.addEventListener('visibilitychange', restoreOnVisible);
+    window.addEventListener('click', suppressClick, true);
+    window.addEventListener('touchstart', handleTouchStart, { passive: false, capture: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false, capture: true });
+    window.addEventListener('touchend', handleTouchEnd);
+    window.addEventListener('touchcancel', cancelEdge);
+    // A refresh during the exit-confirmation second may restore the base entry.
+    restoreGuard();
     return () => {
-      window.removeEventListener("popstate", handlePopState);
-      window.removeEventListener("touchstart", handleTouchStart);
-      window.removeEventListener("touchmove", handleTouchMove);
+      clearTimeout(exitRecoveryTimer);
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('catan:back', appBack);
+      window.removeEventListener('catan:navigation', resetExit);
+      window.removeEventListener('pageshow', resetExit);
+      window.removeEventListener('focus', resetExit);
+      document.removeEventListener('visibilitychange', restoreOnVisible);
+      window.removeEventListener('click', suppressClick, true);
+      window.removeEventListener('touchstart', handleTouchStart, true);
+      window.removeEventListener('touchmove', handleTouchMove, true);
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', cancelEdge);
       if (backToastTimeoutRef.current) {
         clearTimeout(backToastTimeoutRef.current);
       }
@@ -3131,14 +2761,14 @@ export default function App() {
     const hasShipAtV2 = gameState.ships.some(s => s.playerId === player.id && s.edgeId !== edgeId && s.edgeId.split('|').includes(v2Id));
 
     if (mode === 'road') {
-      // Roads can connect to other roads OR ships (at coastal vertices)
-      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1) || (hasShipAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2) || (hasShipAtV2 && !oppSettlementAtV2);
+      // 道路可连接现有道路；若要与船只连接，该交汇顶点必须建有自己的村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasRoadAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasRoadAtV2 && !oppSettlementAtV2);
       return canConnectV1 || canConnectV2;
     } else {
-      // Ships can connect to other ships OR roads (at coastal vertices)
-      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1) || (hasRoadAtV1 && !oppSettlementAtV1);
-      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2) || (hasRoadAtV2 && !oppSettlementAtV2);
+      // 船只可连接现有船只；若要与道路/陆地相连修船，必须在交汇顶点修建村庄/城市
+      const canConnectV1 = hasSettlementAtV1 || (hasShipAtV1 && !oppSettlementAtV1);
+      const canConnectV2 = hasSettlementAtV2 || (hasShipAtV2 && !oppSettlementAtV2);
       return canConnectV1 || canConnectV2;
     }
   }, [gameState]);
@@ -3149,9 +2779,7 @@ export default function App() {
 
     const hexes = getHexesForVertex(gameState.board, vertexId);
     
-    // Pirate check - only blocks settlements if they are on a pure sea hex (which shouldn't happen for land settlements)
-    // In standard Seafarers, the Pirate moved to a sea hex blocks that hex's production and ships.
-    // It usually doesn't block building settlements on islands.
+    if (hexes.some(h => h.id === gameState.pirateHexId)) return false;
 
     if (mode === 'city') {
       // Must be own settlement and not city
@@ -3164,7 +2792,7 @@ export default function App() {
     if (gameState.settlements.some(s => s.vertexId === vertexId)) return false;
 
     // Must not be all sea
-    if (hexes.every(h => h.type === HexType.Sea)) return false;
+    if (hexes.every(h => h.type === HexType.Sea || h.type === HexType.Desert)) return false;
 
     // Distance rule
     const [vx, vy] = vertexId.split(',').map(Number);
@@ -3238,13 +2866,37 @@ export default function App() {
     if (buildMode === 'road') {
         if (checkIsValidEdge(edgeId, 'road')) {
             setPendingBuild({ type: 'road', id: edgeId, x, y });
+        } else {
+            const player = gameState?.players[gameState.currentPlayerIndex];
+            if (player && gameState) {
+                const [v1, v2] = edgeId.split('|');
+                const hasShipV1 = gameState.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(v1));
+                const hasShipV2 = gameState.ships.some(s => s.playerId === player.id && s.edgeId.split('|').includes(v2));
+                const hasVillageV1 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v1);
+                const hasVillageV2 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v2);
+                if ((hasShipV1 && !hasVillageV1) || (hasShipV2 && !hasVillageV2)) {
+                    showGameToast("连接路和船必须修建村庄，否则无法修路！");
+                }
+            }
         }
     } else if (buildMode === 'ship') {
         if (checkIsValidEdge(edgeId, 'ship')) {
             setPendingBuild({ type: 'ship', id: edgeId, x, y });
+        } else {
+            const player = gameState?.players[gameState.currentPlayerIndex];
+            if (player && gameState) {
+                const [v1, v2] = edgeId.split('|');
+                const hasRoadV1 = gameState.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(v1));
+                const hasRoadV2 = gameState.roads.some(r => r.playerId === player.id && r.edgeId.split('|').includes(v2));
+                const hasVillageV1 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v1);
+                const hasVillageV2 = gameState.settlements.some(s => s.playerId === player.id && s.vertexId === v2);
+                if ((hasRoadV1 && !hasVillageV1) || (hasRoadV2 && !hasVillageV2)) {
+                    showGameToast("连接路和船必须修建村庄，否则无法修船！");
+                }
+            }
         }
     }
-  }, [canBuild, buildMode, checkIsValidEdge]);
+  }, [canBuild, buildMode, checkIsValidEdge, gameState, showGameToast]);
 
   const handleHexClick = useCallback((hexId: string, type: HexType, x: number, y: number) => {
       // Only allow phase-related hex clicks (robber/pirate movement) if it's the active player's turn
@@ -3409,426 +3061,154 @@ export default function App() {
     // Instead we rely on WebSocket TCP delivery and manual sync on reconnect.
   }, [roomState?.roomId, gameStarted]);
 
-  // --- BOT WATCHDOG LOGIC ---
+  const botTurnStartRef = useRef(Date.now());
+  const previousBotTurnRef = useRef('');
+  const [botWakeTick, setBotWakeTick] = useState(0);
   useEffect(() => {
-    if (!gameState || !roomState) return;
-    const isBotProcessor = botProcessorId === socketService.playerId;
-    if (!isBotProcessor) return;
-
-    const interval = setInterval(() => {
-      const activePlayer = gameState.players[gameState.currentPlayerIndex];
-      // Only forcibly end turn if it's main phase, bot is active, and they exceeded 10s.
-      if (activePlayer?.isBot && gameState.phase === 'main' && botTurnStartRef.current > 0) {
-        if (Date.now() - botTurnStartRef.current > 10000) {
-          nextTurn();
-        }
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [gameState, botProcessorId, nextTurn]);
-
-  // --- PARALLEL BOT ACTIONS (e.g. Discarding, Trade Responses) ---
-  const processedDiscardsRef = useRef<Record<number, boolean>>({});
-
-  useEffect(() => {
-    if (!gameState || !roomState || isDiceRolling || gameState.phase !== 'discard') {
-      processedDiscardsRef.current = {};
-      return;
-    }
-    
-    // Use roomState host check to ensure only one client processes bots
-    const isBotProcessor = botProcessorId === socketService.playerId;
-    if (!isBotProcessor) return;
-
-    const botPendingDiscards = gameState.pendingDiscards.filter(pd => gameState.players[pd.playerId]?.isBot);
-    
-    botPendingDiscards.forEach(pd => {
-      if (!processedDiscardsRef.current[pd.playerId]) {
-        processedDiscardsRef.current[pd.playerId] = true;
-        
-        // We use a small timeout to avoid hammering the state and simulate thinking
-        setTimeout(() => {
-          const player = gameState.players[pd.playerId];
-          const resPool = Object.entries(player.resources).flatMap(([res, count]) => Array(count).fill(res as ResourceType));
-          const toDiscard: Record<ResourceType, number> = { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0 };
-          
-          let amountToDiscard = pd.amount;
-          for (let i = 0; i < amountToDiscard; i++) {
-            if (resPool.length > 0) {
-              const idx = Math.floor(Math.random() * resPool.length);
-              toDiscard[resPool[idx]]++;
-              resPool.splice(idx, 1);
-            }
-          }
-          discardCards(pd.playerId, toDiscard);
-        }, 1500 + (Math.random() * 1000));
-      }
-    });
-  }, [gameState?.phase, gameState?.pendingDiscards, botProcessorId, isDiceRolling, discardCards, gameState?.players, roomState]);
-
-  // --- BOT LOGIC ---
-  const isProcessingBotRef = useRef(false);
-  const botTurnStartRef = useRef<number>(Date.now());
-  const lastBotStateKeyRef = useRef<string>('');
-  const discardedThisTurnRef = useRef<boolean>(false);
-  const prevPlayerIndexRef = useRef<number>(-1);
-  const botPrevHasRolledRef = useRef<boolean>(false);
-
-  useEffect(() => {
-    if (!gameState) return;
-    const isNewPlayer = gameState.currentPlayerIndex !== prevPlayerIndexRef.current;
-    const justRolled = gameState.hasRolled && !botPrevHasRolledRef.current;
-    if (isNewPlayer || justRolled) {
+    const key = `${gameState?.currentPlayerIndex}:${gameState?.hasRolled}`;
+    if (key !== previousBotTurnRef.current) {
+      previousBotTurnRef.current = key;
       botTurnStartRef.current = Date.now();
     }
-    prevPlayerIndexRef.current = gameState.currentPlayerIndex;
-    botPrevHasRolledRef.current = gameState.hasRolled;
   }, [gameState?.currentPlayerIndex, gameState?.hasRolled]);
 
   useEffect(() => {
-    if (!gameState || isProcessingBotRef.current || isDiceRolling) return;
-    const activePlayer = gameState.players[activePlayerId];
-    if (!activePlayer?.isBot) {
-        lastBotStateKeyRef.current = '';
-        discardedThisTurnRef.current = false;
-        return;
-    }
-    
-    // Reset discard tracker if phase changes to something not discard
-    if (gameState.phase !== 'discard') {
-      discardedThisTurnRef.current = false;
-    }
-    
-    // Use roomState host check to ensure only one client processes bots
-    const isBotProcessor = botProcessorId === socketService.playerId;
-    if (!isBotProcessor) return;
+    if (botProcessorId !== socketService.playerId || !gameState?.players[gameState.currentPlayerIndex]?.isBot ||
+        gameState.phase !== 'main' || !gameState.hasRolled || isDiceRolling) return;
+    const timer = setInterval(() => {
+      if (controllerRef.current === socketService.playerId && socketService.isConnected &&
+          !gameState.tradeOffers?.some(offer => offer.initiatorId === gameState.players[gameState.currentPlayerIndex].id && offer.status === 'pending') &&
+          Date.now() - botTurnStartRef.current >= BOT_TURN_LIMIT_MS) nextTurn();
+    }, 500);
+    return () => clearInterval(timer);
+  }, [gameState, botProcessorId, isDiceRolling, nextTurn]);
 
-    if (isDiceRolling) return; // Wait for dice rolling animation to finish!
-
-    isProcessingBotRef.current = true;
-    const timer = setTimeout(() => {
-      isProcessingBotRef.current = false;
-      if (!gameState || isDiceRolling) return;
-      const activePlayer = gameState.players[activePlayerId];
-      if (!activePlayer?.isBot) return;
-
-      const { phase, hasRolled } = gameState;
-
-      if (isDiceRolling) return; // Still rolling!
-
-    if (phase === 'initial_dice_roll') {
-      rollDice();
-      return;
-    }
-
-    if (phase === 'setup') {
-      const setupSettlementsThisTurn = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
-      const setupRoadsThisTurn = gameState.roads.filter(r => r.playerId === activePlayerId).length;
-      const setupShipsThisTurn = gameState.ships.filter(s => s.playerId === activePlayerId).length;
-      const totalPaths = setupRoadsThisTurn + setupShipsThisTurn;
-
-      if (setupSettlementsThisTurn === totalPaths) {
-        // Build settlement
-        const validVertices = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
-        if (validVertices.length > 0) {
-          const scoredVertices = validVertices.map(v => {
-            const adjacentHexes = v.hexIds.map(id => gameState.board.find(h => h.id === id)).filter(Boolean);
-            const probSum = adjacentHexes.reduce((sum, hex) => {
-              const dots = (hex!.type === HexType.Sea || hex!.type === HexType.Desert) ? 0 : 6 - Math.abs(7 - hex!.number);
-              return sum + dots;
-            }, 0);
-            return { vertex: v, score: probSum + Math.random() * 2 };
-          });
-          scoredVertices.sort((a, b) => b.score - a.score);
-          const bestV = scoredVertices[0].vertex;
-          buildSettlement(bestV.id, bestV.hexIds);
-        }
-      } else {
-        // Build road or ship
-        const lastSettlement = gameState.settlements.filter(s => s.playerId === activePlayerId).pop();
-        if (lastSettlement) {
-          const validRoadEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'road'));
-          const validShipEdges = edges.filter(e => e.id.includes(lastSettlement.vertexId) && checkIsValidEdge(e.id, 'ship'));
-          
-          if (validRoadEdges.length > 0) {
-            buildRoad(validRoadEdges[Math.floor(Math.random() * validRoadEdges.length)].id);
-          } else if (validShipEdges.length > 0) {
-            buildShip(validShipEdges[Math.floor(Math.random() * validShipEdges.length)].id);
-          }
-        }
-      }
-    } else if (phase === 'main' || phase === 'road_building') {
-        if (Date.now() - botTurnStartRef.current > 10000) {
-           nextTurn();
-           return;
-        }
-
-        if (!gameState.hasRolled) {
-          // Bot: Should I play a Knight card before rolling?
-          if (!gameState.hasPlayedDevCardThisTurn && activePlayer.devCards.includes(DevCardType.Knight)) {
-            // If the robber is on one of our high-yield hexes, play Knight
-            const myProductiveHexIds = gameState.settlements
-              .filter(s => s.playerId === activePlayerId)
-              .flatMap(s => s.hexIds);
-            if (myProductiveHexIds.includes(gameState.robberHexId)) {
-              playDevCard(DevCardType.Knight);
-              return;
-            }
-          }
-
-          rollDice();
-          return;
-        }
-
-        // Try actions (using local check to avoid gameState.currentPlayerIndex mismatch)
-        const canAffordLocal = (cost: Record<string, number>) => Object.entries(cost).every(([res, amt]) => (activePlayer.resources as any)[res] >= amt);
-
-        const playerRoadsCount = gameState.roads.filter(r => r.playerId === activePlayerId).length;
-        const playerShipsCount = gameState.ships.filter(s => s.playerId === activePlayerId).length;
-        const playerSettlementsCount = gameState.settlements.filter(s => s.playerId === activePlayerId).length;
-        const playerCitiesCount = gameState.settlements.filter(s => s.playerId === activePlayerId && s.isCity).length;
-
-        if (canAffordLocal(COSTS.city) && playerCitiesCount < 4) {
-          const upgradable = gameState.settlements.filter(s => s.playerId === activePlayerId && !s.isCity);
-          if (upgradable.length > 0) {
-            upgradeToCity(upgradable[0].vertexId);
-            return;
-          }
-        }
-
-        if (canAffordLocal(COSTS.settlement) && playerSettlementsCount < 5) {
-          const validV = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
-          if (validV.length > 0) {
-            buildSettlement(validV[0].id, validV[0].hexIds);
-            return;
-          }
-        }
-
-        if (canAffordLocal(COSTS.devCard) && gameState.bankDevCards.length > 0) {
-          buyDevCard();
-          return;
-        }
-
-        if (canAffordLocal(COSTS.road) && playerRoadsCount < 15) {
-          const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
-          if (validE.length > 0) {
-            buildRoad(validE[0].id);
-            return;
-          }
-        }
-
-        if (canAffordLocal(COSTS.ship) && playerShipsCount < 15) {
-          const validS = edges.filter(e => checkIsValidEdge(e.id, 'ship'));
-          if (validS.length > 0) {
-            buildShip(validS[0].id);
-            return;
-          }
-        }
-
-        if (phase === 'road_building' && gameState.freeRoads && gameState.freeRoads > 0) {
-           // We are in road building mode, should have already built one if we were in main before.
-           // This block handles the second road if we didn't exit.
-           const validE = edges.filter(e => checkIsValidEdge(e.id, 'road'));
-           if (validE.length > 0) {
-             buildRoad(validE[0].id);
-             return;
-           }
-        }
-
-        // Try bank trade if we have a lot of one resource
-        const surplusEntries = Object.entries(activePlayer.resources).filter(([_, count]) => (count as number) >= 4);
-        if (surplusEntries.length > 0) {
-          const giveRes = surplusEntries[0][0] as ResourceType;
-          const needed = [ResourceType.Ore, ResourceType.Grain, ResourceType.Brick, ResourceType.Lumber, ResourceType.Wool]
-            .find(r => activePlayer.resources[r] === 0);
-          if (needed && gameState.bankResources[needed] > 0) {
-            tradeWithBank(giveRes, needed);
-            return;
-          }
-        }
-
-        nextTurn();
-      } else if (phase === 'robber' || phase === 'robber_move') {
-        // Find a hex where opponent has buildings and move robber there
-        const validH = gameState.board.filter(h => h.type !== HexType.Sea && h.id !== gameState.robberHexId);
-        // Pirate can move to sea
-        const validSeaH = gameState.board.filter(h => h.type === HexType.Sea && h.id !== gameState.pirateHexId);
-
-        if (phase === 'robber_move' || phase === 'robber') {
-           // Decide between robber and pirate move if applicable
-           const activePlayer = gameState.players[activePlayerId];
-           const preferPirate = gameState.mapType !== 'standard' && validSeaH.length > 0 && (Math.random() < 0.5 || validH.length === 0);
-           
-           if (preferPirate) {
-              const scoredSea = validSeaH.map(h => {
-                 let score = 0;
-                 const px = Math.sqrt(3) * 40 * (h.q + h.r / 2);
-                 const py = 80 * 0.75 * h.r;
-                 const hexEdges = [];
-                 for (let i = 0; i < 6; i++) {
-                   const a1 = (Math.PI / 180) * (60 * i + 30);
-                   const a2 = (Math.PI / 180) * (60 * ((i + 1) % 6) + 30);
-                   const x1 = px + 40 * Math.cos(a1);
-                   const y1 = py + 40 * Math.sin(a1);
-                   const x2 = px + 40 * Math.cos(a2);
-                   const y2 = py + 40 * Math.sin(a2);
-                   hexEdges.push([`${Math.round(x1)},${Math.round(y1)}`, `${Math.round(x2)},${Math.round(y2)}`].sort().join('|'));
-                 }
-                 const adjShips = gameState.ships.filter(s => hexEdges.includes(s.edgeId) && s.playerId !== activePlayerId);
-                 score += adjShips.length * 5;
-                 return { id: h.id, score: score + Math.random() };
-              });
-              scoredSea.sort((a,b) => b.score - a.score);
-              movePirate(scoredSea[0].id);
-              return;
-           } else if (validH.length > 0) {
-              const scoredH = validH.map(h => {
-                 let score = 0;
-                 const adjS = gameState.settlements.filter(s => s.hexIds.includes(h.id));
-                 adjS.forEach(s => {
-                   if (s.playerId === activePlayerId) score -= 10;
-                   else score += (s.isCity ? 5 : 2);
-                 });
-                 if (h.type === HexType.Desert) score -= 5;
-                 return { id: h.id, score: score + Math.random() };
-              });
-              scoredH.sort((a,b) => b.score - a.score);
-              moveRobber(scoredH[0].id);
-              return;
-           } else if (validSeaH.length > 0) {
-              movePirate(validSeaH[0].id);
-              return;
-           }
-        }
-      } else if (phase === 'stealing') {
-        if (gameState.pendingStealFrom.length > 0) {
-          if (gameState.selectedStealTarget == null) {
-            // Steal from player with most points
-            const targets = gameState.pendingStealFrom.map(pid => ({ id: pid, points: gameState.players[pid].victoryPoints + (gameState.settlements.filter(s=>s.playerId===pid).length) }));
-            targets.sort((a,b) => b.points - a.points);
-            selectStealTarget(targets[0].id);
-          } else {
-            // Recover from stuck state or execute selected
-            stealResource(gameState.selectedStealTarget);
-          }
-        }
-      } else if (phase === 'gold_selection') {
-        const rewardAmount = gameState.pendingGoldRewards[0]?.amount || 1;
-        selectGoldResource({ lumber: 0, brick: 0, wool: 0, grain: 0, ore: rewardAmount });
-      } else if (phase === 'discard' || phase === 'year_of_plenty' || phase === 'monopoly' || phase === 'finished' || phase === 'order_determination' || phase === 'rolling_7') {
-        // Do nothing, handled by other logic, parallel loops, or manual play
-        return;
-      } else {
-        // Fallback for other subphases
-        nextTurn();
-      }
-    }, 1200);
-
-    return () => {
-      clearTimeout(timer);
-      isProcessingBotRef.current = false;
-    };
-  }, [gameState, activePlayerId, vertices, edges, checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn, discardCards, moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly, playDevCard, tradeWithBank, buyDevCard, canAfford, botProcessorId, isDiceRolling]);
-
-  // --- INITIAL DICE ROLL DELAY LOGIC ---
   useEffect(() => {
-    if (gameState?.phase === 'initial_dice_roll' && gameState.hasRolled) {
-      if (botProcessorId === socketService.playerId) {
-        const timer = setTimeout(() => {
-          resolveInitialRoll();
-        }, 3600); // 2500ms roll animation + 1100ms viewing time
-        return () => clearTimeout(timer);
+    if (!gameState || gameState.phase !== 'discard' || isDiceRolling || botProcessorId !== socketService.playerId) return;
+    const timers = gameState.pendingDiscards.filter(item => gameState.players[item.playerId]?.isBot).map(item =>
+      setTimeout(() => {
+        if (controllerRef.current === socketService.playerId && socketService.isConnected)
+          discardCards(item.playerId, chooseBotDiscard(gameState.players[item.playerId], item.amount));
+      }, 600));
+    return () => timers.forEach(clearTimeout);
+  }, [gameState, botProcessorId, isDiceRolling, discardCards]);
+
+  useEffect(() => {
+    if (!gameState || !roomState || isDiceRolling || botProcessorId !== socketService.playerId) return;
+    const player = gameState.players[activePlayerId];
+    if (!player?.isBot) return;
+    const timer = setTimeout(() => {
+      if (controllerRef.current !== socketService.playerId || !socketService.isConnected) return;
+      const state = gameState;
+      const wake = () => setBotWakeTick(value => value + 1);
+      if (state.phase === 'initial_dice_roll') { if (!state.hasRolled) rollDice(); return; }
+      if (['discard', 'finished', 'order_determination', 'rolling_7'].includes(state.phase)) return;
+      if (state.phase === 'gold_selection') {
+        const amount = state.pendingGoldRewards[0]?.amount || 0;
+        const chosen = chooseBotResources(state, player, amount);
+        selectGoldResource(chosen);
+        return;
       }
-    }
+      if (state.phase === 'monopoly') { resolveMonopoly(chooseBotMonopoly(state, player)); return; }
+      if (state.phase === 'robber' || state.phase === 'robber_move') {
+        const target = chooseBotBlockade(state, player);
+        if (target) (target.pirate ? movePirate : moveRobber)(target.id);
+        return;
+      }
+      if (state.phase === 'stealing') {
+        if (state.selectedStealTarget != null) stealResource(state.selectedStealTarget);
+        else {
+          const target = state.pendingStealFrom.map(id => state.players[id]).filter(Boolean)
+            .sort((a, b) => publicScore(state, b) - publicScore(state, a))[0];
+          if (target) selectStealTarget(target.id);
+        }
+        return;
+      }
+      const villageMoves = vertices.filter(v => checkIsValidVertex(v.id, 'settlement'));
+      if (state.phase === 'setup' && state.settlements.filter(v => v.playerId === player.id).length ===
+          [...state.roads, ...state.ships].filter(path => path.playerId === player.id).length) {
+        const village = chooseSetupVillage(state, player, villageMoves);
+        if (village) buildSettlement(village.id, village.hexIds);
+        return;
+      }
+      const plans = planBotBuilds(state, player, {
+        villages: villageMoves,
+        cities: vertices.filter(v => checkIsValidVertex(v.id, 'city')),
+        roads: edges.filter(e => checkIsValidEdge(e.id, 'road')).map(e => e.id),
+        ships: edges.filter(e => checkIsValidEdge(e.id, 'ship')).map(e => e.id),
+        edges: edges.map(e => e.id),
+      });
+      const goal = chooseBotGoal(player, plans);
+      const execute = (plan: typeof plans[number]) => {
+        if (plan.type === 'city') upgradeToCity(plan.id);
+        else if (plan.type === 'settlement') buildSettlement(plan.id, plan.hexIds);
+        else if (plan.type === 'road') buildRoad(plan.id);
+        else if (plan.type === 'ship') buildShip(plan.id);
+        else buyDevCard();
+      };
+      if (state.phase === 'year_of_plenty') {
+        const selected = chooseBotResources(state, player, 2, goal?.cost);
+        const cards = botResources.flatMap(r => Array(selected[r]).fill(r));
+        resolveYearOfPlenty(cards[0] || ResourceType.Ore, cards[1] || cards[0] || ResourceType.Ore);
+        return;
+      }
+      if (state.phase === 'setup' || state.phase === 'road_building') {
+        const path = plans.find(plan => plan.type === 'road' || plan.type === 'ship');
+        if (path) execute(path);
+        else if (state.phase === 'road_building') syncGameState({ ...state, phase: 'main', freeRoads: 0, playingDevCard: null });
+        return;
+      }
+      if (state.phase !== 'main') return;
+      const pending = state.tradeOffers?.find(offer => offer.initiatorId === player.id && offer.status === 'pending');
+      if (pending) {
+        const decision = decideBotTrade(state.players, pending);
+        if (decision.kind === 'cancel') cancelTrade(pending.id);
+        else if (decision.kind === 'finalize') { socketService.sendFinalizeTrade(roomState.roomId, pending.id, decision.partnerId); wake(); }
+        else wake();
+        return;
+      }
+      if (state.hasRolled && Date.now() - botTurnStartRef.current >= BOT_TURN_LIMIT_MS) { nextTurn(); return; }
+      const card = chooseBotDevCard(state, player, plans);
+      if (card) { playDevCard(card); return; }
+      if (!state.hasRolled) { rollDice(); return; }
+      const affordable = plans.find(plan => canPay(player, plan.cost) && (plan.type !== 'road' && plan.type !== 'ship' || plan.score > 1));
+      if (affordable) { execute(affordable); return; }
+      const proposal = proposeBotTrade(player, goal, state.botTradesThisTurn || 0, state.botTradeSignatures || []);
+      if (proposal) { proposeTrade(proposal.offer, proposal.request, null); return; }
+      const bank = chooseBotBankTrade(state, player, goal);
+      if (bank) { tradeWithBank(bank.give, bank.receive); return; }
+      nextTurn();
+    }, 650);
+    return () => clearTimeout(timer);
+  }, [gameState, roomState?.roomId, botWakeTick, activePlayerId, botProcessorId, isDiceRolling, vertices, edges,
+    checkIsValidVertex, checkIsValidEdge, buildSettlement, buildRoad, buildShip, upgradeToCity, rollDice, nextTurn,
+    moveRobber, movePirate, stealResource, selectStealTarget, selectGoldResource, resolveYearOfPlenty, resolveMonopoly,
+    playDevCard, tradeWithBank, buyDevCard, proposeTrade, cancelTrade, syncGameState]);
+
+  useEffect(() => {
+    if (gameState?.phase !== 'initial_dice_roll' || !gameState.hasRolled || botProcessorId !== socketService.playerId) return;
+    const timer = setTimeout(resolveInitialRoll, 3600);
+    return () => clearTimeout(timer);
   }, [gameState?.phase, gameState?.hasRolled, botProcessorId, resolveInitialRoll]);
 
-  // --- BOT TRADE EVALUATION LOGIC ---
-  const botTradeEvaluatedRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
-    if (!gameState || !roomState) return;
-    const isBotProcessor = botProcessorId === socketService.playerId;
-    if (!isBotProcessor) return;
-
-    if (gameState.tradeOffers) {
-      gameState.tradeOffers.forEach(offer => {
-        if (offer.status !== 'pending') return;
-
-        gameState.players.forEach(p => {
-          if (!p.isBot) return;
-          if (p.id === offer.initiatorId) return;
-
-          // If trade targeted to specific player, check bot ID
-          if (offer.targetPlayerId !== null && offer.targetPlayerId !== p.id) return;
-
-          // Check if bot has already reacted
-          if (offer.acceptedBy.includes(p.id) || offer.rejectedBy.includes(p.id)) return;
-
-          // Check if we already evaluated this combination in current session
-          const evaluationKey = `${offer.id}-${p.id}`;
-          if (botTradeEvaluatedRef.current.has(evaluationKey)) return;
-          
-          botTradeEvaluatedRef.current.add(evaluationKey);
-
-          // Give a short delay to make it feel human-like
-          setTimeout(() => {
-            // Re-evaluate in case state changed
-            const canAfford = Object.values(ResourceType).every(
-              res => (p.resources[res] || 0) >= (offer.request[res] || 0)
-            );
-
-            if (!canAfford) {
-              if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
-            } else {
-              const totalRequested = Object.values(offer.request).reduce((a, b) => a + (b || 0), 0);
-              const totalOffered = Object.values(offer.offer).reduce((a, b) => a + (b || 0), 0);
-
-              const acceptProbability = totalOffered >= totalRequested ? 0.7 : 0.2;
-              
-              if (Math.random() <= acceptProbability) {
-                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'accept');
-              } else {
-                if (roomState?.roomId) socketService.sendReactToTrade(roomState.roomId, offer.id, p.id, 'reject');
-              }
-            }
-          }, 800 + Math.random() * 1000);
-        });
-      });
-    }
-  }, [gameState?.tradeOffers, botProcessorId, roomState?.roomId]);
-
-  useEffect(() => {
-    const imagesToPreload = [
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/catan_logo.png',
-      FOREST_IMG, FIELDS_IMG, PASTURE_IMG, Desert_IMG, Mountains_IMG,
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E8%B5%84%E6%BA%90%E5%8D%A1.png', // Icon Lumber (resource mapping)
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E5%8F%91%E5%B1%95%E5%8D%A1.png', // Icon Dev
-      'https://fastly.jsdelivr.net/gh/xia-skot/Catan_Pics/img/%E9%81%93%E8%B7%AF.png'  // Icon Road
-    ];
-    
-    let loadedCount = 0;
-    imagesToPreload.forEach(src => {
-      const img = new window.Image();
-      img.src = src;
-      img.onload = () => {
-        loadedCount++;
-        if (loadedCount === imagesToPreload.length) {
-          setAssetsLoaded(true);
+    if (!gameState || !roomState || botProcessorId !== socketService.playerId) return;
+    const timer = setTimeout(() => {
+      if (controllerRef.current !== socketService.playerId || !socketService.isConnected) return;
+      for (const offer of gameState.tradeOffers || []) {
+        if (offer.status !== 'pending') continue;
+        for (const player of gameState.players) {
+          if (!player.isBot || player.id === offer.initiatorId || (offer.targetPlayerId !== null && offer.targetPlayerId !== player.id) ||
+              offer.acceptedBy.includes(player.id) || offer.rejectedBy.includes(player.id)) continue;
+          socketService.sendReactToTrade(roomState.roomId, offer.id, player.id, acceptBotTrade(gameState, player, offer) ? 'accept' : 'reject');
         }
-      };
-      img.onerror = () => {
-        loadedCount++;
-        if (loadedCount === imagesToPreload.length) {
-          setAssetsLoaded(true);
-        }
-      };
-    });
-  }, []);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [gameState?.tradeOffers, gameState?.players, botProcessorId, roomState?.roomId]);
 
   const handleStartGame = async () => {
     setIsStartingGame(true);
-    sailingStartTimeRef.current = performance.now();
     setSailingText("正在驶入海域......");
     setShowSailingScreen(true);
     // Yield to the browser so the Sailing screen renders before blocking
@@ -3860,13 +3240,16 @@ export default function App() {
     const assignedNames = roomState.players.map(p => p.name);
     
     // Instead of directly initGame, set to initial_dice_roll phase
+    const configuredSlots = getSetupSlots(roomState).filter(slot => slot.isBot || slot.player);
     const initialState = initGame(
       roomState.settings.playerCount, 
       roomState.settings.mapType as MapType, 
       roomState.settings.customBoard, 
-      roomState.settings.botConfig, 
+      configuredSlots.map(slot => slot.isBot),
       assignedSessions,
-      assignedNames
+      assignedNames,
+      configuredSlots.map(slot => slot.index + 1),
+      configuredSlots.map(slot => normalizeBotDifficulty(roomState.settings.botDifficulties?.[slot.index]))
     );
     
     if (initialState) {
@@ -3948,37 +3331,23 @@ export default function App() {
     position: 'absolute',
     top: 0,
     left: `${windowSize.width}px`,
-    paddingTop: 'env(safe-area-inset-right)',
-    paddingRight: 'env(safe-area-inset-bottom)',
-    paddingBottom: 'env(safe-area-inset-left)',
-    paddingLeft: 'env(safe-area-inset-top)'
+    padding: 0
   };
 
   const landscapeStyle: React.CSSProperties = {
     ...gameContainerBaseStyle,
     width: '100%',
     height: '100%',
-    paddingTop: 'env(safe-area-inset-top)',
-    paddingRight: 'env(safe-area-inset-right)',
-    paddingBottom: 'env(safe-area-inset-bottom)',
-    paddingLeft: 'env(safe-area-inset-left)'
+    padding: 0
   };
 
-  if (isAuthLoading || !isAuthAnimFinished) {
-    return (
-      <SailingLoadingScreen 
-        key="auth-loading-sailing" 
-        onComplete={() => {
-          if (!isAuthLoading) setIsAuthAnimFinished(true);
-        }} 
-        text="正在驶入海域......" 
-        loop={isAuthLoading} 
-      />
-    );
+  const exitToast = showBackInterceptToast ? <div role="status" className="exit-toast">再按一次返回键退出卡坦岛</div> : null;
+  if (isAuthLoading) {
+    return null;
   }
 
   if (!currentUser) {
-    return <LoginScreen onLoginSuccess={user => setCurrentUser(user)} />;
+    return <><LoginScreen onLoginSuccess={user => setCurrentUser(user)} />{exitToast}</>;
   }
 
   const actingPlayer = gameState?.players ? gameState.players[activePlayerId] : undefined;
@@ -4078,72 +3447,42 @@ export default function App() {
   );
 
   const renderNonGameWrapper = (content: React.ReactNode) => {
-    if (shouldForcePortraitNonGame) {
-      return (
-        <div style={{
-          width: '100%',
-          height: '100%',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          overflow: 'hidden',
-          backgroundColor: '#f8fafc'
-        }}>
-          <div style={{
-            width: `${windowSize.height}px`,
-            height: `${windowSize.width}px`,
-            transform: 'rotate(-90deg)',
-            transformOrigin: 'top left',
-            position: 'absolute',
-            left: 0,
-            top: `${windowSize.height}px`,
-            overflowY: 'auto'
-          }}>
-            {content}
-            {renderGameModals()}
-          </div>
-        </div>
-      );
-    }
     return (
       <div 
-        style={{ 
-          width: '100%', 
-          height: '100%', 
-          position: 'fixed', 
-          top: 0, 
-          left: 0, 
-          overflow: 'hidden'
-        }} 
-        className="bg-slate-50"
+        className="app-screen app-safe-top bg-slate-50"
       >
         {content}
-        {renderGameModals()}
       </div>
     );
   };
 
   let mainContent: React.ReactNode = null;
 
-  if (!roomState && !isJoinedLobby) {
+  if (!roomState) {
     mainContent = renderNonGameWrapper(
       <div 
-        onTouchStart={handleLobbyTouchStart}
-        onTouchMove={handleLobbyTouchMove}
-        onTouchEnd={handleLobbyTouchEnd}
+        onTouchStart={lobbySwipe.onTouchStart}
+        onTouchMove={lobbySwipe.onTouchMove}
+        onTouchEnd={lobbySwipe.onTouchEnd}
+        onTouchCancel={lobbySwipe.onTouchCancel}
+        data-lobby-tabs={activeLobbyTab}
+        data-subpage={(activeLobbyTab === 'profile' && profileActiveView !== 'menu') || (activeLobbyTab === 'rules' && rulesActiveView !== 'menu') ? 'true' : undefined}
+        style={{ touchAction: 'pan-y' }}
         className="flex flex-col h-full w-full bg-slate-50 font-sans relative overflow-hidden text-slate-900"
       >
         <div
+          data-lobby-panels
           style={{
             width: '400%',
             display: 'flex',
-            height: '100%',
-            transform: `translate3d(calc(-${['lobby', 'rooms', 'profile', 'rules'].indexOf(activeLobbyTab) * 25}% + ${lobbyDragOffset}px), 0, 0)`,
-            transition: isLobbyDragging ? 'none' : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+            flex: '1 1 0%',
+            minHeight: 0,
+            transform: `translate3d(calc(-${['lobby', 'rooms', 'profile', 'rules'].indexOf(activeLobbyTab) * 25}% + ${lobbySwipe.offset}px), 0, 0)`,
+            transition: lobbySwipe.dragging ? 'none' : 'transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
           {/* Tab 1: lobby */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+          <div inert={activeLobbyTab !== 'lobby'} aria-hidden={activeLobbyTab !== 'lobby'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
             <motion.div 
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }}
@@ -4172,7 +3511,7 @@ export default function App() {
                       <input 
                         type="text" 
                         value={inputRoomId}
-                        readOnly={isRoomLocked}
+                        readOnly={isRoomLocked || isJoinedLobby}
                         onChange={e => {
                           if (isRoomLocked) return;
                           const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
@@ -4187,9 +3526,13 @@ export default function App() {
                   <button 
                     id="join-room-button"
                     type="button"
+                    disabled={isJoinedLobby}
+                    aria-busy={isJoinedLobby}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
+                      if (isJoinedLobbyRef.current) return;
+                      isJoinedLobbyRef.current = true;
                       const activeRoom = localStorage.getItem('catan_active_room');
                       const enteredCode = inputRoomId.trim();
                       const targetRoom = (isRoomLocked && activeRoom) ? activeRoom : (enteredCode || Math.floor(100000 + Math.random() * 900000).toString());
@@ -4209,27 +3552,31 @@ export default function App() {
 
                       const newUrl = new URL(window.location.href);
                       newUrl.searchParams.set('room', targetRoom);
-                      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+                      window.history.replaceState(window.history.state, '', newUrl.pathname + newUrl.search);
 
+                      if (localStorage.getItem('catan_game_active') === 'true') {
+                        setSailingText('重新驶入海域');
+                        setShowSailingScreen(true);
+                      }
                       setIsJoinedLobby(true);
                       socketService.connect();
                       socketService.joinRoom(targetRoom, playerName, asSpec);
                     }}
-                    className="w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer touch-manipulation z-20"
+                    className="join-room-button w-full bg-indigo-600 text-white py-3 rounded-xl font-black uppercase tracking-[0.2em] hover:bg-indigo-700 hover:shadow-[0_8px_30px_rgba(79,70,229,0.3)] active:scale-[0.98] transition-all relative overflow-hidden group text-sm shadow-[0_4px_14px_0_rgba(79,70,229,0.39)] cursor-pointer disabled:cursor-wait touch-manipulation z-20"
                   >
                     <span className="relative z-10 flex items-center justify-center gap-2">
                       <Swords size={16} />
                       进入海域
                     </span>
-                    <div className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                    <div className="join-room-sheen absolute inset-0 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
                   </button>
               </div>
             </motion.div>
           </div>
 
           {/* Tab 2: rooms */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-             <div className="w-full h-full flex flex-col items-center justify-center p-6">
+          <div inert={activeLobbyTab !== 'rooms'} aria-hidden={activeLobbyTab !== 'rooms'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+             <div className="w-full h-full flex flex-col">
                <GameRoomsTab 
                  currentUser={currentUser} 
                  isRoomLocked={isRoomLocked}
@@ -4243,6 +3590,8 @@ export default function App() {
                  onReturnToGame={(roomId) => {
                   const activeRoom = roomId || localStorage.getItem('catan_active_room');
                   if (activeRoom) {
+                    setSailingText('重新驶入海域');
+                    setShowSailingScreen(true);
                     setInputRoomId(activeRoom);
                     const asSpec = isSpectator || localStorage.getItem('catan_is_spectator') === 'true';
                     setIsJoinedLobby(true);
@@ -4275,14 +3624,16 @@ export default function App() {
           </div>
 
           {/* Tab 3: profile */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
+          <div inert={activeLobbyTab !== 'profile'} aria-hidden={activeLobbyTab !== 'profile'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative overflow-hidden">
               <UserProfileModal
                 currentUser={currentUser}
                 onClose={() => {}}
                 onUpdateSuccess={(updatedUser) => setCurrentUser(updatedUser)}
                 onLogout={handleFullLogout}
                 inline={true}
+                isActive={activeLobbyTab === 'profile'}
+                disableHistory={true}
                 onRestoreGame={handleRestoreGame}
                 activeView={profileActiveView}
                 onActiveViewChange={setProfileActiveView}
@@ -4291,14 +3642,14 @@ export default function App() {
           </div>
 
           {/* Tab 4: rules */}
-          <div className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
-            <div className="w-full h-full flex flex-col relative pb-16 overflow-hidden">
-              <RulesModal isOpen={true} onClose={() => {}} inline={true} activeView={rulesActiveView} onActiveViewChange={setRulesActiveView} />
+          <div inert={activeLobbyTab !== 'rules'} aria-hidden={activeLobbyTab !== 'rules'} className="w-[25%] h-full flex-shrink-0 relative overflow-hidden">
+            <div className="w-full h-full flex flex-col relative overflow-hidden">
+              <RulesModal isOpen={true} isActive={activeLobbyTab === 'rules'} onClose={() => {}} inline={true} activeView={rulesActiveView} onActiveViewChange={setRulesActiveView} />
             </div>
           </div>
         </div>
         {/* Bottom Tab Bar */}
-        <div className="absolute bottom-0 left-0 w-full bg-white/95 backdrop-blur-xl border-t border-slate-100 pt-1.5 pb-[calc(0.375rem+env(safe-area-inset-bottom))] px-6 flex justify-center gap-10 sm:gap-16 z-50">
+        <div hidden={(activeLobbyTab === 'profile' && profileActiveView !== 'menu') || (activeLobbyTab === 'rules' && rulesActiveView !== 'menu')} className="lobby-tab-bar shrink-0 w-full bg-white border-t border-slate-100 pt-1.5 px-6 flex justify-center gap-10 sm:gap-16 z-50">
            <button
              onClick={() => setActiveLobbyTab('lobby')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'lobby' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
@@ -4323,8 +3674,11 @@ export default function App() {
              onClick={() => setActiveLobbyTab('profile')}
              className={`flex flex-col items-center gap-0 transition-all ${activeLobbyTab === 'profile' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
            >
-             <div className={`p-1 rounded-xl transition-all ${activeLobbyTab === 'profile' ? '' : ''}`}>
+             <div className="p-1 rounded-xl transition-all relative">
                <User size={18} />
+               {hasUnreadPrivateMsgs && (
+                 <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+               )}
              </div>
              <span className="text-[9px] font-bold tracking-widest">我的</span>
            </button>
@@ -4447,14 +3801,14 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-2.5">
                 {[
-                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆' },
-                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿' }
+                  { id: 'standard', label: '标准大陆', board: standard2PlayerMap, desc: '经典单块大陆 · 10分获胜' },
+                  { id: 'archipelago', label: '群岛世界', board: archipelago6PlayerMap, desc: '探索独立岛屿 · 14分获胜' }
                 ].map(map => {
                   const isSelected = mapType === map.id && !roomState?.settings?.customBoard;
                   return (
                     <button
                       key={map.id}
-                      onClick={() => { setMapType(map.id as MapType); syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined }); }}
+                      onClick={() => syncSettings({ mapType: map.id, customBoard: undefined, customMapName: undefined, customMapId: undefined })}
                       className={`flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-300 border ${isSelected ? 'bg-white border-indigo-500 shadow-md shadow-indigo-100 ring-2 ring-indigo-500/10' : 'bg-white/60 border-slate-100 hover:border-indigo-200 hover:bg-white text-slate-700'}`}
                     >
                       <div className={`w-12 h-8 sm:w-16 sm:h-10 relative overflow-hidden flex items-center justify-center transition-transform duration-300 ${isSelected ? 'scale-105' : ''}`}>
@@ -4486,7 +3840,7 @@ export default function App() {
                     <>
                       <div className="w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center relative mb-0.5">
                         {!atlasLogoError ? (
-                          <img 
+                          <SmartImg 
                             src={MAP_ALBUM_ICON} 
                             className="w-full h-full object-contain relative z-10" 
                             alt="Atlas" 
@@ -4506,6 +3860,9 @@ export default function App() {
               )}
 
               <div className="w-full flex flex-col gap-1.5 justify-center">
+                <label className="flex items-start gap-2 py-1 text-[10px] leading-relaxed text-slate-600">
+                  <input type="checkbox" checked={roomState?.settings?.spectatorHands === true} disabled={!isHostInLobby} onChange={e => syncSettings({ spectatorHands: e.target.checked })} className="mt-0.5 accent-emerald-600" />允许观众看到所有玩家手牌
+                </label>
                 {!roomState?.players.find(p => p.id === socketService.playerId)?.isReady ? (
                   <button 
                     onClick={handleToggleReady}
@@ -4560,6 +3917,7 @@ export default function App() {
             
             {/* Room Info Section */}
             <div className="relative shrink-0">
+              {isHostInLobby && roomState && <InviteOnlineButton key={roomState.roomId} roomId={roomState.roomId} disabled={roomState.players.length + botConfig.filter(Boolean).length >= playerCount} />}
               <div className="bg-white p-2.5 rounded-xl border border-slate-100/90 shadow-2xs grid grid-cols-3 gap-1 items-center">
                 {/* 1. 在线匹配玩家 and Player count */}
                 <div className="flex flex-col items-center justify-center gap-1 pr-1 border-r border-slate-100/80">
@@ -4583,7 +3941,6 @@ export default function App() {
                         value={playerCount} 
                         onChange={e => {
                           const newCount = Number(e.target.value);
-                          setPlayerCount(newCount);
                           syncSettings({ playerCount: newCount });
                         }}
                         disabled={!isHostInLobby}
@@ -4620,11 +3977,7 @@ export default function App() {
 
             {/* Players List */}
             <div className="flex flex-col gap-1.5 flex-1 overflow-y-auto pr-0.5 no-scrollbar py-0.5">
-              {Array.from({ length: Math.max(playerCount, (roomState?.players.length || 0) + botConfig.filter(b => b).length) }).map((_, globalIndex) => {
-                const paddedBotConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
-                const isBot = paddedBotConfig[globalIndex];
-                const nonBotSlotsBefore = paddedBotConfig.slice(0, globalIndex).filter(b => !b).length;
-                const p = roomState?.players[nonBotSlotsBefore];
+              {(roomState ? getSetupSlots(roomState) : []).map(({ index: globalIndex, isBot, player: p }) => {
 
                 if (!isBot && p) {
                   return (
@@ -4688,28 +4041,30 @@ export default function App() {
                 }
 
                 return (
-                  <div key={`empty-${globalIndex}`} className={`flex items-center justify-between p-1.5 sm:p-2 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100/80 shadow-2xs' : 'bg-slate-50/50 border-dashed border-slate-200/80 hover:border-indigo-200 group'}`}>
+                  <div key={`empty-${globalIndex}`} data-ai-slot={globalIndex} data-configured={isBot} className={`flex items-center justify-between p-1.5 sm:p-2 rounded-xl border transition-all duration-300 ${isBot ? 'bg-white border-indigo-100/80 shadow-2xs' : 'bg-slate-50/50 border-dashed border-slate-200/80 hover:border-indigo-200 group'}`}>
                     <div className="flex items-center gap-2">
                       <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-all ${isBot ? 'bg-indigo-50 border border-indigo-100' : 'border border-dashed border-slate-200/80 bg-white group-hover:bg-indigo-50/50'}`}>
                         {isBot ? <Bot size={12} className="text-indigo-600" /> : <Users size={10} className="text-slate-300" />}
                       </div>
                       <div className="flex flex-col">
-                        <span className={`text-[10px] sm:text-[11px] font-black leading-tight ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? '领主 AI' : '未占领席位'}</span>
-                        {isBot && <span className="text-[6px] font-bold text-indigo-400 uppercase tracking-widest leading-none mt-0.5">高级AI</span>}
+                        <span className={`text-[10px] sm:text-[11px] font-black leading-tight ${isBot ? 'text-slate-800' : 'text-slate-400'}`}>{isBot ? `领主 AI ${globalIndex + 1}` : '未占领席位'}</span>
+                        {isBot && <span className="text-[8px] font-bold text-indigo-400 leading-none mt-1">{BOT_LEVELS[normalizeBotDifficulty(roomState.settings.botDifficulties?.[globalIndex])].label} AI</span>}
                       </div>
                     </div>
                     {isHostInLobby && (
+                      <div className="flex items-center gap-2 shrink-0">
+                      <select aria-label={`AI ${globalIndex + 1} 难度`} className="text-[10px] border border-slate-200 rounded px-1 py-1 bg-white text-slate-600" value={normalizeBotDifficulty(roomState.settings.botDifficulties?.[globalIndex])} onChange={e => socketService.updateSettings(roomState.roomId, { botLevel: { index: globalIndex, difficulty: normalizeBotDifficulty(e.target.value) } })}>
+                        {Object.entries(BOT_LEVELS).map(([value, level]) => <option key={value} value={value}>{level.label}</option>)}
+                      </select>
                       <button 
-                        onClick={() => {
-                          const newConfig = [...botConfig, false, false, false, false, false, false, false, false, false].slice(0, 10);
-                          newConfig[globalIndex] = !newConfig[globalIndex];
-                          setBotConfig(newConfig);
-                          syncSettings({ botConfig: newConfig });
-                        }}
-                        className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-all border ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
+                        onClick={() => socketService.toggleBot(roomState.roomId, globalIndex)}
+                        disabled={!isBot && roomState.players.length + botConfig.filter(Boolean).length >= playerCount}
+                        title={!isBot && roomState.players.length + botConfig.filter(Boolean).length >= playerCount ? '配置人数已满' : undefined}
+                        className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${isBot ? 'bg-red-50 text-red-500 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'}`}
                       >
-                        {isBot ? '撤防' : '配置AI玩家'}
+                        {isBot ? '取消配置' : '配置AI玩家'}
                       </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -4810,6 +4165,21 @@ export default function App() {
         </button>
       )}
 
+      {/* Game Action / Rule Warning Toast */}
+      <AnimatePresence>
+        {gameActionToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            className="fixed top-12 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-[12px] sm:text-sm px-4 py-2 rounded-xl shadow-2xl whitespace-nowrap z-[99999] font-bold flex items-center gap-1.5"
+          >
+            <span>⚠️</span>
+            <span>{gameActionToast}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Copy Toast fixed at screen level */}
       <AnimatePresence>
         {showCopyToast && (
@@ -4845,7 +4215,7 @@ export default function App() {
     mainContent = (
       <>
         <div style={lockedLandscapeStyle}>
-          <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" onClick={() => document.documentElement.requestFullscreen().catch(() => {})}>
+          <div className="flex flex-col items-center justify-center h-full w-full bg-sky-100 text-[#0c4a6e] relative overflow-hidden" >
             {/* Ocean atmosphere */}
             <div className="absolute inset-0 bg-white/40 pointer-events-none" />
             
@@ -4925,7 +4295,7 @@ export default function App() {
               className="text-amber-500 hover:text-amber-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
               title="声音设置"
             >
-              <Bell size={13} strokeWidth={2.2} className="fill-amber-400/30" />
+              <Volume2 size={13} strokeWidth={2.2} className="fill-amber-400/30" />
             </button>
 
             {/* Bottom-Left: Spectator Eye (Red lines; Eye icon aligned with Book icon above) */}
@@ -4948,7 +4318,7 @@ export default function App() {
             })()}
 
             {/* Bottom-Right: Exit button (Red line icon) */}
-            <button 
+            {isSpectator ? <span ref={setSpectatorExitAnchor} data-spectator-exit-anchor className="block h-[17px] w-[17px]" /> : <button
               onClick={(e) => { 
                 e.stopPropagation(); 
                 if (isHost && gameStarted) {
@@ -4958,10 +4328,10 @@ export default function App() {
                 }
               }}
               className="text-red-500 hover:text-red-600 transition-all active:scale-90 flex items-center justify-center p-0.5"
-              title={isSpectator ? "退出观战" : "离开房间"}
+              title="离开房间"
             >
               <LogOut size={13} strokeWidth={2.2} className="scale-x-[-1]" />
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -4974,7 +4344,7 @@ export default function App() {
             {gameState.players.map((p, i) => {
               const isCurrent = i === activePlayerId;
               const displayResources = (isDiceRolling && !isSpectator && displayedResourcesMap[p.id]) ? displayedResourcesMap[p.id] : p.resources;
-              const resourceCount = Object.values(displayResources).reduce((a, b) => a + b, 0);
+              const resourceCount = p.publicResourceCount ?? Object.values(displayResources).reduce((a, b) => a + b, 0);
               const publicScore = (p.settlements * 1) + (p.cities * 2) + p.victoryPoints;
               const isFocused = isSpectator && i === spectatorFocusId;
 
@@ -4994,13 +4364,10 @@ export default function App() {
                     ${isFocused && !isCurrent ? 'ring-2 ring-indigo-400 bg-indigo-50/50 opacity-100' : ''}
                     ${isSpectator ? 'cursor-pointer active:scale-95' : 'cursor-default'}
                   `}>
-                <div 
-                  onClick={() => {
-                    if (p.sessionId === socketService.playerId) {
-                      toggleBot(p.id);
-                    }
-                  }}
-                  className={`rounded-full border border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform ${isMobile ? 'w-5 h-5' : 'w-4 h-4'} ${p.sessionId === socketService.playerId ? 'cursor-pointer hover:scale-110' : 'cursor-default'}`}
+                <button type="button" data-social-avatar={p.sessionId || `bot:${p.id}`} data-social-name={p.name}
+                  aria-label={`与${p.name}互动`} title={`与${p.name}互动`}
+                  onClick={event => event.stopPropagation()}
+                  className={`rounded-full border border-white ring-1 ring-black/10 flex items-center justify-center shrink-0 transition-transform w-7 h-7 cursor-pointer hover:scale-110`}
                   style={{ backgroundColor: p.color }}
                 >
                   {p.isBot ? (
@@ -5008,7 +4375,7 @@ export default function App() {
                   ) : (
                     <User size={isMobile ? 10 : 8} color={p.color === '#F1C40F' ? '#000' : '#FFF'} />
                   )}
-                </div>
+                </button>
                 <div className="flex flex-col flex-1 pl-0.5">
                     <div className="flex items-center gap-1">
                       <span className={`${isMobile ? 'text-[9px]' : 'text-[11px]'} font-bold leading-none truncate max-w-[40px] md:max-w-[80px]`}>{p.name}</span>
@@ -5019,7 +4386,7 @@ export default function App() {
                       )}
                       {gameState.longestRoadPlayerId === p.id && (
                         <div className="flex items-center justify-center px-0.5 py-[1px] rounded-sm bg-[#b79148]/20 border border-[#b79148]/40 shadow-sm" title={`最长道路 (${p.longestRoadLength})`}>
-                          <img src={ROAD_ICON} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
+                          <SmartImg src={ROAD_ICON} alt="longest-road" className="w-2.5 h-2.5 object-contain" />
                         </div>
                       )}
                       {gameState.largestArmyPlayerId === p.id && (
@@ -5036,17 +4403,17 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="flex items-center mt-0.5 leading-none">
-                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}分</span>
+                      <span className={`${isMobile ? 'text-[8px]' : 'text-[10px]'} font-bold opacity-80 whitespace-nowrap`}>{publicScore}/{gameState.mapType === 'standard' ? 10 : 14}分</span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="资源">
-                        <img src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
+                        <SmartImg src={RES_CARD_ICON} alt="res" className="w-2.5 h-2.5 object-contain" />
                         {resourceCount}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="发展卡">
-                        <img src={DEV_CARD_ICON} alt="dev" className="w-2.5 h-2.5 object-contain" />
-                        {p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length}
+                        <SmartImg src={DEV_CARD_ICON} alt="dev" className="w-2.5 h-2.5 object-contain" />
+                        {p.publicDevCardCount ?? (p.devCards.length + (p.devCardsBoughtThisTurn?.length || 0) + p.playedDevCards.length)}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="最长道路">
-                        <img src={ROAD_ICON} alt="road" className="w-2.5 h-2.5 object-contain" />
+                        <SmartImg src={ROAD_ICON} alt="road" className="w-2.5 h-2.5 object-contain" />
                         {p.longestRoadLength}
                       </span>
                       <span className={`flex items-center gap-0.5 ${isMobile ? 'text-[8px]' : 'text-[10px]'} font-mono opacity-80 whitespace-nowrap ml-1`} title="骑士">
@@ -5070,8 +4437,13 @@ export default function App() {
               initial={{ width: leftWidth }}
               animate={{ width: leftWidth }}
               exit={{ width: 0 }}
-              className={`border-r border-black/5 ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'} flex flex-col bg-white h-full max-h-full min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
+              className={`border-r border-black/5 flex flex-col bg-white h-full max-h-full min-h-0 shrink-0 relative ${confirmDevCard ? 'z-[100000]' : 'z-50'}`}
             >
+              <RotatedScroll
+                data-game-resource-scroll
+                shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+                className={`flex-1 flex flex-col min-h-0 overflow-y-auto overscroll-contain touch-pan-y no-scrollbar overflow-x-hidden ${isMobile ? 'p-1 gap-1' : 'p-4 lg:p-5 gap-6'}`}
+              >
               <section className={isMobile ? 'pt-1' : 'pt-4 border-t border-black/5'}>
             <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-4'}`}>
               <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">银行库存</h3>
@@ -5087,11 +4459,12 @@ export default function App() {
               })}
               <div className={`flex items-center justify-between ${isMobile ? 'p-0.5 px-1' : 'p-1.5'} rounded-md bg-red-600 shadow-sm text-white`}>
                 <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-black`}>发</span>
-                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold`}>{gameState.bankDevCards.length}</span>
+                <span className={`${isMobile ? 'text-[7px]' : 'text-[9px]'} font-mono font-bold`}>{gameState.publicBankDevCardCount ?? gameState.bankDevCards.length}</span>
               </div>
             </div>
           </section>
 
+          {isSpectator && !roomState?.settings?.spectatorHands ? <p className="p-2 text-xs text-slate-500">房主未开放手牌查看</p> : <>
           <section className={`${isMobile ? 'pt-1' : 'pt-4'} border-t border-black/5`}>
             <div className={`flex items-center justify-between ${isMobile ? 'mb-1' : 'mb-2'}`}>
               <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">
@@ -5249,10 +4622,12 @@ export default function App() {
                     </div>
                   )}
                 </>
-              )}
-            </div>
-          </section>
-        </motion.aside>
+               )}
+              </div>
+            </section>
+          </>}
+          </RotatedScroll>
+         </motion.aside>
       )}
     </AnimatePresence>
 
@@ -5350,7 +4725,7 @@ export default function App() {
             </button>
           )}
 
-          <div className={`w-full h-full transition-opacity duration-700 ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
+          <div className={`w-full h-full ${isBoardReady ? 'opacity-100' : 'opacity-0'}`}>
             <Stage 
             ref={stageRef}
             width={stageWidth} 
@@ -5367,6 +4742,8 @@ export default function App() {
               boardLayerRef.current?.clearCache();
             }}
             onWheel={handleWheel}
+            onDblClick={() => centerMap(true)}
+            onDblTap={() => centerMap(true)}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={(e) => {
@@ -5374,7 +4751,7 @@ export default function App() {
                 setPendingBuild(null);
                 setPendingRobberHex(null);
               }
-              handleTouchEnd(e);
+              handleTouchEnd();
             }}
             onPointerDown={(e) => {
               if (e.target === e.target.getStage()) {
@@ -5382,18 +4759,8 @@ export default function App() {
                 setPendingRobberHex(null);
               }
             }}
-            onDblClick={() => {
-              if (Date.now() - lastGestureTime.current > 300) {
-                centerMap(true);
-              }
-            }}
-            onDblTap={() => {
-              if (Date.now() - lastGestureTime.current > 300) {
-                centerMap(true);
-              }
-            }}
           >
-            <Layer ref={boardLayerRef}>
+            <Layer ref={boardLayerRef} name="board-terrain">
               {hexCoords.filter(hex => !hex.isOuterSea).map((hex) => (
                 <HexCell 
                   key={hex.id} 
@@ -5732,6 +5099,9 @@ export default function App() {
                 );
               })}
 
+            </Layer>
+            {/* Animated markers must not redraw every terrain tile while scrolling. */}
+            <Layer name="board-markers">
               {/* Robber/Pirate Icons - Rendered last to be on top */}
               {hexCoords.map(hex => {
                 const isRobber = gameState.robberHexId === hex.id;
@@ -5876,10 +5246,9 @@ export default function App() {
                       size={isMobile ? 24 : 44}
                     />
                   </div>
-                  <div className="flex items-center justify-center text-center">
+                  <div data-dice-result className="dice-result" style={{ fontSize: `${(isMobile ? 24 : 44) * 0.8}px` }}>
                     <p 
-                      className={`font-serif font-black italic leading-none text-orange-500 transition-all ${isDiceRolling ? 'animate-pulse scale-90 opacity-60' : ''}`}
-                      style={{ fontSize: `${(isMobile ? 24 : 44) * 0.8}px` }}
+                      className={`text-orange-500 ${isDiceRolling ? 'animate-pulse opacity-60' : ''}`}
                     >
                       {diceSum}
                     </p>
@@ -5904,12 +5273,39 @@ export default function App() {
                 <div className="flex items-center justify-between mb-1 shrink-0">
                   <h3 className="text-[9px] uppercase tracking-[0.2em] font-black opacity-30">建设</h3>
                 </div>
-                <div className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1">
+                <RotatedScroll
+                  shouldApplyPortraitRotation={shouldApplyPortraitRotation}
+                  className="flex-1 flex flex-col gap-1 min-h-0 overflow-y-auto no-scrollbar px-1"
+                >
               {gameState?.phase === 'road_building' ? (
-                <div className="flex-1 flex items-center justify-center text-center p-4">
-                  <p className="text-xs font-bold text-gray-500">
-                    道路建设：<br/>请在地图上点击建设 2 条免资源的道路
+                <div className="flex-1 flex flex-col gap-2 p-1">
+                  <p className="text-[10px] sm:text-xs font-bold text-slate-500 text-center mb-1 leading-tight">
+                    {gameState?.mapType === 'archipelago' ? '免资源建设 2 条道路或船只' : '免资源建设 2 条道路'}
                   </p>
+                  <BuildItem 
+                    id="build-road"
+                    compact={isMobile}
+                    icon={<Hammer size={16} />} 
+                    label="道路" 
+                    cost={{}}
+                    active={buildMode === 'road'}
+                    activeColor={currentPlayer?.color}
+                    disabled={false}
+                    onClick={() => handleSetBuildMode(buildMode === 'road' ? null : 'road')} 
+                  />
+                  {gameState?.mapType === 'archipelago' && (
+                    <BuildItem 
+                      id="build-ship"
+                      compact={isMobile}
+                      icon={<ShipIcon size={16} />} 
+                      label="船只" 
+                      cost={{}}
+                      active={buildMode === 'ship'}
+                      activeColor={currentPlayer?.color}
+                      disabled={false}
+                      onClick={() => handleSetBuildMode(buildMode === 'ship' ? null : 'ship')} 
+                    />
+                  )}
                 </div>
               ) : (
                 <>
@@ -5968,7 +5364,7 @@ export default function App() {
                   />
                 </>
               )}
-            </div>
+            </RotatedScroll>
           </section>
 
           {/* Removed duplicate development cards section here */}
@@ -6286,7 +5682,7 @@ export default function App() {
                       setRoomState(null);
                       syncGameState(null as any);
                       setGameStarted(false);
-                      window.history.replaceState({}, '', window.location.pathname);
+                      window.history.replaceState(window.history.state, '', window.location.pathname);
                       setShowDissolveRoomConfirm(false);
                     }}
                     className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer pointer-events-auto shadow-sm"
@@ -6342,7 +5738,7 @@ export default function App() {
                     width: '100%',
                     maxWidth: `${Math.min(320, Math.max(200, stageWidth - 16))}px`
                   }}
-                  className="bg-white border border-slate-200 rounded-2xl max-h-[90%] overflow-y-auto flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
+                  className="bg-white border border-slate-200 rounded-2xl max-h-[90%] overflow-hidden flex flex-col pointer-events-auto shadow-2xl select-none cursor-default"
                 >
                   <div 
                     onPointerDown={(e) => activeTradeDragControls.start(e)}
@@ -6377,7 +5773,7 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+                  <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-slate-50/40 border border-slate-200/60 p-2 rounded-xl flex flex-col items-center">
                         <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">{isInitiator ? '你送出' : 'TA送出'}</span>
@@ -6408,7 +5804,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5 max-h-[160px] overflow-y-auto no-scrollbar py-1">
+                    <div className="space-y-1.5 py-1">
                       {gameState.players.map(p => {
                         if (p.id === initiator.id) return null;
                         const isMe = p.id === myPlayerIndex;
@@ -6506,7 +5902,7 @@ export default function App() {
                         );
                       })}
                     </div>
-                  </div>
+                  </RotatedScroll>
                 </motion.div>
               </motion.div>
             );
@@ -6695,9 +6091,9 @@ export default function App() {
                         body: JSON.stringify({ roomId, saveName })
                       })
                       .then(async (res) => {
-                        const data = await res.json();
+                        const data = await safeFetchJson(res);
                         if (!res.ok) {
-                          throw new Error(data.error || '保存失败');
+                          throw new Error(data?.error || '保存失败');
                         }
                         setDebugSaveStatus({ 
                           type: 'success', 
@@ -6741,7 +6137,8 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100000] bg-transparent pointer-events-auto flex items-center justify-center p-2 sm:p-4 w-full"
+            data-resource-choice-overlay
+            className="fixed inset-0 z-[100000] bg-transparent pointer-events-none flex items-center justify-center p-2 sm:p-4 w-full"
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
@@ -6786,10 +6183,10 @@ export default function App() {
               </div>
 
               {/* Body */}
-              <div className="p-3 sm:p-4 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
+              <div className="p-2 sm:p-3 flex-1 pointer-events-auto flex flex-col min-h-0 overflow-hidden">
                 {gameState.phase === 'discard' && (
                   <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-                    <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-2.5 px-0.5 shrink-0">
+                    <p className="text-[10px] sm:text-[11px] text-slate-600 font-medium leading-tight mb-1.5 px-0.5 shrink-0">
                       资源数量超标，请选择弃掉 <span className="font-bold text-red-600">{((gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0) - Object.values(discardSelection).reduce((a, b) => a + b, 0))}</span> 张资源卡：
                     </p>
                     <div className="flex-1 overflow-hidden flex flex-col min-h-0">
@@ -6799,6 +6196,7 @@ export default function App() {
                         amount={gameState.pendingDiscards.find(p => p.playerId === myPlayerIndex)?.amount || 0} 
                         onDiscard={(res) => discardCards(myPlayerIndex, res)} 
                         onChange={setDiscardSelection}
+                        shouldApplyPortraitRotation={shouldApplyPortraitRotation}
                       />
                     </div>
                   </div>
@@ -6939,7 +6337,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-2.5 sm:p-3 space-y-2 text-xs flex-1 min-h-0 overflow-y-auto no-scrollbar pr-0.5 pointer-events-auto">
+              <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2 text-xs flex-1 min-h-0 overflow-y-auto no-scrollbar pr-0.5 pointer-events-auto">
                 <div>
                   <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">你送出</h3>
                   <div className="grid grid-cols-5 gap-1">
@@ -7021,7 +6419,7 @@ export default function App() {
                 >
                   发起交易
                 </button>
-              </div>
+              </RotatedScroll>
             </motion.div>
           </motion.div>
         )}
@@ -7071,7 +6469,7 @@ export default function App() {
                   <X size={14} />
                 </button>
               </div>
-              <div className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
+              <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="p-2.5 sm:p-3 space-y-2.5 flex-1 min-h-0 overflow-y-auto no-scrollbar pointer-events-auto">
                 {/* Pay Section (Give) */}
                 <div>
                   <h3 className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider text-slate-400 mb-0.5 flex justify-between">
@@ -7124,7 +6522,7 @@ export default function App() {
                     })}
                   </div>
                 </div>
-              </div>
+              </RotatedScroll>
               <div className="p-2.5 sm:p-3 bg-slate-50/80 flex flex-col gap-2 shrink-0 border-t border-slate-100 pointer-events-auto">
                 <div className="flex items-center justify-between text-xs font-medium text-slate-600">
                   <span className="font-bold text-slate-500 text-[11px] sm:text-xs">交换数量:</span>
@@ -7376,16 +6774,29 @@ export default function App() {
       return point;
     }}>
       <>
-        {mainContent}
+        <InvitationBanner enabled={!!currentUser} inRoom={!!roomState || isJoinedLobby || isRoomLocked} onJoin={invitation => {
+          if (isRoomLocked) return;
+          localStorage.removeItem('catan_is_spectator'); setIsJoinSpectator(false);
+          setInputRoomId(invitation.roomId); setIsJoinedLobby(true);
+          socketService.joinRoom(invitation.roomId, playerName, false, invitation.id);
+        }} />
+        {isSpectator && roomState && !showSailingScreen && <SpectatorExit anchor={spectatorExitAnchor} rotated={shouldApplyPortraitRotation} onExit={() => {
+          setShowRulesModal(false); setShowSoundModal(false); setConfirmAction(null); setShowPwaGuide(false);
+          handleReturnToLobby();
+        }} />}
+        {gameStarted && roomState && <AvatarInteractions roomId={roomState.roomId} selfId={socketService.playerId} rotated={shouldApplyPortraitRotation} />}
+        {gameStarted && roomState ? <AssetGate onCancel={handleReturnToLobby}>{mainContent}</AssetGate> : mainContent}
+        {!roomState && !isJoinedLobby && exitToast}
         {showSailingScreen && (
           <SailingLoadingScreen 
             key="sailing-loader" 
+            loop={!gameStarted || !isBoardReady}
             onComplete={() => {
               if (roomState) {
                 setShowSailingScreen(false);
               }
             }} 
-            onCancel={() => setShowSailingScreen(false)}
+            onCancel={() => { setShowSailingScreen(false); handleReturnToLobby(); }}
             text={sailingText} 
           />
         )}
@@ -7522,6 +6933,7 @@ function MapPreview({ board, isTopologyOnly = false, isLogo = false }: { board: 
                       text={hex.number.toString()}
                       fontSize={14}
                       fontStyle="bold"
+                      fontFamily="Times New Roman, Times, serif"
                       fill={hex.number === 6 || hex.number === 8 ? '#d32f2f' : '#333'}
                       offsetX={hex.number > 9 ? 8 : 4}
                       offsetY={6}
@@ -7673,49 +7085,22 @@ function BuildItem({ id, icon, label, cost, onClick, active, disabled, compact, 
 }
 
 function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, isSelected: boolean, isRobber: boolean, isPirate: boolean, onClick: () => void }) {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    let src = '';
-    switch (hex.type) {
-      case HexType.Forest: src = FOREST_IMG; break;
-      case HexType.Hills: src = HILLS_IMG; break;
-      case HexType.Pasture: src = PASTURE_IMG; break;
-      case HexType.Fields: src = FIELDS_IMG; break;
-      case HexType.Mountains: src = Mountains_IMG; break;
-      case HexType.Desert: src = Desert_IMG; break;
-      case HexType.Gold: src = GOLD_IMG; break;
-      case HexType.Sea: src = SEA_HEX_IMG; break;
+  const getHexImgSrc = (type: HexType) => {
+    switch (type) {
+      case HexType.Forest: return FOREST_IMG;
+      case HexType.Hills: return HILLS_IMG;
+      case HexType.Pasture: return PASTURE_IMG;
+      case HexType.Fields: return FIELDS_IMG;
+      case HexType.Mountains: return Mountains_IMG;
+      case HexType.Desert: return Desert_IMG;
+      case HexType.Gold: return GOLD_IMG;
+      case HexType.Sea: return SEA_HEX_IMG;
+      default: return '';
     }
-    if (src) {
-      const resolvedSrc = getImageUrl(src);
-      const candidates = getImageCandidates(src);
-      const attempts = Array.from(new Set([resolvedSrc, ...candidates]));
-      let idx = 0;
+  };
 
-      const tryLoad = () => {
-        if (idx >= attempts.length) return;
-        const currentUrl = attempts[idx];
-        const img = new window.Image();
-        img.referrerPolicy = 'no-referrer';
-        img.onload = () => {
-          if (img.naturalWidth > 0) {
-            setImage(img);
-          } else {
-            idx++;
-            tryLoad();
-          }
-        };
-        img.onerror = () => {
-          idx++;
-          tryLoad();
-        };
-        img.src = currentUrl;
-      };
-
-      tryLoad();
-    }
-  }, [hex.type]);
+  const src = getHexImgSrc(hex.type);
+  const { image } = useGameImage(src);
 
   const color = RESOURCE_COLORS[hex.type === HexType.Gold ? 'gold' : hex.type === HexType.Desert ? 'desert' : hex.type === HexType.Sea ? 'sea' : (HEX_RESOURCES[hex.type as HexType] as any)] || '#ccc';
 
@@ -7765,11 +7150,16 @@ function HexCell({ hex, isSelected, isRobber, isPirate, onClick }: { hex: any, i
           <Text
             text={hex.number.toString()}
             fontSize={12}
-            fontStyle="900"
+            name="hex-number"
+            fontStyle="bold"
             fill={hex.number === 6 || hex.number === 8 ? '#E74C3C' : '#1a1a1a'}
-            offsetX={hex.number > 9 ? 7 : 3.5}
-            offsetY={6}
-            fontFamily="Inter"
+            width={24}
+            height={16}
+            offsetX={12}
+            offsetY={8}
+            align="center"
+            verticalAlign="middle"
+            fontFamily="Times New Roman, Times, serif"
           />
           <ProbabilityDots value={hex.number} />
         </Group>
@@ -7984,7 +7374,7 @@ function CostCard({ label, cost }: { label: string, cost: Record<string, number>
   );
 }
 
-function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void }) {
+function DiscardPanel({ player, amount, onDiscard, onChange, shouldApplyPortraitRotation }: { player: any, amount: number, onDiscard: (res: any) => void, onChange?: (res: any) => void, shouldApplyPortraitRotation: boolean }) {
   const [selected, setSelected] = useState<Record<ResourceType, number>>({
     [ResourceType.Lumber]: 0,
     [ResourceType.Brick]: 0,
@@ -8014,30 +7404,30 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      <div className="flex-1 overflow-y-auto space-y-2 p-1.5 no-scrollbar min-h-0">
+      <RotatedScroll shouldApplyPortraitRotation={shouldApplyPortraitRotation} className="flex-1 overflow-y-auto space-y-1 p-1 no-scrollbar min-h-0">
         {Object.values(ResourceType).map(res => {
           const count = player.resources[res];
           if (count === 0) return null;
           return (
-            <div key={res} className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl shadow-sm border border-black/[0.04] shrink-0">
-              <div className="flex items-center gap-2.5">
-                <ResourceIcon type={res as ResourceType} className="w-5 h-5 sm:w-6 sm:h-6" />
-                <span className="font-bold text-xs sm:text-sm text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
-                <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium">({count})</span>
+            <div key={res} className="flex items-center justify-between px-2.5 py-1.5 bg-white rounded-lg shadow-sm border border-black/[0.04] shrink-0">
+              <div className="flex items-center gap-1.5">
+                <ResourceIcon type={res as ResourceType} className="w-4 h-4 sm:w-5 sm:h-5" />
+                <span className="font-bold text-[11px] sm:text-xs text-slate-700">{RESOURCE_NAMES[res as ResourceType]}</span>
+                <span className="text-[9px] sm:text-[10px] text-slate-400 font-medium">({count})</span>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-1.5">
                 <button 
                   onClick={() => handleDecrement(res)}
                   disabled={selected[res] === 0}
-                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-xs sm:text-sm font-black shrink-0"
+                  className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-slate-50 border border-slate-200 flex items-center justify-center hover:bg-slate-100 disabled:opacity-20 transition-all text-[10px] sm:text-xs font-black shrink-0"
                 >
                   -
                 </button>
-                <span className="font-mono font-black w-5 text-center text-xs sm:text-sm text-slate-800 shrink-0">{selected[res]}</span>
+                <span className="font-mono font-black w-4 text-center text-[11px] sm:text-xs text-slate-800 shrink-0">{selected[res]}</span>
                 <button 
                   onClick={() => handleIncrement(res)}
                   disabled={totalSelected >= amount || selected[res] >= count}
-                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-xs sm:text-sm font-black shadow-sm shrink-0"
+                  className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-black text-white flex items-center justify-center hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-40 transition-all text-[10px] sm:text-xs font-black shadow-sm shrink-0"
                 >
                   +
                 </button>
@@ -8045,13 +7435,13 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
             </div>
           );
         })}
-      </div>
+      </RotatedScroll>
 
-      <div className="shrink-0 p-1.5 pt-3 mt-auto bg-white/80 backdrop-blur-sm border-t border-slate-50 z-10">
+      <div className="shrink-0 p-1 pt-2 mt-auto bg-white/80 backdrop-blur-sm border-t border-slate-50 z-10">
         <button 
           onClick={() => onDiscard(selected)}
           disabled={remaining !== 0}
-          className="w-full py-3 sm:py-3.5 bg-slate-900 text-white rounded-xl text-xs sm:text-sm font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+          className="w-full py-2 sm:py-2.5 bg-slate-900 text-white rounded-lg text-[11px] sm:text-xs font-black uppercase tracking-widest shadow-md hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none disabled:opacity-60 transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
         >
           确认弃牌
         </button>
@@ -8059,4 +7449,3 @@ function DiscardPanel({ player, amount, onDiscard, onChange }: { player: any, am
     </div>
   );
 }
-
