@@ -41,10 +41,12 @@ test('unified directories, seven days, guest messaging and recipient ID search',
   await expect(page.getByText('体验游客', { exact: true }).first()).toBeVisible();
   // Return to the private-message list through the application's existing back handler.
   await page.evaluate(async () => { (await import('/src/' + 'navigation.ts')).requestAppBack(); });
-  await page.getByLabel('搜索私信对象').fill('666666666666666666666666');
-  const select = page.getByLabel('选择玩家发起私信');
-  await expect(select.locator('option')).toHaveCount(2);
-  await select.selectOption('666666666666666666666666');
+  await page.getByRole('button', { name: '选择私信对象', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '选择私信对象', exact: true });
+  await picker.getByLabel('搜索私信对象').fill('666666666666666666666666');
+  await expect(picker.locator('[data-recipient-id]')).toHaveCount(1);
+  await picker.getByRole('radio').check();
+  await picker.getByRole('button', { name: '确认', exact: true }).click();
   await page.getByLabel('私信内容').fill('游客私信验证');
   const sent = page.waitForRequest(req => req.url().endsWith('/api/admin/messages') && req.method() === 'POST');
   await page.locator('.chat-screen').getByRole('button', { name: '发送', exact: true }).click();
