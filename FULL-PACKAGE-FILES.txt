@@ -102,6 +102,7 @@ server/leaderboardRecording.ts
 server/leaderboardRoutes.ts
 server/messageRoutes.ts
 server/messageVisibility.ts
+server/roomOccupancy.ts
 server/social.ts
 server/socialStore.ts
 server/socketIdentity.ts
@@ -166,6 +167,7 @@ src/types.ts
 src/useCatanGame.ts
 src/useLobbySwipe.ts
 src/vite-env.d.ts
+tests/admin-entry-v36.spec.ts
 tests/analytics-ui.spec.ts
 tests/analytics.test.ts
 tests/announcement-editing.test.ts
@@ -193,6 +195,8 @@ tests/production.spec.ts
 tests/refinements-v13.spec.ts
 tests/rising-sea.spec.ts
 tests/room-authority-v6.spec.ts
+tests/room-occupancy.spec.ts
+tests/room-occupancy.test.ts
 tests/slow-assets.spec.ts
 tests/social-v25.spec.ts
 tests/social.test.ts

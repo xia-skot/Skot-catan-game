@@ -13,3 +13,15 @@
 线上数据库和邮件配置继续使用 Render 中已有的值；`.env.example` 仅提供示例。
 
 外部保活请查看 [保活说明](EXTERNAL-KEEP-ALIVE.md)。
+# v34 invitation fixes
+
+- Unfinished disconnected/autoplay participants remain busy for invitations. Local stale idle presence cannot bypass candidate filtering, acceptance, or invitation validation.
+- The invitation banner honors the existing room lock, including invitations linking to another game origin.
+- Includes v33 fixes below. This is not a distributed room occupancy lock across services.
+
+# v33 fixes
+
+- Explicit map double-click/double-tap resets the camera; remote state and viewport changes preserve it.
+- Server room admission rejects accounts occupying another unfinished room, including disconnected/autoplay seats. Returning to the original room is allowed.
+- Occupancy checks currently cover rooms in one server process, not separate Render services. Cross-service exclusion is not implemented in this release.
+- Verified with TypeScript, camera desktop/Android tests, room occupancy unit tests and a real Socket.IO admission test.

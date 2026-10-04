@@ -53,7 +53,7 @@ test('unified directories, seven days, guest messaging and recipient ID search',
   await page.screenshot({ path: info.outputPath('guest-chat.png') });
 });
 
-test('manual map view survives remote state, double tap and viewport changes', async ({ page }) => {
+test('manual map view survives remote state and resize but explicit double tap resets it', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '进入海域', exact: true }).click();
   await page.getByRole('button', { name: '就绪', exact: true }).click();
@@ -76,7 +76,6 @@ test('manual map view survives remote state, double tap and viewport changes', a
       service.requestSync(service.authoritativeRoom.roomId);
     });
     service.socket.onevent({ data: ['game_state_updated', state, { roomId: service.authoritativeRoom.roomId }] });
-    stage.fire('dblclick'); stage.fire('dbltap');
   });
   await page.waitForTimeout(400);
   expect(await read()).toEqual({ scale: 1.7, x: 123, y: 86 });
@@ -91,6 +90,15 @@ test('manual map view survives remote state, double tap and viewport changes', a
   await page.setViewportSize({ width: 900, height: 420 });
   await page.waitForTimeout(250);
   expect(await read()).toEqual({ scale: 1.7, x: 123, y: 86 });
+  for (const event of ['dblclick', 'dbltap']) {
+    await page.evaluate(async event => {
+      const Konva = (await import('/node_modules/.vite/deps/' + 'konva.js')).default;
+      const stage = Konva.stages.find((s: any) => s.findOne('.board-terrain'));
+      stage.scale({ x: 1.7, y: 1.7 }); stage.position({ x: 123, y: 86 });
+      stage.fire(event);
+    }, event);
+    await expect.poll(read).not.toEqual({ scale: 1.7, x: 123, y: 86 });
+  }
   await page.reload();
   await expect(page.locator('[data-game-sailing]')).toHaveCount(0, { timeout: 20000 });
   await expect(page.locator('canvas').first()).toBeVisible({ timeout: 20000 });
