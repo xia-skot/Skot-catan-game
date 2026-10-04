@@ -264,7 +264,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v36', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v38', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -513,7 +513,11 @@ async function startServer() {
         } catch (e) {}
       }
 
-      const messages = await messagesCollection.find().sort({ createdAt: -1 }).toArray();
+      const summary = req.query.summary === '1';
+      const cursor = messagesCollection.find().sort({ createdAt: -1 });
+      const messages = await (summary && !DEMO_MODE
+        ? cursor.project({ _id: 1, revision: 1, type: 1, targetUserId: 1, targetUserName: 1, senderId: 1, senderName: 1 })
+        : cursor).toArray();
 
       const filtered = messages.filter((m: any) => canReadMessage(m, {
         id: currentUserId, name: currentUsername, admin: isAdmin, guest: isGuest,
@@ -537,9 +541,9 @@ async function startServer() {
 
       let allPlayerNames: string[] = [];
       let recipients: { id: string; username: string; isGuest: boolean }[] = [];
-      if (isAdmin && demoLeaderboard) recipients = [...demoLeaderboard.users, ...demoLeaderboard.stats().allGuests]
+      if (isAdmin && req.query.recipients !== '0' && demoLeaderboard) recipients = [...demoLeaderboard.users, ...demoLeaderboard.stats().allGuests]
         .filter(u => u.role !== 'admin').map(u => ({ id: String(u._id), username: u.username, isGuest: u.isGuest }));
-      if (isAdmin && usersCollection) {
+      if (isAdmin && req.query.recipients !== '0' && usersCollection) {
         try {
           const players = await usersCollection.find({}).project({ username: 1, role: 1, isGuest: 1 }).toArray();
           recipients = players.filter((p: any) => p.username && p.role !== 'admin' && String(p._id) !== currentUserId)
@@ -1826,8 +1830,8 @@ async function startServer() {
     socket.on('get_active_rooms', (isAdmin?: boolean, callback?: (rooms: any[]) => void) => {
       let activeRooms = Array.from(rooms.values())
         .map(r => ({
-          ...r,
-          gameState: undefined,
+          roomId: r.roomId, hostId: r.hostId, players: r.players, spectators: r.spectators,
+          settings: r.settings, reservedUntil: r.reservedUntil,
           status: r.gameState ? 'playing' : 'waiting'
         }))
         .filter(r => {
