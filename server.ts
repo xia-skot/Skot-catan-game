@@ -29,6 +29,7 @@ import { registerAnalyticsRoutes } from './server/analyticsRoutes';
 import { buildAnalytics, completedGames } from './server/analytics';
 import { createSocialService } from './server/social';
 import { SocialStore } from './server/socialStore';
+import { conflictingRoom } from './server/roomOccupancy';
 import { freeSeats } from './shared/social';
 import { queryDatabaseStorage } from './server/databaseStorage';
 import { loginDeviceGuest, renameGuest } from './server/guestIdentity';
@@ -263,7 +264,7 @@ async function startServer() {
   if (demoLeaderboard) app.get('/api/admin/stats', authMiddleware, adminMiddleware, (_req, res) => res.json(demoLeaderboard.stats()));
   app.get('/api/health', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ status: 'ok', version: 'v32', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
+    res.json({ status: 'ok', version: 'v34', scoringVersion: LEADERBOARD_SCORING_VERSION, historyVersion: 'account-history-v20' });
   });
 
   app.get('/api/db-status', (req, res) => {
@@ -1390,6 +1391,12 @@ async function startServer() {
       touchRoom(roomId);
       if (!playerId) playerId = socket.id;
       if (!playerName) playerName = '玩家';
+      // A disconnected participant still owns their seat in an unfinished game.
+      const occupied = conflictingRoom(rooms.values(), verifiedUserId || playerId, roomId);
+      if (occupied) {
+        socket.emit('join_error', `你仍在房间 ${occupied.roomId} 中（包括托管中的对局），请返回原房间；对局结束后才能进入其他房间。`);
+        return;
+      }
       console.log('User joining room:', roomId, playerId, 'asSpectator:', asSpectator);
       socket.join(roomId);
       
@@ -1464,6 +1471,9 @@ async function startServer() {
     });
 
     socket.on('leave_room', (roomId: string, playerId: string) => {
+      const membership = rooms.get(roomId);
+      if (!membership || ![...membership.players, ...(membership.spectators || [])]
+        .some((p: any) => p.id === playerId && p.socketId === socket.id)) return;
       console.log('User leaving room:', roomId, playerId);
       socket.leave(roomId);
       touchRoom(roomId);
@@ -1728,6 +1738,7 @@ async function startServer() {
 
     socket.on('reclaim_slot', (roomId: string, newPlayerId: string, oldPlayerId: string) => {
       if (socket.data.socialAccount?.userId !== newPlayerId || newPlayerId !== oldPlayerId || !socket.rooms.has(roomId)) return;
+      if (conflictingRoom(rooms.values(), newPlayerId, roomId)) return;
       const room = rooms.get(roomId);
       if (room && room.gameState) {
         // Find the old player in the room list

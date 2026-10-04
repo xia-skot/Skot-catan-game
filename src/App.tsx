@@ -4742,6 +4742,8 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
               boardLayerRef.current?.clearCache();
             }}
             onWheel={handleWheel}
+            onDblClick={() => centerMap(true)}
+            onDblTap={() => centerMap(true)}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={(e) => {
@@ -6772,7 +6774,8 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
       return point;
     }}>
       <>
-        <InvitationBanner enabled={!!currentUser} inRoom={!!roomState || isJoinedLobby} onJoin={invitation => {
+        <InvitationBanner enabled={!!currentUser} inRoom={!!roomState || isJoinedLobby || isRoomLocked} onJoin={invitation => {
+          if (isRoomLocked) return;
           localStorage.removeItem('catan_is_spectator'); setIsJoinSpectator(false);
           setInputRoomId(invitation.roomId); setIsJoinedLobby(true);
           socketService.joinRoom(invitation.roomId, playerName, false, invitation.id);
