@@ -540,7 +540,7 @@ function SailingLoadingScreen({ onComplete, text = '正在驶入海域', loop = 
   return loadAssets ? <AssetGate onCancel={onCancel || onComplete}>{screen}</AssetGate> : screen;
 }
 
-export default function App({ onAccountReady }: { onAccountReady?: () => void }) {
+export default function App({ onAccountReady, startupFinished = true }: { onAccountReady?: () => void; startupFinished?: boolean }) {
   const [showSoundModal, setShowSoundModal] = useState(false);
   const robberDragControls = useDragControls();
   const playerTradeDragControls = useDragControls();
@@ -6780,7 +6780,7 @@ export default function App({ onAccountReady }: { onAccountReady?: () => void })
           setInputRoomId(invitation.roomId); setIsJoinedLobby(true);
           socketService.joinRoom(invitation.roomId, playerName, false, invitation.id);
         }} />
-        {isSpectator && roomState && !showSailingScreen && <SpectatorExit anchor={spectatorExitAnchor} rotated={shouldApplyPortraitRotation} onExit={() => {
+        {isSpectator && roomState && startupFinished && !showSailingScreen && <SpectatorExit anchor={spectatorExitAnchor} rotated={shouldApplyPortraitRotation} onExit={() => {
           setShowRulesModal(false); setShowSoundModal(false); setConfirmAction(null); setShowPwaGuide(false);
           handleReturnToLobby();
         }} />}
